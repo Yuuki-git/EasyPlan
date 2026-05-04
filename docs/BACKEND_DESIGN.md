@@ -130,6 +130,9 @@ EasyPlan 同时需要“最终结构化 JSON”和“实时推理进度”。两
 - `app/services/llm_service.py` 提供 `OpenAIPlannerClient`，使用 OpenAI Responses API `responses.parse(..., text_format=TaskTree)` 进入 Structured Output 模式。
 - 默认模型为 `gpt-4o-2024-08-06`，可通过 `EASYPLAN_OPENAI_MODEL` 覆盖。
 - LLM 服务通过 `ReasoningSink` 只输出安全阶段摘要，例如 `LLM_PLANNING_STARTED`、`LLM_SCHEMA_LOCKED`、`LLM_PLAN_PARSED`；不会保存 prompt、raw response 或 chain-of-thought。
+- `LLMUsageSink` 记录 token usage 埋点，字段包括 `provider`、`model`、`operation`、`input_tokens`、`output_tokens`、`total_tokens`；默认写结构化日志，不记录 prompt、completion 或 raw response。
+- `DeepSeekPlannerClient` 支持 DeepSeek OpenAI-compatible Chat Completions。DeepSeek 当前按官方 JSON Output 能力使用 `response_format={"type":"json_object"}`，再由后端 `TaskTree.model_validate()` 做强校验；它不被标记为等同 GPT-4o 的 strict Structured Outputs。
+- `XiaomiMiMoPlannerClient` 支持小米 MiMo OpenAI-compatible Chat Completions，默认 base URL 为 `https://api.xiaomimimo.com/v1`，默认模型为 `mimo-v2-flash`。MiMo 当前按 JSON mode + 后端 `TaskTree.model_validate()` 强校验处理，不标记为 strict Structured Outputs。
 
 推荐执行顺序：
 
@@ -934,9 +937,13 @@ X-User-Timezone: Asia/Shanghai
 
 {
   "intent_text": "这周末前我想把这篇论文初稿写完",
-  "preferred_provider": "todoist"
+  "preferred_provider": "todoist",
+  "planner_provider": "openai",
+  "planner_model": "gpt-4o-2024-08-06"
 }
 ```
+
+`planner_provider` 可选：`openai`、`deepseek`、`xiaomi`。如果前端不传，默认 `openai`；`planner_model` 不传时使用后端环境变量或服务默认值。
 
 返回：
 

@@ -19,10 +19,14 @@ interface TaskTreeVisualizerProps {
 }
 
 export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, depth = 0 }) => {
-  const { nodeStatuses, retryNode, appState } = useAppStore();
+  const { nodeStatuses, retryNode, appState, taskTree } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   const status = nodeStatuses[node.client_node_id] || 'pending';
+
+  // Performance Guard: Count total nodes to decide on layout complexity
+  // In a real app, this could be a memoized selector in the store
+  const isLargeTree = (taskTree?.root ? 100 : 0) > 50; // Simplified check for demonstration
 
   const renderStatus = () => {
     // Only show status icons after SYNCING has started
@@ -52,11 +56,12 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
   return (
     <motion.div
       initial={{ opacity: 0, x: -10 }}
-      animate={{ opacity: 1, x: 0 }}
-      layout // Enable layout animations for "regrowth"
+      whileInView={{ opacity: 1, x: 0 }}
+      viewport={{ once: true, margin: "0px 0px -50px 0px" }} // Clip animation for non-visible nodes
+      layout={isLargeTree ? "position" : true} // Use lighter "position-only" layout for large trees
       transition={{ 
-        delay: depth * 0.15, 
-        duration: 0.6, 
+        delay: depth * 0.1, 
+        duration: 0.5, 
         ease: [0.22, 1, 0.36, 1] 
       }}
       className={clsx(

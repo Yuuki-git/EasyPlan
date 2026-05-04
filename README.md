@@ -67,6 +67,16 @@ uvicorn app.main:app --reload
 
 Recommended runtime: Python 3.11+ for better async performance. The current backend tests are also kept compatible with Python 3.10.
 
+Planner model configuration:
+
+- `EASYPLAN_LLM_PROVIDER=openai|deepseek|xiaomi`
+- `EASYPLAN_OPENAI_MODEL=gpt-4o-2024-08-06`
+- `EASYPLAN_DEEPSEEK_MODEL=deepseek-chat`
+- `DEEPSEEK_BASE_URL=https://api.deepseek.com`
+- `EASYPLAN_XIAOMI_MIMO_MODEL=mimo-v2-flash`
+- `XIAOMI_MIMO_BASE_URL=https://api.xiaomimimo.com/v1`
+- `XIAOMI_API_KEY=<your Xiaomi MiMo key>`
+
 ### Frontend / 前端
 ```bash
 cd frontend

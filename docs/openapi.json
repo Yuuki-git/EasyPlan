@@ -709,6 +709,29 @@
             "maxLength": 64,
             "title": "Preferred Provider",
             "default": "todoist"
+          },
+          "planner_provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "deepseek",
+              "xiaomi"
+            ],
+            "title": "Planner Provider",
+            "default": "openai"
+          },
+          "planner_model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planner Model"
           }
         },
         "additionalProperties": false,

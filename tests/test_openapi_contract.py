@@ -53,3 +53,13 @@ def test_openapi_contract_thread_snapshot_supports_sse_state_alignment():
     thread_snapshot = schema["components"]["schemas"]["ThreadSnapshot"]
     required = set(thread_snapshot["required"])
     assert {"state_version", "last_event_id", "server_time"}.issubset(required)
+
+
+def test_openapi_contract_intent_supports_model_provider_selection():
+    app = create_app()
+
+    schema = app.openapi()
+
+    properties = schema["components"]["schemas"]["IntentCreateRequest"]["properties"]
+    assert properties["planner_provider"]["enum"] == ["openai", "deepseek", "xiaomi"]
+    assert "planner_model" in properties

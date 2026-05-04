@@ -58,6 +58,8 @@ class IntentCreateRequest(BaseModel):
 
     intent_text: str = Field(..., min_length=1, max_length=2000)
     preferred_provider: str = Field(default="todoist", max_length=64)
+    planner_provider: Literal["openai", "deepseek", "xiaomi"] = "openai"
+    planner_model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class IntentCreateResponse(BaseModel):
