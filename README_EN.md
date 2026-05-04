@@ -1,5 +1,6 @@
-# EasyPlan 🪐 - Intent-Driven Task Management SaaS (v1.0.0)
+# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.0.0)
 
+> **Detailed plan is all you need. Efficiency is everything.**  
 > **"Don't let grand visions become a burden. Let technology carry the weight of planning."**
 
 EasyPlan is a minimalist task management tool built on the philosophy of **Intentional Productivity**. More than a simple to-do list, it's an intelligent Agent companion that understands your goals and decomposes them into "2-minute" micro-actions to lower the barrier to start.
@@ -22,7 +23,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans instantly.
 - **Fluid Motion UI**: "Balanced Minimalism" interface where the task tree grows organically as you plan.
 - **Resilient Synchronization**: Supports **Todoist** integration with strong idempotency. Failed syncs can be retried without creating duplicates.
-- **SaaS-Grade Security**: Multi-tenant isolation, JWT authentication, and OAuth2 integration closure.
+- **Enterprise-Grade Security**: Multi-tenant isolation, JWT authentication, and OAuth2 integration closure.
 
 ## 🛠️ Architecture
 
@@ -71,6 +72,12 @@ cd frontend
 npm install
 npm run dev
 ```
+
+### 4. Usage Example
+1. **Enter Intent**: Input `I want to finish a research report on AI agents by next Friday` on the home page.
+2. **AI Decomposition**: The system shows the reasoning stream in real-time and "grows" a task tree (e.g., review latest papers, build architecture diagrams, write abstract, etc.).
+3. **Refinement**: Feel it's too complex? Type `Reduce it to something I can start within 30 minutes`, and the AI will immediately reconstruct the plan.
+4. **One-Click Sync**: Click "Confirm", and the tasks will instantly sync to your Todoist account.
 
 ---
 
