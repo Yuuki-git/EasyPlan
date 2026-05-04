@@ -41,6 +41,18 @@ python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+推荐 Python 3.11+，以获得更好的异步性能。当前后端测试也保持 Python 3.10 兼容。
+
+### Docker 部署
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+- 后端 API: `http://localhost:8000`
+- 前端静态站点: `http://localhost:8080`
+- PostgreSQL + pgvector: `localhost:5432`
+
 ### 前端 (Frontend)
 ```bash
 cd frontend

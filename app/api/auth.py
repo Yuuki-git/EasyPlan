@@ -220,7 +220,7 @@ def _b64url_decode(encoded: str) -> bytes:
 _global_user_repository = InMemoryUserRepository()
 _global_auth_service = AuthService(
     user_repository=_global_user_repository,
-    jwt_secret=os.getenv("EASYPLAN_JWT_SECRET", "dev-only-change-me"),
+    jwt_secret=os.getenv("EASYPLAN_JWT_SECRET") or os.getenv("JWT_SECRET_KEY", "dev-only-change-me"),
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
