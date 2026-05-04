@@ -20,9 +20,17 @@ DEFAULT_STATIC_DIR = PROJECT_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = ("http://localhost:5173", "http://localhost:3000")
 
 
+from app.db.session import init_db
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _log_missing_environment()
+    # Initialize database tables on startup
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error("database_initialization_failed", exc_info=True)
     yield
 
 

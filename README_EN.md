@@ -58,19 +58,34 @@ EasyPlan/
 ## ⚡ Quick Start
 
 ### 1. Configuration
-Refer to `.env.example` to create your `.env` file with `OPENAI_API_KEY`, etc.
+Refer to `.env.example` to create your `.env` file with `OPENAI_API_KEY` and `DATABASE_URL`.
 
-### 2. Run Backend
+### 2. Database Initialization
+EasyPlan features **Automated Schema Initialization**. The backend will automatically detect and create PostgreSQL tables on startup—no manual SQL execution required.
+
+### 3. Run Locally
 ```bash
+# Backend
 python -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Frontend
+cd frontend && npm install && npm run dev
 ```
 
-### 3. Run Frontend
+---
+
+## 🚀 Production Deployment (4C4G)
+
+We recommend using Docker Compose for a one-click deployment. The system will handle stack orchestration and DB setup automatically.
+
 ```bash
-cd frontend
-npm install
-npm run dev
+# 1. Clone & Configure .env
+# 2. Start Services
+docker-compose up -d
+
+# 3. Verify Deployment
+docker-compose logs -f backend | grep "initialized"
 ```
 
 ### 4. Usage Example
