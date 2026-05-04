@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
 from app.api.routes_integrations import router as integrations_router
 from app.api.routes_intents import router as intents_router
 from app.api.routes_threads import router as threads_router
@@ -13,6 +14,7 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         docs_url="/docs",
     )
+    app.include_router(auth_router)
     app.include_router(intents_router)
     app.include_router(threads_router)
     app.include_router(integrations_router)

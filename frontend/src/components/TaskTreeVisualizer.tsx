@@ -2,7 +2,15 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { TaskNode } from '../types/api';
 import { useAppStore } from '../store/useAppStore';
-import { ChevronRight, Circle, Clock } from 'lucide-react';
+import { 
+  ChevronRight, 
+  Circle, 
+  Clock, 
+  CheckCircle2, 
+  AlertCircle, 
+  RotateCcw, 
+  Loader2 
+} from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface TaskTreeVisualizerProps {
@@ -11,24 +19,52 @@ interface TaskTreeVisualizerProps {
 }
 
 export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, depth = 0 }) => {
+  const { nodeStatuses, retryNode, appState } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
+  const status = nodeStatuses[node.client_node_id] || 'pending';
+
+  const renderStatus = () => {
+    // Only show status icons after SYNCING has started
+    if (appState === 'PENDING' || appState === 'INITIAL' || appState === 'THINKING') return null;
+    
+    switch (status) {
+      case 'success':
+        return <CheckCircle2 size={14} className="text-green-500/80" />;
+      case 'error':
+        return (
+          <button 
+            onClick={() => retryNode(node.client_node_id)}
+            className="flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
+          >
+            <AlertCircle size={14} />
+            <span className="text-[10px] font-mono">RETRY</span>
+            <RotateCcw size={10} />
+          </button>
+        );
+      case 'syncing':
+        return <Loader2 size={14} className="text-accent animate-spin" />;
+      default:
+        return null;
+    }
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
+      layout // Enable layout animations for "regrowth"
       transition={{ 
         delay: depth * 0.15, 
         duration: 0.6, 
-        ease: [0.22, 1, 0.36, 1] // Custom "fluid" easing
+        ease: [0.22, 1, 0.36, 1] 
       }}
       className={clsx(
-        "flex flex-col w-full relative",
+        "flex flex-col w-full relative task-tree-node",
         depth > 0 && "ml-8 mt-6"
       )}
     >
-      {/* Growth Line (The vertical connector) */}
+      {/* Growth Line */}
       {depth > 0 && (
         <div className="absolute -left-4 top-0 bottom-0 w-[1px] bg-gradient-to-b from-muted via-muted/50 to-transparent" />
       )}
@@ -36,7 +72,9 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
       <div className="flex items-start gap-4 group">
         <div className={clsx(
           "mt-1.5 shrink-0 transition-transform duration-500 group-hover:scale-110",
-          isGroup ? "text-accent-foreground" : "text-muted-foreground/40"
+          isGroup ? "text-accent-foreground" : "text-muted-foreground/40",
+          status === 'success' && "text-green-500/50",
+          status === 'error' && "text-red-500/50"
         )}>
           {isGroup ? (
             <div className="w-5 h-5 flex items-center justify-center rounded-sm bg-accent/20 border border-accent/30">
@@ -53,19 +91,26 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
           <div className="flex items-center justify-between gap-4">
             <h4 className={clsx(
               "text-sm tracking-tight transition-colors",
-              isGroup ? "font-semibold text-foreground" : "font-normal text-foreground/70"
+              isGroup ? "font-semibold text-foreground" : "font-normal text-foreground/70",
+              status === 'success' && "text-foreground/40 line-through decoration-muted-foreground/30"
             )}>
               {node.title}
             </h4>
             
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 text-[9px] font-mono text-muted-foreground/60 border border-muted/20">
-              <Clock size={10} />
-              <span>{node.estimated_minutes}m</span>
+            <div className="flex items-center gap-3">
+              {renderStatus()}
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 text-[9px] font-mono text-muted-foreground/60 border border-muted/20">
+                <Clock size={10} />
+                <span>{node.estimated_minutes}m</span>
+              </div>
             </div>
           </div>
           
           {node.description && (
-            <p className="text-xs text-muted-foreground/50 font-light leading-relaxed max-w-lg">
+            <p className={clsx(
+              "text-xs font-light leading-relaxed max-w-lg transition-colors",
+              status === 'success' ? "text-muted-foreground/20" : "text-muted-foreground/50"
+            )}>
               {node.description}
             </p>
           )}
@@ -86,7 +131,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
 export const TaskTreeRoot: React.FC = () => {
   const { taskTree, appState } = useAppStore();
 
-  if (!taskTree || (appState !== 'PENDING' && appState !== 'SYNCING' && appState !== 'SUCCESS')) {
+  if (!taskTree || (appState !== 'PENDING' && appState !== 'SYNCING' && appState !== 'SUCCESS' && appState !== 'PARTIAL_ERROR')) {
     return null;
   }
 
@@ -102,6 +147,19 @@ export const TaskTreeRoot: React.FC = () => {
       </div>
       
       <TaskTreeVisualizer node={taskTree.root} />
+
+      {/* "End of Plan" Decorator */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1, duration: 1 }}
+        className="mt-24 flex flex-col items-center gap-4"
+      >
+        <div className="w-px h-12 bg-gradient-to-b from-muted to-transparent" />
+        <span className="text-[10px] font-mono tracking-[0.3em] text-muted-foreground/20 uppercase">
+          End of Plan
+        </span>
+      </motion.div>
     </div>
   );
 };

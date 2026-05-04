@@ -1,8 +1,12 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from langgraph.checkpoint.memory import InMemorySaver
+from sqlalchemy import select
+
+from app.models.checkpoint import LangGraphCheckpoint
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,23 @@ class InMemoryTenantCheckpointStore:
             if key[0] == user_id and key[1] == thread_id and key[2] == checkpoint_ns
         ]
         return sorted(records, key=lambda record: record.created_at)
+
+
+def build_tenant_checkpoint_restore_query(
+    *,
+    user_id: UUID,
+    thread_id: str,
+    checkpoint_ns: str = "",
+    checkpoint_id: str | None = None,
+):
+    statement = select(LangGraphCheckpoint).where(
+        LangGraphCheckpoint.user_id == user_id,
+        LangGraphCheckpoint.thread_id == thread_id,
+        LangGraphCheckpoint.checkpoint_ns == checkpoint_ns,
+    )
+    if checkpoint_id is not None:
+        statement = statement.where(LangGraphCheckpoint.checkpoint_id == checkpoint_id)
+    return statement.order_by(LangGraphCheckpoint.created_at.desc()).limit(1)
 
 
 class TenantAwareMemorySaver(InMemorySaver):
@@ -122,12 +143,14 @@ class TenantAwareMemorySaver(InMemorySaver):
         await super().aput_writes(self._tenant_config(config), writes, task_id, task_path)
 
     def list(self, config: dict[str, Any] | None, **kwargs: Any):
-        tenant_config = self._tenant_config(config) if config is not None else None
-        return super().list(tenant_config, **kwargs)
+        if config is None:
+            raise ValueError("LangGraph checkpoint list requires user_id and thread_id")
+        return super().list(self._tenant_config(config), **kwargs)
 
     async def alist(self, config: dict[str, Any] | None, **kwargs: Any):
-        tenant_config = self._tenant_config(config) if config is not None else None
-        async for checkpoint in super().alist(tenant_config, **kwargs):
+        if config is None:
+            raise ValueError("LangGraph checkpoint list requires user_id and thread_id")
+        async for checkpoint in super().alist(self._tenant_config(config), **kwargs):
             yield checkpoint
 
     @staticmethod

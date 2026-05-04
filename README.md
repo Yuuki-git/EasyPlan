@@ -65,6 +65,8 @@ python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+Recommended runtime: Python 3.11+ for better async performance. The current backend tests are also kept compatible with Python 3.10.
+
 ### Frontend / 前端
 ```bash
 cd frontend
