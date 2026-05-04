@@ -125,6 +125,15 @@ EasyPlan 同时需要“最终结构化 JSON”和“实时推理进度”。两
 - **模型流式 token**：如果底层模型支持 streaming，后端只消费它来更新内部进度，不把原始 token 直接透传给前端。
 - **错误通道**：Pydantic 校验失败时，后端推送 `event: reasoning` 的短摘要和 `event: error` 的可解释错误码，不推送原始 LLM 响应。
 
+当前实现：
+
+- `app/services/llm_service.py` 提供 `OpenAIPlannerClient`，使用 OpenAI Responses API `responses.parse(..., text_format=TaskTree)` 进入 Structured Output 模式。
+- 默认模型为 `gpt-4o-2024-08-06`，可通过 `EASYPLAN_OPENAI_MODEL` 覆盖。
+- LLM 服务通过 `ReasoningSink` 只输出安全阶段摘要，例如 `LLM_PLANNING_STARTED`、`LLM_SCHEMA_LOCKED`、`LLM_PLAN_PARSED`；不会保存 prompt、raw response 或 chain-of-thought。
+- `LLMUsageSink` 记录 token usage 埋点，字段包括 `provider`、`model`、`operation`、`input_tokens`、`output_tokens`、`total_tokens`；默认写结构化日志，不记录 prompt、completion 或 raw response。
+- `DeepSeekPlannerClient` 支持 DeepSeek OpenAI-compatible Chat Completions。DeepSeek 当前按官方 JSON Output 能力使用 `response_format={"type":"json_object"}`，再由后端 `TaskTree.model_validate()` 做强校验；它不被标记为等同 GPT-4o 的 strict Structured Outputs。
+- `XiaomiMiMoPlannerClient` 支持小米 MiMo OpenAI-compatible Chat Completions，默认 base URL 为 `https://api.xiaomimimo.com/v1`，默认模型为 `mimo-v2-flash`。MiMo 当前按 JSON mode + 后端 `TaskTree.model_validate()` 强校验处理，不标记为 strict Structured Outputs。
+
 推荐执行顺序：
 
 ```text
@@ -486,7 +495,7 @@ CREATE TABLE sync_run_items (
 - `sync_runs` 是一次用户确认后的外部同步批次。
 - `sync_run_items` 是每个任务对应的一次 MCP 工具调用结果。
 - `request_id` 由前端在确认同步时生成，同一用户下唯一；重复提交相同 `request_id` 时，后端直接返回已有 `sync_run` 状态，不再次恢复图或调用 MCP。
-- `idempotency_key` 是强制字段，格式：`{thread_id}:{task_id}:{provider}:create_task`，用于重试和断点续传时避免重复创建。
+- `idempotency_key` 是强制字段，逻辑材料为 `{user_id}:{thread_id}:{client_node_id}:{provider}:create_task`；实际落库可存为 `provider:create_task:sha256(...)`，用于重试和断点续传时避免重复创建。
 - `sync_run_items.status` 建议枚举：`pending`、`running`、`synced`、`retryable_failed`、`failed`、`skipped`。
 
 ### 5.11 Confirmation Requests
@@ -905,6 +914,20 @@ MVP 可以先用进程内队列，但接口要预留迁移到 Redis/Celery/RQ：
 
 ## 8. API 设计
 
+### 8.0 认证
+
+```http
+POST /api/auth/register
+POST /api/auth/token
+```
+
+认证要求：
+
+- MVP 使用邮箱密码注册，密码只保存 PBKDF2 哈希。
+- API token 使用 HS256 JWT，`sub` 必须是 `user_id`，并包含 `exp`。
+- 所有租户数据恢复路径必须先拿到当前登录用户，再用 `user_id + thread_id` 查询；禁止只凭 `thread_id` 恢复 checkpoint 或 thread。
+- `GET /api/integrations/{provider}/oauth/start` 需要 `Authorization: Bearer <jwt>`，OAuth callback 通过一次性 `state` 找回绑定用户。
+
 ### 8.1 提交意图
 
 ```http
@@ -914,9 +937,13 @@ X-User-Timezone: Asia/Shanghai
 
 {
   "intent_text": "这周末前我想把这篇论文初稿写完",
-  "preferred_provider": "todoist"
+  "preferred_provider": "todoist",
+  "planner_provider": "openai",
+  "planner_model": "gpt-4o-2024-08-06"
 }
 ```
+
+`planner_provider` 可选：`openai`、`deepseek`、`xiaomi`。如果前端不传，默认 `openai`；`planner_model` 不传时使用后端环境变量或服务默认值。
 
 返回：
 
@@ -1220,6 +1247,7 @@ sync_run.status='partially_succeeded'
 断点续传规则：
 
 - `idempotency_key` 对每个外部创建动作全局唯一，数据库 `UNIQUE(idempotency_key)` 是硬约束。
+- Todoist 内置 Adapter 使用同一个 `idempotency_key` 派生稳定 UUID，作为 Todoist Sync API command `uuid`；这样即使外部请求重试，Todoist 也能按 command UUID 去重。
 - 如果后端在“外部创建成功但响应丢失”时重试，Adapter/MCP 层必须先用 `idempotency_key` 查询本地 `sync_run_items`，已有 `external_task_id` 则直接返回成功摘要。
 - 对不支持幂等键的第三方 API，EasyPlan 仍以本地 `idempotency_key` 去重；必要时在 Todoist task description 写入不可见或低干扰的 EasyPlan trace id。
 - `retryable_failed` 用于网络错误、429、5xx；`failed` 用于 schema、权限、认证等不可自动重试错误。

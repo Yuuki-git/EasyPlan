@@ -1,5 +1,8 @@
+import pytest
+
 from app.services.checkpoint_service import (
     InMemoryTenantCheckpointStore,
+    TenantAwareMemorySaver,
     TenantCheckpointRecord,
 )
 
@@ -70,3 +73,10 @@ def test_checkpointer_lists_checkpoints_with_tenant_filter():
     records = store.list_for_thread("user_a", "thread_1")
 
     assert [record.checkpoint_id for record in records] == ["checkpoint_1"]
+
+
+def test_langgraph_checkpointer_rejects_list_without_tenant_config():
+    checkpointer = TenantAwareMemorySaver()
+
+    with pytest.raises(ValueError, match="requires user_id and thread_id"):
+        list(checkpointer.list(None))

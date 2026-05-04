@@ -50,3 +50,14 @@ body {
   justify-content: flex-start;
   padding-top: 15vh;
 }
+
+.mask-fade-out {
+  mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+}
+
+@media (max-width: 640px) {
+  .task-tree-node {
+    margin-left: 1rem !important;
+  }
+}

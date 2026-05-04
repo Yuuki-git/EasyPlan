@@ -1,22 +1,37 @@
 import asyncio
+import inspect
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
 from app.api.schemas import TaskTree
+from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 
 
 MAX_REPLAN_ATTEMPTS = 3
 
 
 class PlannerClient(Protocol):
-    async def create_plan(self, prompt: str) -> dict[str, Any]:
+    async def create_plan(
+        self,
+        prompt: str,
+        reasoning_sink: ReasoningSink | None = None,
+    ) -> dict[str, Any]:
         """Create a TaskTree-shaped plan using an async LLM client."""
 
 
 class RuleBasedPlannerClient:
-    async def create_plan(self, prompt: str) -> dict[str, Any]:
+    async def create_plan(
+        self,
+        prompt: str,
+        reasoning_sink: ReasoningSink | None = None,
+    ) -> dict[str, Any]:
+        await emit_reasoning(
+            reasoning_sink,
+            code="RULE_BASED_PLAN_CREATED",
+            message="已生成本地兜底任务树，正在进入规则校验",
+        )
         return {
             "root": {
                 "client_node_id": "root",
@@ -76,12 +91,14 @@ def planner_node_factory(planner: PlannerClient):
             current_task_tree_summary=_task_tree_summary(state.get("task_tree")),
             validation_errors=state.get("validation_errors"),
         )
-        task_tree = _run_async(planner.create_plan(prompt))
+        reasoning_sink = ListReasoningSink()
+        task_tree = _run_async(_call_planner(planner, prompt, reasoning_sink))
         next_state: AgentState = {
             **state,
             "task_tree": task_tree,
             "reasoning_events": [
                 *state.get("reasoning_events", []),
+                *reasoning_sink.events,
                 {
                     "node": "planner_node",
                     "code": "PLAN_CREATED",
@@ -96,6 +113,17 @@ def planner_node_factory(planner: PlannerClient):
         return pruned
 
     return planner_node
+
+
+async def _call_planner(
+    planner: PlannerClient,
+    prompt: str,
+    reasoning_sink: ReasoningSink,
+) -> dict[str, Any]:
+    parameters = inspect.signature(planner.create_plan).parameters
+    if "reasoning_sink" in parameters:
+        return await planner.create_plan(prompt, reasoning_sink=reasoning_sink)
+    return await planner.create_plan(prompt)
 
 
 def task_tree_validator_node(state: AgentState) -> AgentState:
