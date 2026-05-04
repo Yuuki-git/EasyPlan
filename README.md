@@ -59,19 +59,31 @@ EasyPlan/
 
 ## ⚡ 快速开始
 
-### 1. 配置环境变量
-参考 `.env.example` 创建 `.env` 文件，填入您的 `OPENAI_API_KEY` 和 `DATABASE_URL`。
+### 1. 克隆项目
+```bash
+git clone https://github.com/your-username/EasyPlan.git
+cd EasyPlan
+```
 
-### 2. 数据库初始化
+### 2. 配置环境变量
+```bash
+# 复制环境变量模板
+cp .env.example .env
+
+# 使用文本编辑器修改 .env 文件，填入您的配置
+# 必填项：OPENAI_API_KEY, DATABASE_URL, JWT_SECRET_KEY
+```
+
+### 3. 数据库初始化
 EasyPlan 具备**自动建表**功能。后端在启动时会自动检测并初始化 PostgreSQL 表结构，您无需手动运行 SQL 脚本。
 
-### 3. 本地启动
+### 4. 本地启动
 ```bash
-# 后端
+# 后端 (Terminal 1)
 python -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 前端
+# 前端 (Terminal 2)
 cd frontend && npm install && npm run dev
 ```
 

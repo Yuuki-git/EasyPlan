@@ -57,19 +57,31 @@ EasyPlan/
 
 ## ⚡ Quick Start
 
-### 1. Configuration
-Refer to `.env.example` to create your `.env` file with `OPENAI_API_KEY` and `DATABASE_URL`.
+### 1. Clone Project
+```bash
+git clone https://github.com/your-username/EasyPlan.git
+cd EasyPlan
+```
 
-### 2. Database Initialization
+### 2. Configuration
+```bash
+# Copy the environment template
+cp .env.example .env
+
+# Edit the .env file with your specific settings
+# Required: OPENAI_API_KEY, DATABASE_URL, JWT_SECRET_KEY
+```
+
+### 3. Database Initialization
 EasyPlan features **Automated Schema Initialization**. The backend will automatically detect and create PostgreSQL tables on startup—no manual SQL execution required.
 
-### 3. Run Locally
+### 4. Run Locally
 ```bash
-# Backend
+# Backend (Terminal 1)
 python -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# Frontend
+# Frontend (Terminal 2)
 cd frontend && npm install && npm run dev
 ```
 
