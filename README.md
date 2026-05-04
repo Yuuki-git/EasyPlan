@@ -60,19 +60,34 @@ EasyPlan/
 ## ⚡ 快速开始
 
 ### 1. 配置环境变量
-参考 `.env.example` 创建 `.env` 文件，填入您的 `OPENAI_API_KEY` 和 `TODOIST_CLIENT_ID`。
+参考 `.env.example` 创建 `.env` 文件，填入您的 `OPENAI_API_KEY` 和 `DATABASE_URL`。
 
-### 2. 启动后端
+### 2. 数据库初始化
+EasyPlan 具备**自动建表**功能。后端在启动时会自动检测并初始化 PostgreSQL 表结构，您无需手动运行 SQL 脚本。
+
+### 3. 本地启动
 ```bash
+# 后端
 python -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 前端
+cd frontend && npm install && npm run dev
 ```
 
-### 3. 启动前端
+---
+
+## 🚀 生产环境部署 (4C4G)
+
+建议使用 Docker Compose 进行一键部署，系统会自动处理全栈联通与数据库初始化。
+
 ```bash
-cd frontend
-npm install
-npm run dev
+# 1. 克隆代码并配置 .env
+# 2. 启动服务
+docker-compose up -d
+
+# 3. 验证部署
+docker-compose logs -f backend | grep "initialized"
 ```
 
 ### 4. 演示样例 (Usage Example)
