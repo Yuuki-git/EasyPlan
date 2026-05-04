@@ -6,6 +6,8 @@ from app.api.routes_intents import router as intents_router
 from app.api.routes_threads import router as threads_router
 
 
+import os
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
@@ -14,6 +16,16 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         docs_url="/docs",
     )
+
+    @app.on_event("startup")
+    async def startup_event():
+        required_vars = ["OPENAI_API_KEY", "DATABASE_URL", "JWT_SECRET_KEY"]
+        missing = [var for var in required_vars if not os.getenv(var)]
+        if missing:
+            print(f"CRITICAL: Missing environment variables: {', '.join(missing)}")
+        else:
+            print("INFO: Security environment variables loaded.")
+
     app.include_router(auth_router)
     app.include_router(intents_router)
     app.include_router(threads_router)
