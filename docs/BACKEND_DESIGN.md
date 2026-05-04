@@ -970,6 +970,24 @@ data: {"state_version":8,"code":"MCP_TOOL_CALL_FAILED","message":"Todoist 写入
 - 如果 `Last-Event-ID` 已超出后端 event buffer 保留范围，后端返回 `event: snapshot_required`，前端重新拉取快照后再连接。
 - SSE event buffer 只保存轻量事件，默认保留 15 分钟；业务状态以 `agent_threads` 和 checkpoint 为准。
 
+事件 Data 负载规范：
+
+| event | 必填字段 | 可选字段 | 说明 |
+| --- | --- | --- | --- |
+| `reasoning` | `state_version`, `message` | `code`, `node` | 后端生成的安全进度摘要，不包含 chain-of-thought |
+| `checkpoint` | `state_version`, `checkpoint_id`, `node` | `next_nodes` | LangGraph super-step 持久化后发送 |
+| `plan_ready` | `state_version`, `thread_id`, `task_tree` | `summary`, `assumptions` | `TaskTree` 已通过 Pydantic 校验，可进入 PENDING UI |
+| `sync_progress` | `state_version`, `success_count`, `total_count` | `failure_count`, `current_task_id` | 外部工具写入进度 |
+| `done` | `state_version`, `status` | `external_url`, `sync_run_id` | 终态事件，`status` 可为 `succeeded` 或 `partially_succeeded` |
+| `error` | `state_version`, `code`, `message` | `retryable`, `details` | 进入 ERROR UI 的统一错误事件 |
+| `snapshot_required` | 无 | `reason` | event buffer 缺失或 `Last-Event-ID` 过旧，前端必须重新拉取快照 |
+
+字段约束：
+
+- `state_version` 必须单调递增。
+- `task_tree` 必须与 OpenAPI 中 `TaskTree` schema 一致。
+- 所有事件 JSON 必须使用 UTF-8，且不包含 token、prompt、raw LLM response 或 MCP 原始大响应。
+
 ### 8.3 查询 Thread
 
 ```http

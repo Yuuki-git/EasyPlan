@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
 from typing import Annotated, AsyncIterator
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Header, Path, status
+from fastapi import APIRouter, Depends, Header, Path, status
 from fastapi.responses import StreamingResponse
 
+from app.api.dependencies import get_user_timezone
 from app.api.schemas import ConfirmationRequest, ConfirmationResponse, ThreadSnapshot
+from app.api.sse import format_sse_event
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
@@ -27,10 +30,17 @@ async def get_thread_snapshot(
 
 
 async def _empty_event_stream() -> AsyncIterator[str]:
-    yield "event: snapshot_required\ndata: {}\n\n"
+    yield format_sse_event("snapshot_required", {})
 
 
-@router.get("/{thread_id}/events")
+@router.get(
+    "/{thread_id}/events",
+    description=(
+        "Server-Sent Events stream. Events include reasoning, checkpoint, "
+        "plan_ready, sync_progress, done, snapshot_required, and error. "
+        "The error event payload contains state_version, code, and message."
+    ),
+)
 async def stream_thread_events(
     thread_id: Annotated[str, Path(min_length=1)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
@@ -46,7 +56,7 @@ async def stream_thread_events(
 async def confirm_thread(
     thread_id: Annotated[str, Path(min_length=1)],
     payload: ConfirmationRequest,
-    user_timezone: Annotated[str, Header(alias="X-User-Timezone")],
+    user_timezone: Annotated[ZoneInfo, Depends(get_user_timezone)],
 ) -> ConfirmationResponse:
     return ConfirmationResponse(
         thread_id=thread_id,

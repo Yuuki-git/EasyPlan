@@ -1,4 +1,5 @@
 fastapi==0.136.1
+langgraph==1.1.6
 pydantic==2.12.5
 SQLAlchemy==2.0.49
 pytest==8.4.2

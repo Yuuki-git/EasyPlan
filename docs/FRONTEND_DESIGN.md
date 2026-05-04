@@ -1,82 +1,60 @@
 # EasyPlan Frontend Design Document
 
 ## 1. 概述
-本文档旨在定义 EasyPlan 前端系统的架构设计、状态管理及交互逻辑，确保实现极致简洁、意图驱动的用户体验。
+本文档定义了 EasyPlan 前端系统的架构设计。我们致力于在“极致极简”与“大众易用性”之间取得平衡，通过主次分明的界面、渐进式的引导和具有仪式感的动效，打造一个既专业又亲和的意图驱动应用。
 
-## 2. 组件树结构 (Component Tree)
-采用组合优于继承的原则，确保组件职责单一。
+## 2. 技术规格 (Technical Specifications)
+
+### 2.1 核心准则
+- **OpenAPI 严守**: 严格遵循后端接口契约。
+- **TypeScript 核心**: 强制类型安全，特别是针对 SSE 流式数据和 Store 状态。
+- **Monorepo 结构**: 独立的前端依赖管理 (`frontend/` 目录)。
+- **时区与安全**: 全局 ISO 8601 时区同步，环境变量管理敏感配置。
+
+### 2.2 状态管理 (Zustand & Snapshot)
+- **状态对齐**: SSE 重连时通过快照请求恢复 UI。
+- **动态输入控制**: Zustand 驱动 `DynamicInput` 的 Placeholder、图标及提交逻辑的动态切换。
+
+## 3. 设计哲学 (Design Philosophy - Balanced Minimalism)
+
+### 3.1 主次分明 (Centrality)
+- **核心组件**: 全应用以 `DynamicInput` 为灵魂。它处于视觉中心，既是意图的入口，也是微调反馈的接收站。
+
+### 3.2 渐进式引导 (Progressive Guidance)
+- **幽灵设计 (Ghost Design)**: `Confirm` 和 `Cancel` 按钮采用半透明或仅边框的“幽灵按钮”风格，减少视觉侵入。
+- **快捷键标注**: 在按钮旁以微细文字标注快捷键（如 `⌘↵`），在照顾普通用户的同时引导其向高效用户进阶。
+- **平滑显隐**: 按钮仅在必要阶段（如 `PENDING` 态）随任务树同步出现，非活跃状态下完全隐匿。
+
+### 3.3 仪式感动效 (Fluid Motion)
+- **生长式动画**: 任务树和按钮的出现模拟“植物生长”过程，利用 `stagger`（交错）效果和 `cubic-bezier` 曲线，实现丝滑、自然的伸展。
+- **状态过渡**: 避免生硬的弹出（Pop），优先使用 `opacity`、`blur` 和 `transform: scale/translate` 的组合动效。
+
+## 4. 组件树结构 (Component Tree)
 
 ```text
 App
 └── Layout (全局布局)
-    ├── Header (Logo & User Profile)
-    └── Main (核心交互区域)
-        ├── IntentInput (Spotlight 风格输入框)
-        ├── StarterTemplates (启动模板 - 仅 INITIAL 态)
-        │   └── TemplateCard (场景化建议，如“写论文”、“健身计划”)
+    ├── Header (Logo & Integration Modal Toggle)
+    └── Main (核心交互区域：The Void)
+        ├── DynamicInput (全应用唯一输入框)
+        │   └── SuggestionOverlay (微细提示语)
         └── StageContainer (基于状态的舞台容器)
-            ├── ReasoningStream (思考轨迹展示 - 仅 THINKING 态)
-            │   └── ReasoningStep (单条思考日志)
-            ├── TaskTreeVisualizer (任务树可视化 - PENDING/SYNCING/SUCCESS/PARTIAL_ERROR 态)
-            │   ├── TaskBranch (递归渲染的任务分支)
-            │   └── TaskItem (包含成功/失败/重试状态的最小单元)
-            ├── RefinementInput (二次优化输入框 - 仅 PENDING 态)
-            ├── IntegrationSettings (OAuth 授权 & 集成管理)
-            └── ActionBar (操作栏)
-                ├── ConfirmButton (确认注入 Todoist)
-                └── EditButtonGroup (重试/修改/取消)
+            ├── ReasoningStream (流式思考轨迹)
+            ├── TaskTreeVisualizer (生长式任务树)
+            └── ActionLayer (幽灵按钮层 - 带快捷键提示)
 ```
 
-### 核心组件说明：
-- **StarterTemplates**: 解决“空白画布”问题。提供如“拆解一个复杂的项目”、“规划这周末的旅行”等一键填入模板。
-- **RefinementInput**: 允许用户在任务树生成后通过自然语言进行微调（如：“太长了，帮我缩减一半”、“增加一些关于预算的步骤”）。
-- **TaskTreeVisualizer**: 
-    - **渐进式展示**: 默认仅展开核心路径。
-    - **状态感知**: 在 `PARTIAL_ERROR` 态下，清晰标记哪些任务已成功同步到 Todoist，哪些失败。
-- **TaskItem**: 针对失败节点提供独立的“一键重试”小按钮。
+## 5. UI 状态机 (Balanced State Machine)
 
-## 3. 状态管理方案 (State Management)
-
-### 3.1 核心状态 Store
-```typescript
-interface AppStore {
-  intent: string;
-  appState: 'INITIAL' | 'THINKING' | 'PENDING' | 'SYNCING' | 'SUCCESS' | 'PARTIAL_ERROR' | 'ERROR';
-  threadId: string | null;
-  syncRequestId: string | null;
-  reasoningLogs: string[];
-  taskTree: TaskNode | null;
-  isIntegrated: boolean;
-  // Actions
-  setIntent: (val: string) => void;
-  refineIntent: (refinement: string) => void; // 提交二次微调
-  retryTask: (taskId: string) => Promise<void>; // 针对单个节点的重试
-  alignState: () => Promise<void>;
-  reset: () => void;
-}
-```
-
-### 3.2 SSE 与 交互逻辑
-- **二次优化流**: 用户在 `RefinementInput` 提交后，状态回退至 `THINKING`，SSE 重新开始推送推理日志及更新后的任务树。
-- **部分同步失败处理**: 监听 `event: sync_status`。若部分节点失败，状态切至 `PARTIAL_ERROR`，UI 保持当前树状视图，并高亮错误节点。
-
-## 4. UI 状态机 (UI State Machine)
-
-| 状态 (State) | 视觉特征 | 核心交互 | 触发条件 |
+| 状态 (State) | 输入框角色 | 动作/引导 (Action) | 动效特征 |
 | :--- | :--- | :--- | :--- |
-| **INITIAL** | 居中输入框 + **启动模板卡片** | 键入或点击模板 | 初始态 |
-| **THINKING** | 上浮输入框，流式日志 | 允许取消 | 推理或**二次微调中** |
-| **PENDING** | 任务树 + **二次微调输入框** | **行动指引** + 文本优化回复 | 收到 `plan_ready` |
-| **SYNCING** | 节点静默 Loading | 禁止交互 | 点击确认 |
-| **PARTIAL_ERROR** | 混合状态标识（红/绿） | **针对性重试**失败节点 | 部分任务同步失败 |
-| **SUCCESS** | 成功动画，Todoist 链接 | 点击跳转外部查看 | 全部同步成功 |
+| **INITIAL** | 捕获意图 | 极简预测提示 | 聚焦动效 |
+| **THINKING** | 状态展示 | 幽灵式 [取消] (Esc) | 呼吸感加载 |
+| **PENDING** | 意图微调 | 幽灵式 [确认] (⌘↵) | 树状节点交错生长 |
+| **SYNCING** | 进度反馈 | 无操作，仅保留进度感知 | 节点内部平滑填充 |
+| **SUCCESS** | 开启新循环 | 成功徽章 + 外部链接 | 整体淡出/新意图聚焦 |
 
-## 5. 补充规范 (PM 审计 & 体验增强)
-
-### 5.1 体验与性能
-- **渐进式披露**: 超过 10 个任务时自动收起非叶子节点，保持视觉焦点。
-- **时区协议**: Header 携带 `X-User-Timezone`，强制使用 ISO 8601 带时区格式。
-
-### 5.2 稳健性 (Robustness)
-- **局部重试**: `PARTIAL_ERROR` 态下，点击重试仅针对失败节点发送请求，复用同一个 `syncRequestId`（由后端处理子任务幂等）。
-- **状态对齐**: 重连时通过快照请求恢复树的最新修改状态，确保“微调”后的结果不丢失。
+## 6. 开发规范 (Implementation Rules)
+1. **时区**: Header 必须携带 `X-User-Timezone`。
+2. **环境**: 严禁硬编码，使用 `.env`。
+3. **动画库**: 推荐使用 `framer-motion` 或纯 CSS `transition` 以保证极致性能与丝滑度。

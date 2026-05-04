@@ -20,8 +20,10 @@
             "required": true,
             "schema": {
               "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
               "title": "X-User-Timezone"
-            }
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
           }
         ],
         "requestBody": {
@@ -107,6 +109,7 @@
           "threads"
         ],
         "summary": "Stream Thread Events",
+        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, sync_progress, done, snapshot_required, and error. The error event payload contains state_version, code, and message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -182,8 +185,10 @@
             "required": true,
             "schema": {
               "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
               "title": "X-User-Timezone"
-            }
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
           }
         ],
         "requestBody": {
@@ -724,6 +729,7 @@
               "$ref": "#/components/schemas/TaskNode"
             },
             "type": "array",
+            "maxItems": 20,
             "title": "Children"
           }
         },

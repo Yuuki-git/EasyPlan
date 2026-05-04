@@ -2,7 +2,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+MAX_TASK_TREE_DEPTH = 8
+MAX_TASK_TREE_SIBLINGS = 20
+MAX_TASK_TREE_NODES = 200
 
 
 class TaskNode(BaseModel):
@@ -15,7 +20,7 @@ class TaskNode(BaseModel):
     estimated_minutes: int = Field(..., ge=1, lt=5)
     node_type: Literal["group", "action"]
     depends_on: list[str] = Field(default_factory=list)
-    children: list["TaskNode"] = Field(default_factory=list)
+    children: list["TaskNode"] = Field(default_factory=list, max_length=MAX_TASK_TREE_SIBLINGS)
 
 
 class TaskTree(BaseModel):
@@ -24,6 +29,28 @@ class TaskTree(BaseModel):
     root: TaskNode
     summary: str = Field(..., max_length=500)
     assumptions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_tree_limits(self) -> "TaskTree":
+        max_depth, total_nodes = _measure_tree(self.root)
+        if max_depth > MAX_TASK_TREE_DEPTH:
+            raise ValueError(f"TaskTree maximum depth is {MAX_TASK_TREE_DEPTH}")
+        if total_nodes > MAX_TASK_TREE_NODES:
+            raise ValueError(f"TaskTree maximum node count is {MAX_TASK_TREE_NODES}")
+        return self
+
+
+def _measure_tree(root: TaskNode) -> tuple[int, int]:
+    def walk(node: TaskNode, depth: int) -> tuple[int, int]:
+        max_depth = depth
+        total = 1
+        for child in node.children:
+            child_depth, child_total = walk(child, depth + 1)
+            max_depth = max(max_depth, child_depth)
+            total += child_total
+        return max_depth, total
+
+    return walk(root, 1)
 
 
 class IntentCreateRequest(BaseModel):
