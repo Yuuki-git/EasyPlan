@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /build
 
 COPY requirements.txt .
-RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 FROM python:3.11-slim AS runtime
 
