@@ -297,6 +297,13 @@ X-User-Timezone: Asia/Shanghai
 ]
 ```
 
+当前外部任务 provider：
+
+| provider | 说明 |
+| --- | --- |
+| `todoist` | Todoist 内置 Adapter，工具名 `todoist.create_task` |
+| `microsoft_todo` | Microsoft Graph To Do 内置 Adapter，工具名 `microsoft_todo.create_task` |
+
 ### GET `/api/integrations/{provider}/tools`
 
 获取指定 provider 暴露的 MCP 工具列表。
@@ -309,6 +316,11 @@ X-User-Timezone: Asia/Shanghai
     {
       "name": "todoist.create_task",
       "title": "Create Todoist task",
+      "input_schema": {}
+    },
+    {
+      "name": "microsoft_todo.create_task",
+      "title": "Create Microsoft To Do task",
       "input_schema": {}
     }
   ]
@@ -349,6 +361,8 @@ Authorization: Bearer <access_token>
 }
 ```
 
+Microsoft To Do 授权时使用 provider `microsoft_todo`，授权 URL 指向 Microsoft identity platform，并请求 `offline_access User.Read Tasks.ReadWrite`。
+
 安全要求：
 
 - `state` 绑定 `user_id + provider + redirect_uri`。
@@ -374,6 +388,21 @@ Query：
   "status": "connected"
 }
 ```
+
+Microsoft To Do callback 成功时返回：
+
+```json
+{
+  "provider": "microsoft_todo",
+  "status": "connected"
+}
+```
+
+Microsoft To Do 幂等策略：
+
+- Adapter 会把 `idempotency_key` 映射为稳定 category：`EasyPlan:<sha256-prefix>`。
+- 创建前会读取目标 To Do list 的近期任务，若已存在相同 category，则直接返回已有任务，不再次 POST 创建。
+- 新任务的 `body.content` 会附加 `EasyPlan idempotency_key: ...`，用于人工排查和后续迁移到 Graph open extension。
 
 ## 7. 核心数据结构
 
@@ -438,4 +467,3 @@ Query：
 - `GET /api/threads/{thread_id}/events` 当前具备 SSE 格式能力，生产事件 buffer 和真实 LangGraph stream 仍需继续接入。
 - `GET /api/integrations`、`GET /tools` 当前为接口骨架，后续应接入数据库和 MCP tool registry。
 - OAuth callback 已具备服务层闭环，生产环境需替换真实持久化 repository。
-

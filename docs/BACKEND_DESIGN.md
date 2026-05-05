@@ -1124,6 +1124,8 @@ DELETE /api/integrations/{provider}
 安全要求：
 
 - OAuth `state` 必须绑定 `user_id + provider + redirect_uri`，10 分钟过期，一次性消费。
+- `todoist` 使用 Todoist OAuth2，scope 默认为 `task:add`。
+- `microsoft_todo` 使用 Microsoft identity platform OAuth2，scope 默认为 `offline_access User.Read Tasks.ReadWrite`，callback 后将 Graph token envelope encrypt 到 `integrations.encrypted_credentials`。
 - 支持 PKCE 的 provider 必须启用 PKCE。
 - access token、refresh token 只存 `encrypted_credentials`，前端永不接触 token 明文。
 - token 解密只发生在 `mcp_client_pool` 或 Adapter 调用外部服务前，调用结束后不写明文日志。
@@ -1248,6 +1250,7 @@ sync_run.status='partially_succeeded'
 
 - `idempotency_key` 对每个外部创建动作全局唯一，数据库 `UNIQUE(idempotency_key)` 是硬约束。
 - Todoist 内置 Adapter 使用同一个 `idempotency_key` 派生稳定 UUID，作为 Todoist Sync API command `uuid`；这样即使外部请求重试，Todoist 也能按 command UUID 去重。
+- Microsoft To Do 内置 Adapter 使用 `idempotency_key` 生成稳定 category：`EasyPlan:<sha256-prefix>`；创建前扫描目标 list 近期任务，如果已存在该 category，直接返回已有任务，避免重复 POST。
 - 如果后端在“外部创建成功但响应丢失”时重试，Adapter/MCP 层必须先用 `idempotency_key` 查询本地 `sync_run_items`，已有 `external_task_id` 则直接返回成功摘要。
 - 对不支持幂等键的第三方 API，EasyPlan 仍以本地 `idempotency_key` 去重；必要时在 Todoist task description 写入不可见或低干扰的 EasyPlan trace id。
 - `retryable_failed` 用于网络错误、429、5xx；`failed` 用于 schema、权限、认证等不可自动重试错误。

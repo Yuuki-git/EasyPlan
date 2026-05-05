@@ -4,10 +4,21 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
 from app.api.auth import AuthUser, get_current_user
 from app.api.schemas import IntegrationStatus, OAuthStartResponse
-from app.services.oauth_service import OAuthStateError, build_default_todoist_oauth_service
+from app.services.mcp_adapters import TodoistAdapterError, list_builtin_tools
+from app.services.oauth_service import (
+    OAuthStateError,
+    build_default_microsoft_oauth_service,
+    build_default_todoist_oauth_service,
+)
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 _todoist_oauth_service = build_default_todoist_oauth_service()
+_microsoft_oauth_service = build_default_microsoft_oauth_service()
+_oauth_services = {
+    "todoist": _todoist_oauth_service,
+    "microsoft_todo": _microsoft_oauth_service,
+    "microsoft": _microsoft_oauth_service,
+}
 
 
 @router.get("", response_model=list[IntegrationStatus])
@@ -19,7 +30,10 @@ async def list_integrations() -> list[IntegrationStatus]:
 async def list_integration_tools(
     provider: Annotated[str, Path(min_length=1)],
 ) -> dict[str, list[dict]]:
-    return {"tools": []}
+    try:
+        return {"tools": list_builtin_tools(provider)}
+    except TodoistAdapterError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/{provider}/refresh-tools")
@@ -35,10 +49,11 @@ async def start_oauth(
     request: Request,
     current_user: Annotated[AuthUser, Depends(get_current_user)],
 ) -> OAuthStartResponse:
-    if provider != "todoist":
+    oauth_service = _oauth_services.get(provider)
+    if oauth_service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported provider")
     callback_url = str(request.url_for("oauth_callback", provider=provider))
-    authorization = _todoist_oauth_service.start_authorization(
+    authorization = oauth_service.start_authorization(
         user_id=current_user.id,
         redirect_uri=callback_url,
     )
@@ -56,8 +71,11 @@ async def oauth_callback(
     code: str,
     state: str,
 ) -> dict[str, str]:
+    oauth_service = _oauth_services.get(provider)
+    if oauth_service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unsupported provider")
     try:
-        await _todoist_oauth_service.complete_callback(
+        await oauth_service.complete_callback(
             user_id=None,
             provider=provider,
             code=code,
