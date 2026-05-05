@@ -1,4 +1,4 @@
-# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.0.0)
+# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.1.0)
 
 > **Detailed plan is all you need. Efficiency is everything.**  
 > **"Don't let grand visions become a burden. Let technology carry the weight of planning."**
@@ -16,7 +16,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Maintain Human Agency**: We stick to "Human-in-the-Loop (HITL)" design. AI handles the tedious planning; you retain ultimate control.
 - **Absolute Certainty**: Industrial-grade "Resilient Sync" ensures your plans are synchronized accurately and without duplicates, even in unstable networks.
 
-## ✨ Features (v1.0.0)
+## ✨ Features (v1.1.0)
 
 - **Spotlight Capture**: A single dynamic input box for fuzzy natural language goal entry.
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.
@@ -93,7 +93,7 @@ cd frontend && npm install && npm run dev
 
 ---
 
-## 🚀 Production Deployment (4C4G)
+## 🚀 Production Deployment
 
 We recommend using Docker Compose for a one-click deployment. The system will handle stack orchestration and DB setup automatically.
 
