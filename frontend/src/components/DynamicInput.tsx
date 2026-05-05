@@ -29,13 +29,17 @@ export const DynamicInput: React.FC = () => {
     if (appState === 'INITIAL') {
       try {
         setAppState('THINKING');
+        const { preferredProvider } = useAppStore.getState();
         const response = await fetch('/api/intents', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
           },
-          body: JSON.stringify({ intent_text: value })
+          body: JSON.stringify({ 
+            intent_text: value,
+            preferred_provider: preferredProvider 
+          })
         });
         
         if (!response.ok) throw new Error('Failed to submit intent');

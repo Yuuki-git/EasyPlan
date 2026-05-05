@@ -15,6 +15,7 @@ from app.services.oauth_service import (
     CredentialCipher,
     InMemoryIntegrationRepository,
     InMemoryOAuthStateRepository,
+    MicrosoftOAuthService,
     OAuthStateError,
     TodoistOAuthService,
 )
@@ -115,6 +116,64 @@ def test_todoist_oauth_callback_encrypts_credentials_and_consumes_state_once():
                 user_id=user_id,
                 provider="todoist",
                 code="oauth-code",
+                state=start.state,
+            )
+        )
+
+
+class FakeMicrosoftTokenClient:
+    async def exchange_code(self, *, code: str, redirect_uri: str):
+        assert code == "microsoft-code"
+        return {
+            "access_token": "graph-access-token",
+            "refresh_token": "graph-refresh-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "offline_access User.Read Tasks.ReadWrite",
+        }
+
+
+def test_microsoft_oauth_callback_encrypts_graph_credentials_and_consumes_state_once():
+    user_id = uuid4()
+    cipher = CredentialCipher(secret="unit-test-microsoft-secret")
+    integration_repository = InMemoryIntegrationRepository()
+    service = MicrosoftOAuthService(
+        state_repository=InMemoryOAuthStateRepository(),
+        integration_repository=integration_repository,
+        token_client=FakeMicrosoftTokenClient(),
+        cipher=cipher,
+        client_id="microsoft-client-id",
+        client_secret="microsoft-client-secret",
+    )
+
+    start = service.start_authorization(
+        user_id=user_id,
+        redirect_uri="https://easyplan.example/api/integrations/microsoft_todo/oauth/callback",
+    )
+    integration = asyncio.run(
+        service.complete_callback(
+            user_id=user_id,
+            provider="microsoft_todo",
+            code="microsoft-code",
+            state=start.state,
+        )
+    )
+
+    assert "login.microsoftonline.com" in start.authorization_url
+    assert "Tasks.ReadWrite" in start.authorization_url
+    assert b"graph-access-token" not in integration.encrypted_credentials
+    assert integration.provider == "microsoft_todo"
+    assert integration.display_name == "Microsoft To Do"
+    assert integration_repository.get(user_id, "microsoft_todo") == integration
+    decrypted = cipher.decrypt_json(integration.encrypted_credentials)
+    assert decrypted["access_token"] == "graph-access-token"
+    assert "Tasks.ReadWrite" in integration.scopes
+    with pytest.raises(OAuthStateError):
+        asyncio.run(
+            service.complete_callback(
+                user_id=user_id,
+                provider="microsoft_todo",
+                code="microsoft-code",
                 state=start.state,
             )
         )

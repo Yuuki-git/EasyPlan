@@ -54,7 +54,17 @@ App
 | **SYNCING** | 进度反馈 | 无操作，仅保留进度感知 | 节点内部平滑填充 |
 | **SUCCESS** | 开启新循环 | 成功徽章 + 外部链接 | 整体淡出/新意图聚焦 |
 
-## 6. 开发规范 (Implementation Rules)
-1. **时区**: Header 必须携带 `X-User-Timezone`。
-2. **环境**: 严禁硬编码，使用 `.env`。
-3. **动画库**: 推荐使用 `framer-motion` 或纯 CSS `transition` 以保证极致性能与丝滑度。
+## 6. 未来展望 (v1.1.0 Roadmap)
+
+为了支持后续接入 Microsoft To Do 等更多集成，前端已在架构上预留了以下扩展点：
+
+### 6.1 集成管理扩展 (Multi-provider Integrations)
+- **UI 增补**: 在 `IntegrationModal` 中采用卡片式布局，支持动态渲染多个提供商。接入新服务仅需更换 Logo 与文字。
+- **逻辑流**: 统一通过 `/api/integrations/{provider}/oauth/start` 触发授权。
+
+### 6.2 目标选择器 (Provider Selector)
+- **UI 交互**: 在 `DynamicInput` 底部增加一个极简的 Provider 切换图标。
+- **状态联动**: 提交意图时动态修改 `preferred_provider` 参数。
+
+### 6.3 动态回调处理 (Dynamic OAuth Callback)
+- **URL 解析**: 回调页面将支持 `provider` 查询参数，实现通用的授权成功/失败提示逻辑。

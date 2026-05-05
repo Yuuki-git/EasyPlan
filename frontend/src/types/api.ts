@@ -1,5 +1,6 @@
 /**
  * This file is manually generated based on docs/openapi.json
+ * Updated for v1.1.0 (Auth + Multi-planner + Microsoft To Do)
  */
 
 export type ConfirmationAction = 'approve' | 'edit' | 'refine' | 'reject';
@@ -28,7 +29,9 @@ export interface IntegrationStatus {
 
 export interface IntentCreateRequest {
   intent_text: string;
-  preferred_provider?: string;
+  preferred_provider?: string; // e.g., 'todoist', 'microsoft_todo'
+  planner_provider?: 'openai' | 'deepseek' | 'xiaomi';
+  planner_model?: string | null;
 }
 
 export interface IntentCreateResponse {
@@ -68,9 +71,26 @@ export interface ThreadSnapshot {
   last_event_id: string | null;
   server_time: string;
   intent_text: string;
-  task_tree?: any | null; // Complex object or TaskTree
+  task_tree?: any | null;
   interrupt_payload?: any | null;
   latest_checkpoint_id?: string | null;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  display_name?: string | null;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_at: string;
 }
 
 export interface ValidationError {

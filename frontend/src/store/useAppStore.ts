@@ -19,11 +19,13 @@ interface AppStore {
   reasoningLogs: string[];
   taskTree: TaskTree | null;
   nodeStatuses: Record<string, 'pending' | 'syncing' | 'success' | 'error'>;
+  preferredProvider: string; // 'todoist' or 'microsoft_todo'
   isIntegrated: boolean;
   error: string | null;
 
   // Actions
   setIntent: (intent: string) => void;
+  setPreferredProvider: (provider: string) => void;
   setAppState: (state: AppState) => void;
   setThreadId: (id: string | null) => void;
   generateSyncId: () => void;
@@ -46,10 +48,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   reasoningLogs: [],
   taskTree: null,
   nodeStatuses: {},
+  preferredProvider: 'todoist',
   isIntegrated: false,
   error: null,
 
   setIntent: (intent) => set({ intent }),
+  setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
   setAppState: (appState) => set({ appState }),
   setThreadId: (threadId) => set({ threadId }),
   

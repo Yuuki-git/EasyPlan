@@ -24,6 +24,14 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "get" in schema["paths"]["/api/integrations/{provider}/oauth/callback"]
 
 
+def test_openapi_contract_documents_microsoft_todo_as_supported_provider():
+    app = create_app()
+
+    schema = app.openapi()
+
+    assert "microsoft_todo" in schema["info"]["description"]
+
+
 def test_openapi_contract_requires_timezone_on_mutating_planner_calls():
     app = create_app()
 

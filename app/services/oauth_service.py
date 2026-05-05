@@ -14,6 +14,9 @@ from uuid import UUID, uuid4
 TODOIST_AUTHORIZATION_URL = "https://app.todoist.com/oauth/authorize"
 TODOIST_TOKEN_URL = "https://api.todoist.com/oauth/access_token"
 DEFAULT_TODOIST_SCOPES = ["task:add"]
+MICROSOFT_AUTHORIZATION_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+DEFAULT_MICROSOFT_TODO_SCOPES = ["offline_access", "User.Read", "Tasks.ReadWrite"]
 
 
 class OAuthStateError(RuntimeError):
@@ -153,6 +156,44 @@ class TodoistOAuthTokenClient:
         return response.json()
 
 
+class MicrosoftOAuthTokenClient:
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        http_client: Any | None = None,
+        token_url: str = MICROSOFT_TOKEN_URL,
+        timeout_seconds: float = 15.0,
+        scopes: list[str] | None = None,
+    ) -> None:
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.http_client = http_client
+        self.token_url = token_url
+        self.timeout_seconds = timeout_seconds
+        self.scopes = scopes or DEFAULT_MICROSOFT_TODO_SCOPES
+
+    async def exchange_code(self, *, code: str, redirect_uri: str) -> dict[str, Any]:
+        data = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+            "scope": " ".join(self.scopes),
+        }
+        if self.http_client is not None:
+            response = await self.http_client.post(self.token_url, data=data, timeout=self.timeout_seconds)
+        else:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(self.token_url, data=data, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        return response.json()
+
+
 class TodoistOAuthService:
     def __init__(
         self,
@@ -246,11 +287,121 @@ class TodoistOAuthService:
         return self.state_repository.get(state)
 
 
+class MicrosoftOAuthService:
+    provider = "microsoft_todo"
+
+    def __init__(
+        self,
+        *,
+        state_repository: InMemoryOAuthStateRepository,
+        integration_repository: InMemoryIntegrationRepository,
+        token_client: Any,
+        cipher: CredentialCipher,
+        client_id: str,
+        client_secret: str,
+        authorization_url: str = MICROSOFT_AUTHORIZATION_URL,
+        scopes: list[str] | None = None,
+    ) -> None:
+        self.state_repository = state_repository
+        self.integration_repository = integration_repository
+        self.token_client = token_client
+        self.cipher = cipher
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.authorization_url = authorization_url
+        self.scopes = scopes or DEFAULT_MICROSOFT_TODO_SCOPES
+
+    def start_authorization(
+        self,
+        *,
+        user_id: UUID,
+        redirect_uri: str,
+    ) -> OAuthAuthorizationStart:
+        state = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        self.state_repository.save(
+            OAuthStateRecord(
+                user_id=user_id,
+                provider=self.provider,
+                state=state,
+                redirect_uri=redirect_uri,
+                requested_scopes=list(self.scopes),
+                expires_at=expires_at,
+            )
+        )
+        query = urlencode(
+            {
+                "client_id": self.client_id,
+                "scope": " ".join(self.scopes),
+                "state": state,
+                "response_type": "code",
+                "response_mode": "query",
+                "redirect_uri": redirect_uri,
+            }
+        )
+        return OAuthAuthorizationStart(
+            provider=self.provider,
+            authorization_url=f"{self.authorization_url}?{query}",
+            state=state,
+            expires_at=expires_at,
+        )
+
+    async def complete_callback(
+        self,
+        *,
+        user_id: UUID | None,
+        provider: str,
+        code: str,
+        state: str,
+    ) -> IntegrationCredentialRecord:
+        if provider not in {"microsoft_todo", "microsoft"}:
+            raise OAuthStateError(f"Unsupported OAuth provider: {provider}")
+        state_record = self.state_repository.consume(state=state, user_id=user_id, provider=self.provider)
+        token_payload = await self.token_client.exchange_code(
+            code=code,
+            redirect_uri=state_record.redirect_uri,
+        )
+        expires_in = token_payload.get("expires_in")
+        token_expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=int(expires_in)) if expires_in is not None else None
+        )
+        scopes = _parse_scopes(token_payload.get("scope")) or state_record.requested_scopes
+        return self.integration_repository.upsert(
+            IntegrationCredentialRecord(
+                id=uuid4(),
+                user_id=state_record.user_id,
+                provider=self.provider,
+                display_name="Microsoft To Do",
+                auth_type="oauth2",
+                encrypted_credentials=self.cipher.encrypt_json(token_payload),
+                scopes=scopes,
+                token_expires_at=token_expires_at,
+            )
+        )
+
+    def get_state(self, state: str) -> OAuthStateRecord | None:
+        return self.state_repository.get(state)
+
+
 def build_default_todoist_oauth_service() -> TodoistOAuthService:
     client_id = os.getenv("TODOIST_CLIENT_ID", "todoist-client-id")
     client_secret = os.getenv("TODOIST_CLIENT_SECRET", "todoist-client-secret")
     token_client = TodoistOAuthTokenClient(client_id=client_id, client_secret=client_secret)
     return TodoistOAuthService(
+        state_repository=InMemoryOAuthStateRepository(),
+        integration_repository=InMemoryIntegrationRepository(),
+        token_client=token_client,
+        cipher=CredentialCipher(secret=os.getenv("EASYPLAN_CREDENTIAL_SECRET", "dev-only-credential-secret")),
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+
+
+def build_default_microsoft_oauth_service() -> MicrosoftOAuthService:
+    client_id = os.getenv("MICROSOFT_CLIENT_ID", "microsoft-client-id")
+    client_secret = os.getenv("MICROSOFT_CLIENT_SECRET", "microsoft-client-secret")
+    token_client = MicrosoftOAuthTokenClient(client_id=client_id, client_secret=client_secret)
+    return MicrosoftOAuthService(
         state_repository=InMemoryOAuthStateRepository(),
         integration_repository=InMemoryIntegrationRepository(),
         token_client=token_client,

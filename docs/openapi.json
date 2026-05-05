@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "EasyPlan Backend API",
-    "description": "Intent-driven task planning API with HITL LangGraph checkpoints.",
+    "description": "Intent-driven task planning API with HITL LangGraph checkpoints. Supported external providers include todoist and microsoft_todo.",
     "version": "0.1.0"
   },
   "paths": {
