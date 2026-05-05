@@ -22,7 +22,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.
 - **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans instantly.
 - **Fluid Motion UI**: "Balanced Minimalism" interface where the task tree grows organically as you plan.
-- **Resilient Synchronization**: Supports **Todoist** integration with strong idempotency. Failed syncs can be retried without creating duplicates.
+- **Resilient Synchronization**: Supports **Todoist** and **Microsoft To Do** integration with strong idempotency. Failed syncs can be retried without creating duplicates.
 - **Enterprise-Grade Security**: Multi-tenant isolation, JWT authentication, and OAuth2 integration closure.
 
 ## 🛠️ Architecture
@@ -85,6 +85,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 cd frontend && npm install && npm run dev
 ```
 
+### 5. Usage Example
+1. **Enter Intent**: Input `I want to finish a research report on AI agents by next Friday` on the home page.
+2. **AI Decomposition**: The system shows the reasoning stream in real-time and "grows" a task tree (e.g., review latest papers, build architecture diagrams, write abstract, etc.).
+3. **Refinement**: Feel it's too complex? Type `Reduce it to something I can start within 30 minutes`, and the AI will immediately reconstruct the plan.
+4. **One-Click Sync**: Click "Confirm", and the tasks will instantly sync to your Todoist or Microsoft To Do account.
+
 ---
 
 ## 🚀 Production Deployment (4C4G)
@@ -99,12 +105,6 @@ docker-compose up -d
 # 3. Verify Deployment
 docker-compose logs -f backend | grep "initialized"
 ```
-
-### 4. Usage Example
-1. **Enter Intent**: Input `I want to finish a research report on AI agents by next Friday` on the home page.
-2. **AI Decomposition**: The system shows the reasoning stream in real-time and "grows" a task tree (e.g., review latest papers, build architecture diagrams, write abstract, etc.).
-3. **Refinement**: Feel it's too complex? Type `Reduce it to something I can start within 30 minutes`, and the AI will immediately reconstruct the plan.
-4. **One-Click Sync**: Click "Confirm", and the tasks will instantly sync to your Todoist account.
 
 ---
 
