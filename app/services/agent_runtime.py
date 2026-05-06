@@ -7,9 +7,11 @@ from typing import Any, AsyncIterator, Callable
 
 from app.agents.graph import build_task_graph, create_graph_config, resume_with_human_input
 from app.api.sse import format_sse_event
+from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
 logger = logging.getLogger(__name__)
+_global_checkpointer = TenantAwareMemorySaver()
 
 
 class AgentRuntime:
@@ -18,7 +20,7 @@ class AgentRuntime:
     def __init__(
         self,
         *,
-        graph_factory: Callable[[], Any] | None = None,
+        graph_factory: Callable[..., Any] | None = None,
         max_events_per_thread: int = 200,
     ) -> None:
         self._graph_factory = graph_factory or build_task_graph
@@ -50,7 +52,7 @@ class AgentRuntime:
         intent_text: str,
         selected_provider: str,
     ) -> None:
-        graph = self._graph_factory()
+        graph = self._build_graph()
         config = create_graph_config(user_id=user_id, thread_id=thread_id)
         initial_state = {
             "user_id": user_id,
@@ -86,7 +88,7 @@ class AgentRuntime:
         thread_id: str,
         decision: dict[str, Any],
     ) -> None:
-        graph = self._graph_factory()
+        graph = self._build_graph()
         config = create_graph_config(user_id=user_id, thread_id=thread_id)
         command = resume_with_human_input(**decision)
         try:
@@ -95,6 +97,9 @@ class AgentRuntime:
         except Exception as exc:
             logger.exception("agent_thread_resume_failed", extra={"thread_id": thread_id, "user_id": user_id})
             self._append_error(thread_id, code="AGENT_RESUME_FAILED", message=str(exc))
+
+    def _build_graph(self):
+        return self._graph_factory(checkpointer=_global_checkpointer)
 
     async def stream_thread_events(
         self,
