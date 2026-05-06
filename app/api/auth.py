@@ -9,11 +9,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import get_db
 from app.models.thread import AgentThread
+from app.models.user import User
 
 
 JWT_ALGORITHM = "HS256"
@@ -59,56 +63,77 @@ class AuthUser:
     status: str = "active"
 
 
-class InMemoryUserRepository:
-    def __init__(self) -> None:
-        self._users_by_email: dict[str, AuthUser] = {}
-        self._users_by_id: dict[UUID, AuthUser] = {}
+class DatabaseUserRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
 
-    def add(self, user: AuthUser) -> None:
-        if user.email in self._users_by_email:
-            raise DuplicateEmailError(user.email)
-        self._users_by_email[user.email] = user
-        self._users_by_id[user.id] = user
+    async def create_user(
+        self,
+        *,
+        email: str,
+        password_hash: str,
+        display_name: str | None = None,
+    ) -> AuthUser:
+        user = User(
+            id=uuid4(),
+            email=normalize_email(email),
+            password_hash=password_hash,
+            display_name=display_name,
+            status="active",
+        )
+        self.session.add(user)
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise DuplicateEmailError(user.email) from exc
+        await self.session.refresh(user)
+        return _auth_user_from_model(user)
 
-    def get_by_email(self, email: str) -> AuthUser | None:
-        return self._users_by_email.get(normalize_email(email))
+    async def get_by_email(self, email: str) -> AuthUser | None:
+        result = await self.session.execute(select(User).where(User.email == normalize_email(email)))
+        user = result.scalar_one_or_none()
+        return _auth_user_from_model(user) if user is not None else None
 
-    def get_by_id(self, user_id: UUID) -> AuthUser | None:
-        return self._users_by_id.get(user_id)
+    async def get_by_id(self, user_id: UUID) -> AuthUser | None:
+        result = await self.session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        return _auth_user_from_model(user) if user is not None else None
 
 
 class AuthService:
     def __init__(
         self,
         *,
-        user_repository: InMemoryUserRepository,
         jwt_secret: str,
         access_token_ttl: timedelta = timedelta(minutes=DEFAULT_ACCESS_TOKEN_TTL_MINUTES),
     ) -> None:
-        self.user_repository = user_repository
         self.jwt_secret = jwt_secret
         self.access_token_ttl = access_token_ttl
 
-    def register_user(
+    async def register_user(
         self,
+        repository: DatabaseUserRepository,
         email: str,
         password: str,
         display_name: str | None = None,
     ) -> AuthUser:
         normalized_email = normalize_email(email)
-        if self.user_repository.get_by_email(normalized_email) is not None:
+        if await repository.get_by_email(normalized_email) is not None:
             raise DuplicateEmailError(normalized_email)
-        user = AuthUser(
-            id=uuid4(),
+        return await repository.create_user(
             email=normalized_email,
             password_hash=hash_password(password),
             display_name=display_name,
         )
-        self.user_repository.add(user)
-        return user
 
-    def authenticate_user(self, email: str, password: str) -> AuthUser:
-        user = self.user_repository.get_by_email(email)
+    async def authenticate_user(
+        self,
+        repository: DatabaseUserRepository,
+        email: str,
+        password: str,
+    ) -> AuthUser:
+        user = await repository.get_by_email(email)
         if user is None or not verify_password(password, user.password_hash):
             raise InvalidCredentialsError("Invalid email or password")
         return user
@@ -217,48 +242,79 @@ def _b64url_decode(encoded: str) -> bytes:
     return base64.urlsafe_b64decode(f"{encoded}{padding}".encode("ascii"))
 
 
-_global_user_repository = InMemoryUserRepository()
 _global_auth_service = AuthService(
-    user_repository=_global_user_repository,
     jwt_secret=os.getenv("EASYPLAN_JWT_SECRET") or os.getenv("JWT_SECRET_KEY", "dev-only-change-me"),
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _auth_user_from_model(user: User) -> AuthUser:
+    return AuthUser(
+        id=user.id,
+        email=user.email,
+        password_hash=user.password_hash or "",
+        display_name=user.display_name,
+        status=user.status,
+    )
+
+
+def get_auth_service() -> AuthService:
+    return _global_auth_service
+
+
+def get_user_repository(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> DatabaseUserRepository:
+    return DatabaseUserRepository(session)
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest) -> TokenResponse:
+async def register(
+    payload: RegisterRequest,
+    repository: Annotated[DatabaseUserRepository, Depends(get_user_repository)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> TokenResponse:
     try:
-        user = _global_auth_service.register_user(
+        user = await auth_service.register_user(
+            repository=repository,
             email=payload.email,
             password=payload.password,
             display_name=payload.display_name,
         )
     except DuplicateEmailError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered") from exc
-    return _global_auth_service.token_response(user)
+    return auth_service.token_response(user)
 
 
 @router.post("/token", response_model=TokenResponse)
-async def login(payload: LoginRequest) -> TokenResponse:
+async def login(
+    payload: LoginRequest,
+    repository: Annotated[DatabaseUserRepository, Depends(get_user_repository)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> TokenResponse:
     try:
-        user = _global_auth_service.authenticate_user(payload.email, payload.password)
+        user = await auth_service.authenticate_user(repository, payload.email, payload.password)
     except InvalidCredentialsError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials") from exc
-    return _global_auth_service.token_response(user)
+    return auth_service.token_response(user)
 
 
 async def get_current_user(
+    repository: Annotated[DatabaseUserRepository, Depends(get_user_repository)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> AuthUser:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1]
     try:
-        claims = _global_auth_service.decode_access_token(token)
-        user = _global_user_repository.get_by_id(UUID(claims["sub"]))
+        claims = auth_service.decode_access_token(token)
+        user = await repository.get_by_id(UUID(claims["sub"]))
     except (InvalidCredentialsError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token") from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user")
+    if user.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
     return user

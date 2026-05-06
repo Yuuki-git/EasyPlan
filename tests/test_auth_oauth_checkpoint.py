@@ -6,10 +6,11 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.auth import (
     AuthService,
+    DatabaseUserRepository,
     DuplicateEmailError,
-    InMemoryUserRepository,
     build_thread_ownership_query,
 )
+from app.models.user import User
 from app.services.checkpoint_service import build_tenant_checkpoint_restore_query
 from app.services.oauth_service import (
     CredentialCipher,
@@ -21,32 +22,78 @@ from app.services.oauth_service import (
 )
 
 
-def test_auth_service_registers_user_and_issues_hs256_jwt():
-    repository = InMemoryUserRepository()
-    auth_service = AuthService(user_repository=repository, jwt_secret="unit-test-secret")
+class FakeScalarResult:
+    def __init__(self, value):
+        self.value = value
 
-    user = auth_service.register_user(
-        email="USER@example.com",
-        password="correct horse battery staple",
-        display_name="User",
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class FakeUserSession:
+    def __init__(self) -> None:
+        self.users_by_email = {}
+        self.users_by_id = {}
+        self.added = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    def add(self, model):
+        self.added.append(model)
+
+    async def commit(self):
+        self.commits += 1
+        for user in self.added:
+            self.users_by_email[user.email] = user
+            self.users_by_id[user.id] = user
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+    async def refresh(self, model):
+        return None
+
+    async def execute(self, statement):
+        params = statement.compile().params
+        for value in params.values():
+            if isinstance(value, str) and "@" in value:
+                return FakeScalarResult(self.users_by_email.get(value))
+            return FakeScalarResult(self.users_by_id.get(value))
+        return FakeScalarResult(None)
+
+
+def test_auth_service_registers_user_in_database_repository_and_issues_hs256_jwt():
+    session = FakeUserSession()
+    repository = DatabaseUserRepository(session)
+    auth_service = AuthService(jwt_secret="unit-test-secret")
+
+    user = asyncio.run(
+        auth_service.register_user(
+            repository=repository,
+            email="USER@example.com",
+            password="correct horse battery staple",
+            display_name="User",
+        )
     )
     token = auth_service.issue_access_token(user)
     claims = auth_service.decode_access_token(token)
 
     assert user.email == "user@example.com"
-    assert repository.get_by_email("user@example.com").password_hash != "correct horse battery staple"
+    assert isinstance(session.added[0], User)
+    assert session.users_by_email["user@example.com"].password_hash != "correct horse battery staple"
     assert claims["sub"] == str(user.id)
     assert claims["email"] == "user@example.com"
 
 
 def test_auth_service_rejects_duplicate_registration():
-    repository = InMemoryUserRepository()
-    auth_service = AuthService(user_repository=repository, jwt_secret="unit-test-secret")
+    session = FakeUserSession()
+    repository = DatabaseUserRepository(session)
+    auth_service = AuthService(jwt_secret="unit-test-secret")
 
-    auth_service.register_user("user@example.com", "password-1")
+    asyncio.run(auth_service.register_user(repository, "user@example.com", "password-1"))
 
     with pytest.raises(DuplicateEmailError):
-        auth_service.register_user("USER@example.com", "password-2")
+        asyncio.run(auth_service.register_user(repository, "USER@example.com", "password-2"))
 
 
 def test_tenant_restore_queries_always_filter_by_user_id_and_thread_id():
