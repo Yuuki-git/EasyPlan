@@ -2,29 +2,24 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.api.auth import AuthUser, get_current_user
 from app.main import create_app
 
 
-def _register_token(client: TestClient) -> str:
-    response = client.post(
-        "/api/auth/register",
-        json={
-            "email": f"user-{uuid4().hex}@example.com",
-            "password": "correct horse battery staple",
-        },
+def _client_with_user() -> TestClient:
+    app = create_app(enable_static=False)
+    app.dependency_overrides[get_current_user] = lambda: AuthUser(
+        id=uuid4(),
+        email="user@example.com",
+        password_hash="hash",
     )
-    assert response.status_code == 201
-    return response.json()["access_token"]
+    return TestClient(app)
 
 
 def test_microsoft_todo_oauth_start_is_supported():
-    client = TestClient(create_app(enable_static=False))
-    token = _register_token(client)
+    client = _client_with_user()
 
-    response = client.get(
-        "/api/integrations/microsoft_todo/oauth/start",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    response = client.get("/api/integrations/microsoft_todo/oauth/start")
 
     assert response.status_code == 200
     payload = response.json()

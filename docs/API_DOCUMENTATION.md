@@ -81,6 +81,8 @@ Pydantic/FastAPI 校验错误统一返回：
 
 注册用户并返回访问令牌。
 
+后端会把用户写入 PostgreSQL `users` 表；返回的 JWT `sub` 与 `users.id` 一致，可直接作为 `agent_threads.user_id` 的外键父记录。
+
 请求：
 
 ```json
@@ -104,6 +106,8 @@ Pydantic/FastAPI 校验错误统一返回：
 ### POST `/api/auth/token`
 
 登录并获取访问令牌。
+
+后端会从 PostgreSQL `users` 表按规范化 email 查询用户，并使用同一套 PBKDF2 密码哈希逻辑验证密码。
 
 请求：
 
