@@ -4,7 +4,7 @@ import { useAppStore } from '../store/useAppStore';
 import { Command } from 'lucide-react';
 
 export const DynamicInput: React.FC = () => {
-  const { appState, setIntent, setAppState, intent } = useAppStore();
+  const { appState, setAppState, intent } = useAppStore();
   const [value, setValue] = useState(intent);
 
   useEffect(() => {
@@ -27,33 +27,7 @@ export const DynamicInput: React.FC = () => {
     if (!value.trim()) return;
 
     if (appState === 'INITIAL') {
-      try {
-        setAppState('THINKING');
-        const { preferredProvider, token } = useAppStore.getState();
-        
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-        };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const response = await fetch('/api/intents', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ 
-            intent_text: value,
-            preferred_provider: preferredProvider 
-          })
-        });
-        
-        if (!response.ok) throw new Error('Failed to submit intent');
-        
-        const data = await response.json();
-        setIntent(value);
-        useAppStore.getState().setThreadId(data.thread_id);
-      } catch (err) {
-        useAppStore.getState().setError((err as Error).message);
-      }
+      useAppStore.getState().submitIntent(value);
     } else if (appState === 'PENDING') {
       // Trigger refinement
       try {

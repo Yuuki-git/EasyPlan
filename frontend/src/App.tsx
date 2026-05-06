@@ -16,7 +16,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const App: React.FC = () => {
-  const { appState, error, token } = useAppStore();
+  const { appState, error } = useAppStore();
   
   // Initialize SSE listener
   useSSE();
@@ -25,7 +25,7 @@ const App: React.FC = () => {
     <>
       <AuthModal />
       <main className={cn('the-void', appState !== 'INITIAL' && 'top')}>
-        {token && <Header />}
+        <Header />
         
         <div className="w-full flex flex-col items-center">
           <DynamicInput />

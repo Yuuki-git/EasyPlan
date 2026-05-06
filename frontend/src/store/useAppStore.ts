@@ -23,6 +23,8 @@ interface AppStore {
   isIntegrated: boolean;
   error: string | null;
   token: string | null;
+  showAuthModal: boolean;
+  pendingIntent: string | null;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -30,6 +32,8 @@ interface AppStore {
   setAppState: (state: AppState) => void;
   setThreadId: (id: string | null) => void;
   setToken: (token: string | null) => void;
+  setShowAuthModal: (show: boolean) => void;
+  setPendingIntent: (intent: string | null) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -40,6 +44,7 @@ interface AppStore {
   // Actions
   alignState: (threadId: string) => Promise<void>;
   retryNode: (nodeId: string) => Promise<void>;
+  submitIntent: (intentText: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -54,6 +59,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   isIntegrated: false,
   error: null,
   token: localStorage.getItem('auth_token'),
+  showAuthModal: false,
+  pendingIntent: null,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
@@ -67,6 +74,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     set({ token });
   },
+  setShowAuthModal: (showAuthModal) => set({ showAuthModal }),
+  setPendingIntent: (pendingIntent) => set({ pendingIntent }),
   
   generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
   
@@ -91,7 +100,42 @@ export const useAppStore = create<AppStore>((set, get) => ({
     taskTree: null,
     nodeStatuses: {},
     error: null,
+    showAuthModal: false,
+    pendingIntent: null,
   }),
+
+  submitIntent: async (intentText: string) => {
+    const { token, preferredProvider } = get();
+    if (!token) {
+      set({ showAuthModal: true, pendingIntent: intentText });
+      return;
+    }
+
+    try {
+      set({ appState: 'THINKING', error: null });
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        'Authorization': `Bearer ${token}`
+      };
+
+      const response = await fetch('/api/intents', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          intent_text: intentText,
+          preferred_provider: preferredProvider 
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to submit intent');
+      
+      const data = await response.json();
+      set({ intent: intentText, threadId: data.thread_id, pendingIntent: null });
+    } catch (err) {
+      set({ error: (err as Error).message, appState: 'ERROR' });
+    }
+  },
 
   alignState: async (threadId: string) => {
     try {
