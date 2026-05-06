@@ -49,8 +49,34 @@ const App: React.FC = () => {
         </div>
 
         <ActionLayer />
+        <DateAnchor />
       </main>
     </>
+  );
+};
+
+const DateAnchor: React.FC = () => {
+  const { appState } = useAppStore();
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'long'
+  });
+
+  return (
+    <AnimatePresence>
+      {appState === 'INITIAL' && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 1 }}
+          className="fixed bottom-8 left-8 text-[10px] font-mono tracking-widest text-muted-foreground/30 uppercase pointer-events-none"
+        >
+          {dateStr}
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 
