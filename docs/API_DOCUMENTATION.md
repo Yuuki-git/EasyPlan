@@ -24,9 +24,13 @@ Authorization: Bearer <access_token>
 
 当前已接入认证的接口：
 
+- `POST /api/intents`
+- `GET /api/threads/{thread_id}`
+- `GET /api/threads/{thread_id}/events`
+- `POST /api/threads/{thread_id}/confirm`
 - `GET /api/integrations/{provider}/oauth/start`
 
-后续涉及用户私有数据的 thread、checkpoint、sync 查询也必须接入同样的 `user_id` 租户过滤。
+所有 thread、checkpoint、sync 查询必须接入同样的 `user_id` 租户过滤；恢复或订阅 thread 前，后端必须先校验该 thread 属于当前登录用户。
 
 ### 1.3 时区
 
@@ -129,8 +133,15 @@ Pydantic/FastAPI 校验错误统一返回：
 Headers：
 
 ```http
+Authorization: Bearer <access_token>
 X-User-Timezone: Asia/Shanghai
 ```
+
+行为：
+
+- 创建 `AgentThread` 数据库记录，`user_id` 来自 JWT，不接受客户端透传。
+- 在返回 `202` 前通过 `BackgroundTasks` 启动 LangGraph 后台规划。
+- 后台运行使用 `build_task_graph()` 编译出的图，并在后台 worker 中消费 `graph.stream` 产生的 planner、validator、HITL interrupt 等节点事件。
 
 请求：
 
@@ -168,6 +179,12 @@ X-User-Timezone: Asia/Shanghai
 
 获取 thread 快照，用于页面刷新、SSE 重连、状态对齐。
 
+Headers：
+
+```http
+Authorization: Bearer <access_token>
+```
+
 响应：
 
 ```json
@@ -191,6 +208,7 @@ X-User-Timezone: Asia/Shanghai
 Headers：
 
 ```http
+Authorization: Bearer <access_token>
 Last-Event-ID: evt_01J003
 ```
 
@@ -239,8 +257,15 @@ data: {"state_version":7,"code":"MCP_TOOL_CALL_FAILED","message":"Todoist 写入
 Headers：
 
 ```http
+Authorization: Bearer <access_token>
 X-User-Timezone: Asia/Shanghai
 ```
+
+行为：
+
+- 后端先按 `user_id + thread_id` 查询 `AgentThread`，不存在或不属于当前用户时返回 `404`。
+- `approve`、`edit`、`refine`、`reject` 都通过 LangGraph `Command(resume=...)` 恢复 HITL 中断。
+- `refine` 接收自然语言 `feedback`，图会回到 planner 节点重新规划。
 
 请求：
 
@@ -463,7 +488,8 @@ Microsoft To Do 幂等策略：
 
 以下接口已在 OpenAPI 中声明，但部分业务逻辑仍是 MVP 骨架：
 
-- `POST /api/intents` 当前返回 thread id 和 events URL，完整后台排队执行仍需接入 worker。
-- `GET /api/threads/{thread_id}/events` 当前具备 SSE 格式能力，生产事件 buffer 和真实 LangGraph stream 仍需继续接入。
+- `POST /api/intents` 已接入 JWT、`AgentThread` 持久化和 LangGraph 后台运行；后续生产增强项是将后台任务迁移到独立 worker/队列。
+- `GET /api/threads/{thread_id}/events` 已接入 thread 归属校验和 LangGraph runtime 事件流；当前事件 buffer 为进程内轻量实现，后续生产增强项是持久化事件游标。
+- `POST /api/threads/{thread_id}/confirm` 已接入 HITL resume，支持 `refine` 自然语言反馈回到 planner。
 - `GET /api/integrations`、`GET /tools` 当前为接口骨架，后续应接入数据库和 MCP tool registry。
 - OAuth callback 已具备服务层闭环，生产环境需替换真实持久化 repository。

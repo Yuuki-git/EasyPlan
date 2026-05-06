@@ -40,7 +40,7 @@ export const useSSE = () => {
         lastEventIdRef.current = e.lastEventId;
         try {
           const data = JSON.parse(e.data);
-          addReasoningLog(data.content || data);
+          addReasoningLog(data.message || JSON.stringify(data));
         } catch {
           addReasoningLog(e.data);
         }

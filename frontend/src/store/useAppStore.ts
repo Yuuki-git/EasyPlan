@@ -22,12 +22,18 @@ interface AppStore {
   preferredProvider: string; // 'todoist' or 'microsoft_todo'
   isIntegrated: boolean;
   error: string | null;
+  token: string | null;
+  showAuthModal: boolean;
+  pendingIntent: string | null;
 
   // Actions
   setIntent: (intent: string) => void;
   setPreferredProvider: (provider: string) => void;
   setAppState: (state: AppState) => void;
   setThreadId: (id: string | null) => void;
+  setToken: (token: string | null) => void;
+  setShowAuthModal: (show: boolean) => void;
+  setPendingIntent: (intent: string | null) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -38,6 +44,7 @@ interface AppStore {
   // Actions
   alignState: (threadId: string) => Promise<void>;
   retryNode: (nodeId: string) => Promise<void>;
+  submitIntent: (intentText: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -51,11 +58,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferredProvider: 'todoist',
   isIntegrated: false,
   error: null,
+  token: localStorage.getItem('auth_token'),
+  showAuthModal: false,
+  pendingIntent: null,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
   setAppState: (appState) => set({ appState }),
   setThreadId: (threadId) => set({ threadId }),
+  setToken: (token) => {
+    if (token) {
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_token');
+    }
+    set({ token });
+  },
+  setShowAuthModal: (showAuthModal) => set({ showAuthModal }),
+  setPendingIntent: (pendingIntent) => set({ pendingIntent }),
   
   generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
   
@@ -80,15 +100,52 @@ export const useAppStore = create<AppStore>((set, get) => ({
     taskTree: null,
     nodeStatuses: {},
     error: null,
+    showAuthModal: false,
+    pendingIntent: null,
   }),
+
+  submitIntent: async (intentText: string) => {
+    const { token, preferredProvider } = get();
+    if (!token) {
+      set({ showAuthModal: true, pendingIntent: intentText });
+      return;
+    }
+
+    try {
+      set({ appState: 'THINKING', error: null });
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        'Authorization': `Bearer ${token}`
+      };
+
+      const response = await fetch('/api/intents', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          intent_text: intentText,
+          preferred_provider: preferredProvider 
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to submit intent');
+      
+      const data = await response.json();
+      set({ intent: intentText, threadId: data.thread_id, pendingIntent: null });
+    } catch (err) {
+      set({ error: (err as Error).message, appState: 'ERROR' });
+    }
+  },
 
   alignState: async (threadId: string) => {
     try {
-      const response = await fetch(`/api/threads/${threadId}`, {
-        headers: {
-          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-        }
-      });
+      const { token } = get();
+      const headers: Record<string, string> = {
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`/api/threads/${threadId}`, { headers });
       if (!response.ok) throw new Error('Failed to align state');
       const snapshot = await response.json();
       
@@ -104,7 +161,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   retryNode: async (nodeId: string) => {
-    const { threadId, syncRequestId } = get();
+    const { threadId, syncRequestId, token } = get();
     if (!threadId || !syncRequestId) return;
 
     set((state) => ({
@@ -112,12 +169,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const response = await fetch(`/api/threads/${threadId}/confirm`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-        },
+        headers,
         body: JSON.stringify({
           request_id: syncRequestId,
           action: 'approve',
@@ -135,3 +195,4 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   }
 }));
+

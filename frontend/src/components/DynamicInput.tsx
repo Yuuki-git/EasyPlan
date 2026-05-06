@@ -4,7 +4,7 @@ import { useAppStore } from '../store/useAppStore';
 import { Command } from 'lucide-react';
 
 export const DynamicInput: React.FC = () => {
-  const { appState, setIntent, setAppState, intent } = useAppStore();
+  const { appState, setAppState, intent } = useAppStore();
   const [value, setValue] = useState(intent);
 
   useEffect(() => {
@@ -22,45 +22,34 @@ export const DynamicInput: React.FC = () => {
     }
   };
 
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning. What is the most important thing today?';
+    if (hour < 18) return 'Good afternoon. Ready to make some progress?';
+    return 'Good evening. Let\'s wrap up the day.';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim()) return;
 
     if (appState === 'INITIAL') {
-      try {
-        setAppState('THINKING');
-        const { preferredProvider } = useAppStore.getState();
-        const response = await fetch('/api/intents', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-          },
-          body: JSON.stringify({ 
-            intent_text: value,
-            preferred_provider: preferredProvider 
-          })
-        });
-        
-        if (!response.ok) throw new Error('Failed to submit intent');
-        
-        const data = await response.json();
-        setIntent(value);
-        useAppStore.getState().setThreadId(data.thread_id);
-      } catch (err) {
-        useAppStore.getState().setError((err as Error).message);
-      }
+      useAppStore.getState().submitIntent(value);
     } else if (appState === 'PENDING') {
-      // Trigger refinement - this would be another POST to /api/threads/{id}/confirm with action='refine'
+      // Trigger refinement
       try {
         setAppState('THINKING');
-        const threadId = useAppStore.getState().threadId;
+        const { threadId, token } = useAppStore.getState();
+        
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch(`/api/threads/${threadId}/confirm`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-          },
+          headers,
           body: JSON.stringify({ 
             request_id: crypto.randomUUID(),
             action: 'refine',
@@ -81,6 +70,20 @@ export const DynamicInput: React.FC = () => {
       animate={{ opacity: 1, y: 0 }}
       className="w-full max-w-2xl relative"
     >
+      <AnimatePresence>
+        {appState === 'INITIAL' && !value && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ delay: 0.2 }}
+            className="absolute -top-8 left-2 text-sm font-light text-muted-foreground/60 tracking-wide"
+          >
+            {getGreeting()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <form onSubmit={handleSubmit} className="relative group">
         <input
           type="text"
@@ -100,17 +103,26 @@ export const DynamicInput: React.FC = () => {
       <AnimatePresence>
         {appState === 'INITIAL' && !value && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute -bottom-8 left-2 flex gap-4"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ delay: 0.3 }}
+            className="absolute -bottom-12 left-2 flex gap-3"
           >
-            <span className="text-xs text-muted-foreground/40 cursor-pointer hover:text-muted-foreground/80 transition-colors">
-              "Write a paper"
-            </span>
-            <span className="text-xs text-muted-foreground/40 cursor-pointer hover:text-muted-foreground/80 transition-colors">
-              "Workout plan"
-            </span>
+            {[
+              "Plan a weekend trip",
+              "Finish my thesis draft",
+              "Workout schedule"
+            ].map((prompt, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => setValue(prompt)}
+                className="text-xs font-light text-muted-foreground/70 bg-muted/20 border border-muted/50 hover:bg-muted/40 hover:border-muted hover:text-foreground/80 transition-all rounded-full px-3 py-1 cursor-pointer shadow-sm"
+              >
+                {prompt}
+              </button>
+            ))}
           </motion.div>
         )}
       </AnimatePresence>
