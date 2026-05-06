@@ -267,4 +267,4 @@ def _run_async(coro):
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    raise RuntimeError("planner_node requires sync LangGraph stream execution for interrupt support")
+    raise RuntimeError("planner_node must be executed outside the FastAPI event loop")

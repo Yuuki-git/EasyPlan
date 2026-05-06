@@ -29,13 +29,17 @@ export const DynamicInput: React.FC = () => {
     if (appState === 'INITIAL') {
       try {
         setAppState('THINKING');
-        const { preferredProvider } = useAppStore.getState();
+        const { preferredProvider, token } = useAppStore.getState();
+        
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch('/api/intents', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-          },
+          headers,
           body: JSON.stringify({ 
             intent_text: value,
             preferred_provider: preferredProvider 
@@ -51,16 +55,20 @@ export const DynamicInput: React.FC = () => {
         useAppStore.getState().setError((err as Error).message);
       }
     } else if (appState === 'PENDING') {
-      // Trigger refinement - this would be another POST to /api/threads/{id}/confirm with action='refine'
+      // Trigger refinement
       try {
         setAppState('THINKING');
-        const threadId = useAppStore.getState().threadId;
+        const { threadId, token } = useAppStore.getState();
+        
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch(`/api/threads/${threadId}/confirm`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-          },
+          headers,
           body: JSON.stringify({ 
             request_id: crypto.randomUUID(),
             action: 'refine',

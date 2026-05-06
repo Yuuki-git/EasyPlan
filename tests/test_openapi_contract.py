@@ -44,6 +44,22 @@ def test_openapi_contract_requires_timezone_on_mutating_planner_calls():
     assert "X-User-Timezone" in confirm_params
 
 
+def test_openapi_contract_requires_authorization_on_thread_workflow():
+    app = create_app()
+
+    schema = app.openapi()
+
+    intent_params = _parameter_names(schema["paths"]["/api/intents"]["post"])
+    snapshot_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}"]["get"])
+    events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
+    confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
+
+    assert "Authorization" in intent_params
+    assert "Authorization" in snapshot_params
+    assert "Authorization" in events_params
+    assert "Authorization" in confirm_params
+
+
 def test_openapi_contract_confirm_action_includes_refine():
     app = create_app()
 
