@@ -154,7 +154,7 @@ X-User-Timezone: Asia/Shanghai
 - 创建 `AgentThread` 数据库记录，`user_id` 来自 JWT，不接受客户端透传。
 - 在返回 `202` 前通过 `BackgroundTasks` 启动 LangGraph 后台规划。
 - 后台运行使用 `build_task_graph()` 编译出的图，并在后台 worker 中消费 `graph.stream` 产生的 planner、validator、HITL interrupt 等节点事件。
-- `planner_provider` 与 `planner_model` 会传入 AgentRuntime，用于实例化对应的 PlannerClient（OpenAI、DeepSeek 或 Xiaomi MiMo）。
+- `planner_provider` 与 `planner_model` 会传入 AgentRuntime，用于实例化对应的 PlannerClient（OpenAI、DeepSeek 或 Xiaomi MiMo）。`planner_provider` 不传或传 `null` 时，后端会读取 `EASYPLAN_LLM_PROVIDER` 作为默认 provider。
 
 请求：
 
@@ -173,7 +173,7 @@ X-User-Timezone: Asia/Shanghai
 | --- | --- | --- | --- |
 | `intent_text` | string | 是 | 用户自然语言意图，1-2000 字符 |
 | `preferred_provider` | string | 否 | 外部同步目标，默认 `todoist` |
-| `planner_provider` | enum | 否 | `openai`、`deepseek`、`xiaomi`，默认 `openai` |
+| `planner_provider` | enum/null | 否 | `openai`、`deepseek`、`xiaomi`；不传或传 `null` 时使用后端 `EASYPLAN_LLM_PROVIDER` |
 | `planner_model` | string/null | 否 | 指定模型名；不传则用后端默认模型 |
 
 响应 `202`：

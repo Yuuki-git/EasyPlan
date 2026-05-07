@@ -108,7 +108,7 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
         "thread_id": payload["thread_id"],
         "intent_text": "写论文",
         "selected_provider": "todoist",
-        "planner_provider": "openai",
+        "planner_provider": None,
         "planner_model": None,
     }
 

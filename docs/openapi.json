@@ -832,14 +832,20 @@
             "default": "todoist"
           },
           "planner_provider": {
-            "type": "string",
-            "enum": [
-              "openai",
-              "deepseek",
-              "xiaomi"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "openai",
+                  "deepseek",
+                  "xiaomi"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Planner Provider",
-            "default": "openai"
+            "title": "Planner Provider"
           },
           "planner_model": {
             "anyOf": [

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { TaskTree } from '../types/api';
+import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
+import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 
 export type AppState = 
   | 'INITIAL' 
@@ -123,12 +125,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const response = await fetch('/api/intents', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ 
-          intent_text: intentText,
-          preferred_provider: preferredProvider 
-        })
+        body: JSON.stringify(buildIntentRequest({
+          intentText,
+          preferredProvider,
+          plannerProvider: resolvePlannerProvider(import.meta.env),
+        }))
       });
-      
+
+      if (isUnauthorizedResponse(response)) {
+        localStorage.removeItem('auth_token');
+        set(buildAuthRecoveryState(intentText));
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to submit intent');
       
       const data = await response.json();

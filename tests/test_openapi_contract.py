@@ -111,5 +111,11 @@ def test_openapi_contract_intent_supports_model_provider_selection():
     schema = app.openapi()
 
     properties = schema["components"]["schemas"]["IntentCreateRequest"]["properties"]
-    assert properties["planner_provider"]["enum"] == ["openai", "deepseek", "xiaomi"]
+    planner_provider_schema = properties["planner_provider"]
+    variants = planner_provider_schema.get("anyOf", [planner_provider_schema])
+    enum_variant = next(variant for variant in variants if "enum" in variant)
+
+    assert enum_variant["enum"] == ["openai", "deepseek", "xiaomi"]
+    assert any(variant.get("type") == "null" for variant in variants)
+    assert planner_provider_schema.get("default") is None
     assert "planner_model" in properties

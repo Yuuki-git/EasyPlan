@@ -943,7 +943,7 @@ X-User-Timezone: Asia/Shanghai
 }
 ```
 
-`planner_provider` 可选：`openai`、`deepseek`、`xiaomi`。如果前端不传，默认 `openai`；`planner_model` 不传时使用后端环境变量或服务默认值。
+`planner_provider` 可选：`openai`、`deepseek`、`xiaomi`。如果前端不传或传 `null`，后端保持 `None` 并交由 `create_planner_client()` 读取 `EASYPLAN_LLM_PROVIDER`；`planner_model` 不传时使用后端环境变量或服务默认值。这样 SaaS 部署可以通过环境变量把默认模型切到 DeepSeek 或 Xiaomi MiMo，而不被 API schema 覆盖。
 
 返回：
 

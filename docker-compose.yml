@@ -45,6 +45,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_PLANNER_PROVIDER: ${EASYPLAN_LLM_PROVIDER:-openai}
     restart: unless-stopped
     env_file:
       - .env
