@@ -9,7 +9,8 @@ export const useSSE = () => {
     setAppState, 
     setError, 
     setNodeStatus,
-    alignState 
+    alignState,
+    token
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
@@ -32,6 +33,9 @@ export const useSSE = () => {
       if (lastEventIdRef.current) {
         url.searchParams.set('last_event_id', lastEventIdRef.current);
       }
+      if (token) {
+        url.searchParams.set('token', token);
+      }
       
       const es = new EventSource(url.toString());
       eventSourceRef.current = es;
@@ -49,7 +53,7 @@ export const useSSE = () => {
       es.addEventListener('plan_ready', (e) => {
         lastEventIdRef.current = e.lastEventId;
         const data = JSON.parse(e.data);
-        setTaskTree(data);
+        setTaskTree(data.task_tree);
         setAppState('PENDING');
       });
 
@@ -83,5 +87,5 @@ export const useSSE = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState]);
+  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token]);
 };

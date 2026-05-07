@@ -100,7 +100,30 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
         "thread_id": payload["thread_id"],
         "intent_text": "写论文",
         "selected_provider": "todoist",
+        "planner_provider": "openai",
+        "planner_model": None,
     }
+
+
+def test_create_intent_forwards_requested_planner_provider_and_model():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+
+    response = client.post(
+        "/api/intents",
+        headers={"X-User-Timezone": "Asia/Shanghai"},
+        json={
+            "intent_text": "写论文",
+            "preferred_provider": "todoist",
+            "planner_provider": "deepseek",
+            "planner_model": "deepseek-reasoner",
+        },
+    )
+
+    assert response.status_code == 202
+    assert runtime.started[0]["planner_provider"] == "deepseek"
+    assert runtime.started[0]["planner_model"] == "deepseek-reasoner"
 
 
 def test_create_intent_requires_authenticated_user():

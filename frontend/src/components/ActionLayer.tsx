@@ -4,7 +4,7 @@ import { useAppStore } from '../store/useAppStore';
 import { Command } from 'lucide-react';
 
 export const ActionLayer: React.FC = () => {
-  const { appState, reset, setAppState } = useAppStore();
+  const { appState, reset, confirmPlan } = useAppStore();
 
   const isVisible = appState === 'PENDING' || appState === 'THINKING';
 
@@ -40,7 +40,7 @@ export const ActionLayer: React.FC = () => {
               </button>
               
               <button
-                onClick={() => setAppState('SYNCING')}
+                onClick={confirmPlan}
                 className="group flex items-center gap-2 text-foreground/80 hover:text-foreground transition-colors px-4 py-2 border border-muted hover:border-foreground/40 rounded-full bg-white/5 backdrop-blur-sm"
               >
                 <div className="flex items-center gap-1 px-1.5 py-0.5 border border-muted/50 rounded text-[10px] font-mono group-hover:border-foreground/30 transition-colors">

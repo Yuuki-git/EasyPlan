@@ -45,6 +45,7 @@ interface AppStore {
   alignState: (threadId: string) => Promise<void>;
   retryNode: (nodeId: string) => Promise<void>;
   submitIntent: (intentText: string) => Promise<void>;
+  confirmPlan: () => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -153,7 +154,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
         taskTree: snapshot.task_tree,
-        appState: snapshot.status === 'interrupt' ? 'PENDING' : 'THINKING'
+        appState: snapshot.status === 'awaiting_confirmation' ? 'PENDING' : 'THINKING'
       });
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });
@@ -192,6 +193,43 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => ({
         nodeStatuses: { ...state.nodeStatuses, [nodeId]: 'error' }
       }));
+    }
+  },
+
+  confirmPlan: async () => {
+    const { threadId, token, syncRequestId } = get();
+    if (!threadId) return;
+
+    set({ appState: 'SYNCING', error: null });
+    
+    // Generate request ID if it doesn't exist yet
+    const requestId = syncRequestId || crypto.randomUUID();
+    if (!syncRequestId) {
+      set({ syncRequestId: requestId });
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`/api/threads/${threadId}/confirm`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          request_id: requestId,
+          action: 'approve'
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to confirm plan');
+      
+      // Temporary: Directly transition to SUCCESS since external sync is cut
+      set({ appState: 'SUCCESS' });
+    } catch (err) {
+      set({ error: (err as Error).message, appState: 'ERROR' });
     }
   }
 }));

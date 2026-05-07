@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -304,10 +304,17 @@ async def get_current_user(
     repository: Annotated[DatabaseUserRepository, Depends(get_user_repository)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    token_query: Annotated[str | None, Query(alias="token")] = None,
 ) -> AuthUser:
-    if not authorization or not authorization.lower().startswith("bearer "):
+    token: str | None = None
+    if authorization:
+        if not authorization.lower().startswith("bearer "):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        token = authorization.split(" ", 1)[1]
+    elif token_query:
+        token = token_query
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1]
     try:
         claims = auth_service.decode_access_token(token)
         user = await repository.get_by_id(UUID(claims["sub"]))

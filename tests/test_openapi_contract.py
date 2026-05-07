@@ -60,6 +60,16 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     assert "Authorization" in confirm_params
 
 
+def test_openapi_contract_documents_sse_token_query_fallback():
+    app = create_app()
+
+    schema = app.openapi()
+
+    events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
+
+    assert "token" in events_params
+
+
 def test_openapi_contract_confirm_action_includes_refine():
     app = create_app()
 
