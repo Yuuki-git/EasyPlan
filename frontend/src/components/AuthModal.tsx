@@ -86,7 +86,7 @@ export const AuthModal: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-mono">
+              <label className="text-[10px] tracking-widest text-muted-foreground/60 font-mono">
                 Email
               </label>
               <input
@@ -100,7 +100,7 @@ export const AuthModal: React.FC = () => {
             </div>
             
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-mono">
+              <label className="text-[10px] tracking-widest text-muted-foreground/60 font-mono">
                 Password
               </label>
               <input

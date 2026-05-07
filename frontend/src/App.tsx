@@ -71,7 +71,7 @@ const DateAnchor: React.FC = () => {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 1 }}
-          className="fixed bottom-8 left-8 text-[10px] font-mono tracking-widest text-muted-foreground/30 uppercase pointer-events-none"
+          className="fixed bottom-8 left-8 text-[10px] font-mono tracking-widest text-muted-foreground/30 pointer-events-none"
         >
           {dateStr}
         </motion.div>
@@ -85,20 +85,20 @@ const Header: React.FC = () => {
 
   return (
     <header className="fixed top-0 left-0 w-full p-8 flex justify-between items-center z-50">
-      <div className="text-sm font-bold tracking-widest text-foreground/80">
-        EASYPLAN
+      <div className="text-base font-medium tracking-wide text-foreground/70">
+        EasyPlan
       </div>
       <div className="flex items-center gap-6">
         <select 
           value={preferredProvider}
           onChange={(e) => setPreferredProvider(e.target.value)}
-          className="bg-transparent text-xs text-muted-foreground hover:text-foreground transition-colors outline-none cursor-pointer tracking-tighter"
+          className="bg-transparent text-xs text-muted-foreground hover:text-foreground transition-colors outline-none cursor-pointer tracking-wide"
         >
           <option value="todoist" className="bg-background text-foreground">Todoist</option>
           <option value="microsoft_todo" className="bg-background text-foreground">Microsoft To Do</option>
         </select>
         
-        <button className="text-xs text-muted-foreground hover:text-foreground transition-colors uppercase tracking-tighter">
+        <button className="text-xs text-muted-foreground hover:text-foreground transition-colors tracking-wide">
           Integrations
         </button>
         

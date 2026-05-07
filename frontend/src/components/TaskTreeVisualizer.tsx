@@ -143,7 +143,7 @@ export const TaskTreeRoot: React.FC = () => {
   return (
     <div className="w-full flex flex-col items-center mt-12 pb-32">
       <div className="w-full max-w-2xl px-2 mb-8">
-        <h3 className="text-xs font-mono text-muted-foreground/30 uppercase tracking-[0.2em] mb-2">
+        <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
           Proposed Action Plan
         </h3>
         <p className="text-lg font-light text-foreground/80 leading-snug">
@@ -161,7 +161,7 @@ export const TaskTreeRoot: React.FC = () => {
         className="mt-24 flex flex-col items-center gap-4"
       >
         <div className="w-px h-12 bg-gradient-to-b from-muted to-transparent" />
-        <span className="text-[10px] font-mono tracking-[0.3em] text-muted-foreground/20 uppercase">
+        <span className="text-[10px] font-mono tracking-widest text-muted-foreground/30">
           End of Plan
         </span>
       </motion.div>
