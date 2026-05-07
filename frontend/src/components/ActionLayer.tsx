@@ -47,7 +47,7 @@ export const ActionLayer: React.FC = () => {
                   <Command size={10} />
                   <span>ENTER</span>
                 </div>
-                <span className="text-sm font-medium">Confirm & Sync</span>
+                <span className="text-sm font-medium">Confirm & Save</span>
               </button>
             </>
           )}

@@ -226,8 +226,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (!response.ok) throw new Error('Failed to confirm plan');
       
-      // Temporary: Directly transition to SUCCESS since external sync is cut
-      set({ appState: 'SUCCESS' });
+      // Success transition is now handled by SSE 'done' event
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });
     }

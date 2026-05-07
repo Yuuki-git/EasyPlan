@@ -72,10 +72,26 @@ export const useSSE = () => {
         setAppState(status === 'success' ? 'SUCCESS' : 'PARTIAL_ERROR');
       });
 
-      es.addEventListener('error', () => {
-        console.warn('SSE Disconnected. Attempting to align and reconnect...');
+      es.addEventListener('done', () => {
+        setAppState('SUCCESS');
         es.close();
-        setTimeout(connect, 3000); // Exponential backoff could be better
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      es.addEventListener('error', (e: any) => {
+        if (e.data) {
+          try {
+            const data = JSON.parse(e.data);
+            setError(data.message || data.code || 'An error occurred');
+          } catch {
+            setError(e.data);
+          }
+          es.close();
+        } else {
+          console.warn('SSE Disconnected. Attempting to align and reconnect...');
+          es.close();
+          setTimeout(connect, 3000); // Exponential backoff could be better
+        }
       });
     };
 

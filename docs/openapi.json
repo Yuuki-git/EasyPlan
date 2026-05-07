@@ -122,22 +122,6 @@
         "operationId": "create_intent_api_intents_post",
         "parameters": [
           {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
             "name": "X-User-Timezone",
             "in": "header",
             "required": true,
@@ -218,22 +202,6 @@
             }
           },
           {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
-            }
-          },
-          {
             "name": "Authorization",
             "in": "header",
             "required": false,
@@ -291,6 +259,22 @@
               "type": "string",
               "minLength": 1,
               "title": "Thread Id"
+            }
+          },
+          {
+            "name": "last_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last Event Id"
             }
           },
           {
@@ -380,22 +364,6 @@
               "type": "string",
               "minLength": 1,
               "title": "Thread Id"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
             }
           },
           {
@@ -599,22 +567,6 @@
               "type": "string",
               "minLength": 1,
               "title": "Provider"
-            }
-          },
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Token"
             }
           },
           {

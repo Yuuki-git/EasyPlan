@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * This file is manually generated based on docs/openapi.json
  * Updated for v1.1.0 (Auth + Multi-planner + Microsoft To Do)

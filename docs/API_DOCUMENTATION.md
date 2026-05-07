@@ -22,13 +22,13 @@ Content-Type: application/json
 Authorization: Bearer <access_token>
 ```
 
-`GET /api/threads/{thread_id}/events` 为原生 `EventSource` 兼容场景额外支持 query token：
+仅 `GET /api/threads/{thread_id}/events` 为原生 `EventSource` 兼容场景额外支持 query token：
 
 ```http
 GET /api/threads/{thread_id}/events?token=<access_token>
 ```
 
-后端优先读取 `Authorization` Header；Header 不存在时才读取 `token` query 参数。query token 仅推荐用于 SSE 连接，前端不应把它持久化到日志、埋点或可分享 URL 中。
+普通 API 只接受 `Authorization` Header。SSE 接口会优先读取 `Authorization` Header；Header 不存在时才读取 `token` query 参数。query token 仅可用于 SSE 连接，前端不应把它持久化到日志、埋点或可分享 URL 中。
 
 当前已接入认证的接口：
 
@@ -228,13 +228,14 @@ Last-Event-ID: evt_01J003
 原生 `EventSource` 无法发送 `Authorization` Header 时，可使用：
 
 ```http
-GET /api/threads/thr_01J.../events?token=<access_token>
+GET /api/threads/thr_01J.../events?token=<access_token>&last_event_id=evt_01J003
 ```
 
 重连语义：
 
-- 传入 `Last-Event-ID` 时，后端只发送该事件之后的增量事件。
-- 如果 `Last-Event-ID` 已不在进程内 event buffer 中，后端返回 `snapshot_required`，前端必须重新拉取 thread 快照。
+- 传入 `Last-Event-ID` Header 时，后端只发送该事件之后的增量事件。
+- 如果原生 `EventSource` 无法设置 Header，前端可传 `last_event_id` query 参数；Header 优先于 query。
+- 如果游标已不在进程内 event buffer 中，后端返回 `snapshot_required`，前端必须重新拉取 thread 快照。
 - 当 LangGraph 触发 HITL `interrupt()` 时，后端会同步更新 `agent_threads.status = "awaiting_confirmation"`，并写入 `task_tree` 与 `interrupt_payload`，供快照接口读取。
 
 返回类型：
