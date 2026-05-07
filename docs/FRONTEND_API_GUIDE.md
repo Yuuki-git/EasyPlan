@@ -70,6 +70,8 @@
 
 建立连接: `GET /api/threads/{thread_id}/events`
 
+原生 `EventSource` 不能设置 `Authorization` Header；建立 SSE 连接时请使用 `events_url + "?token=" + encodeURIComponent(accessToken)`，手动重连时追加 `&last_event_id=`。普通 API 请求只能使用 `Authorization: Bearer <access_token>`，不要在普通 API URL 中拼 token。
+
 | 事件名 (Event) | 负载数据 (Data) | 描述 |
 | :--- | :--- | :--- |
 | `reasoning` | `{ "content": "..." }` | AI 的思考链路，前端追加到日志列表。 |

@@ -1,11 +1,11 @@
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Path, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import AuthUser, get_current_user
+from app.api.auth import AuthUser, get_current_user, get_user_for_sse
 from app.api.dependencies import get_user_timezone
 from app.api.schemas import ConfirmationRequest, ConfirmationResponse, ThreadSnapshot
 from app.db.session import get_db
@@ -47,10 +47,11 @@ async def get_thread_snapshot(
 )
 async def stream_thread_events(
     thread_id: Annotated[str, Path(min_length=1)],
-    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_user_for_sse)],
     repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
-    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    last_event_id_query: Annotated[str | None, Query(alias="last_event_id")] = None,
 ) -> StreamingResponse:
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
@@ -59,7 +60,7 @@ async def stream_thread_events(
         runtime.stream_thread_events(
             user_id=str(current_user.id),
             thread_id=thread_id,
-            last_event_id=last_event_id,
+            last_event_id=last_event_id_header or last_event_id_query,
         ),
         media_type="text/event-stream",
     )

@@ -51,6 +51,7 @@ class FakeRuntime:
     def __init__(self) -> None:
         self.started: list[dict] = []
         self.resumed: list[dict] = []
+        self.streamed: list[dict] = []
         self.events = ["event: reasoning\ndata: {\"state_version\":1,\"message\":\"running\"}\n\n"]
 
     async def run_new_thread(self, **kwargs):
@@ -60,6 +61,7 @@ class FakeRuntime:
         self.resumed.append(kwargs)
 
     async def stream_thread_events(self, *, user_id, thread_id, last_event_id=None):
+        self.streamed.append({"user_id": user_id, "thread_id": thread_id, "last_event_id": last_event_id})
         for event in self.events:
             yield event
 
@@ -72,6 +74,12 @@ def _client_with_overrides(repository: FakeThreadRepository, runtime: FakeRuntim
         password_hash="hash",
     )
     app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        from app.api.auth import get_user_for_sse
+
+        app.dependency_overrides[get_user_for_sse] = lambda: user
+    except ImportError:
+        pass
     app.dependency_overrides[get_intent_repository] = lambda: repository
     app.dependency_overrides[get_thread_repository] = lambda: repository
     app.dependency_overrides[get_intent_runtime] = lambda: runtime
@@ -100,7 +108,30 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
         "thread_id": payload["thread_id"],
         "intent_text": "写论文",
         "selected_provider": "todoist",
+        "planner_provider": "openai",
+        "planner_model": None,
     }
+
+
+def test_create_intent_forwards_requested_planner_provider_and_model():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+
+    response = client.post(
+        "/api/intents",
+        headers={"X-User-Timezone": "Asia/Shanghai"},
+        json={
+            "intent_text": "写论文",
+            "preferred_provider": "todoist",
+            "planner_provider": "deepseek",
+            "planner_model": "deepseek-reasoner",
+        },
+    )
+
+    assert response.status_code == 202
+    assert runtime.started[0]["planner_provider"] == "deepseek"
+    assert runtime.started[0]["planner_model"] == "deepseek-reasoner"
 
 
 def test_create_intent_requires_authenticated_user():
@@ -126,6 +157,19 @@ def test_stream_thread_events_checks_thread_ownership_and_uses_runtime_stream():
 
     assert response.status_code == 200
     assert "event: reasoning" in response.text
+
+
+def test_stream_thread_events_uses_query_last_event_id_when_header_is_missing():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.get("/api/threads/thread-1/events?last_event_id=evt_00000002")
+
+    assert response.status_code == 200
+    assert runtime.streamed[0]["last_event_id"] == "evt_00000002"
 
 
 def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():

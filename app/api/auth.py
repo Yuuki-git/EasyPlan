@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -305,9 +305,38 @@ async def get_current_user(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> AuthUser:
+    token = _bearer_token_from_authorization_header(authorization)
+    return await _resolve_current_user(repository=repository, auth_service=auth_service, token=token)
+
+
+async def get_user_for_sse(
+    repository: Annotated[DatabaseUserRepository, Depends(get_user_repository)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    token_query: Annotated[str | None, Query(alias="token")] = None,
+) -> AuthUser:
+    token: str | None = None
+    if authorization:
+        token = _bearer_token_from_authorization_header(authorization)
+    elif token_query:
+        token = token_query
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    return await _resolve_current_user(repository=repository, auth_service=auth_service, token=token)
+
+
+def _bearer_token_from_authorization_header(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    token = authorization.split(" ", 1)[1]
+    return authorization.split(" ", 1)[1]
+
+
+async def _resolve_current_user(
+    *,
+    repository: DatabaseUserRepository,
+    auth_service: AuthService,
+    token: str,
+) -> AuthUser:
     try:
         claims = auth_service.decode_access_token(token)
         user = await repository.get_by_id(UUID(claims["sub"]))

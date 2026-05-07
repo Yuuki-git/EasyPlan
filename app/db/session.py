@@ -31,6 +31,11 @@ def get_sessionmaker():
         expire_on_commit=False,
     )
 
+
+def async_session():
+    """Create an async DB session context for background workers."""
+    return get_sessionmaker()()
+
 async def init_db():
     """Initialize the database by creating all tables."""
     async with get_engine().begin() as conn:

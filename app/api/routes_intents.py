@@ -47,6 +47,8 @@ async def create_intent(
         thread_id=thread_id,
         intent_text=payload.intent_text,
         selected_provider=payload.preferred_provider,
+        planner_provider=payload.planner_provider,
+        planner_model=payload.planner_model,
     )
     return IntentCreateResponse(
         thread_id=thread_id,
