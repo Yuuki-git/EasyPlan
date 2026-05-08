@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 from typing import Any, Protocol
 
@@ -84,7 +83,7 @@ def build_planner_prompt(
 
 
 def planner_node_factory(planner: PlannerClient):
-    def planner_node(state: AgentState) -> AgentState:
+    async def planner_node(state: AgentState) -> AgentState:
         prompt = build_planner_prompt(
             state.get("intent_text", ""),
             feedback=state.get("refinement_feedback"),
@@ -92,7 +91,7 @@ def planner_node_factory(planner: PlannerClient):
             validation_errors=state.get("validation_errors"),
         )
         reasoning_sink = ListReasoningSink()
-        task_tree = _run_async(_call_planner(planner, prompt, reasoning_sink))
+        task_tree = await _call_planner(planner, prompt, reasoning_sink)
         next_state: AgentState = {
             **state,
             "task_tree": task_tree,
@@ -126,7 +125,7 @@ async def _call_planner(
     return await planner.create_plan(prompt)
 
 
-def task_tree_validator_node(state: AgentState) -> AgentState:
+async def task_tree_validator_node(state: AgentState) -> AgentState:
     errors = _validate_task_tree(state.get("task_tree"))
     if not errors:
         return {
@@ -151,7 +150,7 @@ def route_after_validation(state: AgentState) -> str:
     return "failed"
 
 
-def failed_validation_node(state: AgentState) -> AgentState:
+async def failed_validation_node(state: AgentState) -> AgentState:
     return {
         "error": {
             "code": "TASK_TREE_VALIDATION_FAILED",
@@ -260,11 +259,3 @@ def _task_tree_summary(task_tree: dict[str, Any] | None) -> str | None:
     root = task_tree.get("root", {})
     title = root.get("title")
     return title if isinstance(title, str) else None
-
-
-def _run_async(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    raise RuntimeError("planner_node must be executed outside the FastAPI event loop")

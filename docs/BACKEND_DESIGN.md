@@ -215,6 +215,8 @@ task_tree_validator_node
 
 当前代码已经实现 `planner -> validator -> human_review interrupt -> refine/edit/reject/approve` 主链路。`persist_internal_tasks_node` 是 v1.2.0 看板写入的下一步，负责把确认后的 `TaskTree` 展开为 `tasks` 和 `task_dependencies`。
 
+`TaskNode.estimated_minutes` 的 Pydantic schema 只做 `1..43200` 的宽泛结构兜底，避免根节点或 group 总时长在 LLM 解析阶段被提前杀死。真正的“微动作必须小于 5 分钟”规则必须且只能在 `task_tree_validator_node` 中针对 `node_type="action"` 执行；发现不合规 action 时返回 `needs_replan`，让 LangGraph 回到 planner 继续拆解。
+
 ## 7. AgentState 裁剪
 
 Checkpoint 只保留恢复必需的最小状态：

@@ -287,7 +287,8 @@ X-User-Timezone: Asia/Shanghai
 - `TaskTree` 最大深度：`8`
 - 总节点数上限：`200`
 - 单节点 `children` 最大数量：`20`
-- `action.estimated_minutes` 必须 `< 5`
+- `estimated_minutes` 的结构化 schema 范围为 `1..43200`，允许 group/root 表达总时长
+- `action.estimated_minutes` 必须 `< 5`；该业务规则只在 LangGraph `task_tree_validator_node` 中执行，并触发自动 replan
 - `depends_on` 只能引用同一棵树内存在的 `client_node_id`
 - 不允许依赖环
 

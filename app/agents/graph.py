@@ -1,5 +1,7 @@
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
+from langgraph.config import var_child_runnable_config
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -19,16 +21,21 @@ def create_graph_config(user_id: str, thread_id: str) -> dict[str, dict[str, str
     return {"configurable": {"user_id": user_id, "thread_id": thread_id}}
 
 
-def human_review_node(state: AgentState) -> AgentState:
-    decision = interrupt(
-        {
-            "type": "task_tree_review",
-            "user_id": state["user_id"],
-            "thread_id": state["thread_id"],
-            "task_tree": state.get("task_tree"),
-            "allowed_actions": ["approve", "edit", "refine", "reject"],
-        }
-    )
+async def human_review_node(state: AgentState, config: RunnableConfig) -> AgentState:
+    # Python 3.10 does not reliably propagate LangGraph runnable config into async interrupt nodes.
+    config_token = var_child_runnable_config.set(config)
+    try:
+        decision = interrupt(
+            {
+                "type": "task_tree_review",
+                "user_id": state["user_id"],
+                "thread_id": state["thread_id"],
+                "task_tree": state.get("task_tree"),
+                "allowed_actions": ["approve", "edit", "refine", "reject"],
+            }
+        )
+    finally:
+        var_child_runnable_config.reset(config_token)
 
     action = decision.get("action") if isinstance(decision, dict) else None
     if action == "refine":
