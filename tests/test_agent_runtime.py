@@ -34,7 +34,7 @@ def test_agent_runtime_runs_langgraph_stream_in_background_worker(monkeypatch):
             user_id="11111111-1111-1111-1111-111111111111",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="openai",
             planner_model=None,
         )
@@ -70,7 +70,7 @@ def test_agent_runtime_reuses_one_checkpointer_across_initial_run_and_resume():
             user_id="user-1",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="openai",
             planner_model=None,
         )
@@ -110,7 +110,7 @@ def test_agent_runtime_builds_planner_from_requested_provider_and_model():
             user_id="user-1",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="deepseek",
             planner_model="deepseek-reasoner",
         )
@@ -138,7 +138,7 @@ def test_agent_runtime_defers_missing_planner_provider_to_factory_default():
             user_id="user-1",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
         )
     )
 
@@ -244,7 +244,7 @@ def test_agent_runtime_persists_interrupt_to_agent_thread(monkeypatch):
             user_id="11111111-1111-1111-1111-111111111111",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
         )
     )
 

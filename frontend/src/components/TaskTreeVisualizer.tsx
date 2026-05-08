@@ -141,7 +141,7 @@ export const TaskTreeRoot: React.FC = () => {
   }
 
   return (
-    <div className="w-full flex flex-col items-center mt-12 pb-32">
+    <div className="w-full flex flex-col items-center mt-12 pb-40">
       <div className="w-full max-w-xl px-2 mb-8">
         <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
           建议行动计划

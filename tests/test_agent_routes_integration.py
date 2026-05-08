@@ -95,7 +95,7 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
     response = client.post(
         "/api/intents",
         headers={"X-User-Timezone": "Asia/Shanghai"},
-        json={"intent_text": "写论文", "preferred_provider": "todoist"},
+        json={"intent_text": "写论文", "preferred_provider": "native"},
     )
 
     assert response.status_code == 202
@@ -107,7 +107,7 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
         "user_id": str(user.id),
         "thread_id": payload["thread_id"],
         "intent_text": "写论文",
-        "selected_provider": "todoist",
+        "selected_provider": "native",
         "planner_provider": None,
         "planner_model": None,
     }
@@ -123,7 +123,7 @@ def test_create_intent_forwards_requested_planner_provider_and_model():
         headers={"X-User-Timezone": "Asia/Shanghai"},
         json={
             "intent_text": "写论文",
-            "preferred_provider": "todoist",
+            "preferred_provider": "native",
             "planner_provider": "deepseek",
             "planner_model": "deepseek-reasoner",
         },

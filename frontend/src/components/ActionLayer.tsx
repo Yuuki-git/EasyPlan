@@ -15,20 +15,10 @@ export const ActionLayer: React.FC = () => {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 10 }}
-          className="fixed bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-8"
+          className="fixed bottom-0 left-0 w-full pb-12 pt-24 bg-gradient-to-t from-background via-background/90 to-transparent flex justify-center pointer-events-none z-40"
         >
-          {appState === 'THINKING' ? (
-            <button
-              onClick={reset}
-              className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
-            >
-              <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
-                ESC
-              </div>
-              <span className="text-sm font-light">取消</span>
-            </button>
-          ) : (
-            <>
+          <div className="flex items-center gap-8 pointer-events-auto">
+            {appState === 'THINKING' ? (
               <button
                 onClick={reset}
                 className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
@@ -38,19 +28,31 @@ export const ActionLayer: React.FC = () => {
                 </div>
                 <span className="text-sm font-light">取消</span>
               </button>
-              
-              <button
-                onClick={confirmPlan}
-                className="group flex items-center gap-2 text-foreground/80 hover:text-foreground transition-colors px-4 py-2 border border-muted hover:border-foreground/40 rounded-full bg-white/5 backdrop-blur-sm"
-              >
-                <div className="flex items-center gap-1 px-1.5 py-0.5 border border-muted/50 rounded text-[10px] font-mono group-hover:border-foreground/30 transition-colors">
-                  <Command size={10} />
-                  <span>ENTER</span>
-                </div>
-                <span className="text-sm font-medium">确认并保存</span>
-              </button>
-            </>
-          )}
+            ) : (
+              <>
+                <button
+                  onClick={reset}
+                  className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                >
+                  <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
+                    ESC
+                  </div>
+                  <span className="text-sm font-light">取消</span>
+                </button>
+                
+                <button
+                  onClick={confirmPlan}
+                  className="group flex items-center gap-2 text-foreground/80 hover:text-foreground transition-colors px-4 py-2 border border-muted hover:border-foreground/40 rounded-full bg-white/5 backdrop-blur-sm"
+                >
+                  <div className="flex items-center gap-1 px-1.5 py-0.5 border border-muted/50 rounded text-[10px] font-mono group-hover:border-foreground/30 transition-colors">
+                    <Command size={10} />
+                    <span>ENTER</span>
+                  </div>
+                  <span className="text-sm font-medium">确认并保存</span>
+                </button>
+              </>
+            )}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

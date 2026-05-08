@@ -1,5 +1,5 @@
-import React from 'react';
-import { useAppStore } from './store/useAppStore';
+import React, { useEffect } from 'react';
+import { useAppStore, ThemeType } from './store/useAppStore';
 import { DynamicInput } from './components/DynamicInput';
 import { ActionLayer } from './components/ActionLayer';
 import { ReasoningStream } from './components/ReasoningStream';
@@ -9,17 +9,25 @@ import { useSSE } from './hooks/useSSE';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { LogOut } from 'lucide-react';
+import { LogOut, Palette } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const App: React.FC = () => {
-  const { appState, error } = useAppStore();
+  const { appState, error, theme } = useAppStore();
   
   // Initialize SSE listener
   useSSE();
+
+  // Apply theme to HTML root so body picks up the CSS variables
+  useEffect(() => {
+    document.documentElement.classList.remove('theme-void', 'theme-parchment');
+    if (theme !== 'zen') {
+      document.documentElement.classList.add(`theme-${theme}`);
+    }
+  }, [theme]);
 
   return (
     <>
@@ -55,7 +63,14 @@ const App: React.FC = () => {
 };
 
 const Header: React.FC = () => {
-  const { setToken } = useAppStore();
+  const { setToken, theme, setTheme } = useAppStore();
+
+  const toggleTheme = () => {
+    const themes: ThemeType[] = ['zen', 'void', 'parchment'];
+    const currentIndex = themes.indexOf(theme);
+    const nextTheme = themes[(currentIndex + 1) % themes.length];
+    setTheme(nextTheme);
+  };
 
   return (
     <header className="fixed top-0 left-0 w-full p-8 flex justify-between items-center z-50">
@@ -63,6 +78,14 @@ const Header: React.FC = () => {
         EasyPlan
       </div>
       <div className="flex items-center gap-6">
+        <button 
+          onClick={toggleTheme}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="切换主题"
+        >
+          <Palette size={16} />
+        </button>
+        
         <button 
           onClick={() => setToken(null)}
           className="text-muted-foreground hover:text-foreground transition-colors"

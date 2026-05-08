@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "EasyPlan Backend API",
-    "description": "Intent-driven task planning API with HITL LangGraph checkpoints. Supported external providers include todoist and microsoft_todo.",
-    "version": "0.1.0"
+    "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
+    "version": "1.2.0"
   },
   "paths": {
     "/health": {
@@ -248,7 +248,7 @@
           "threads"
         ],
         "summary": "Stream Thread Events",
-        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, sync_progress, done, snapshot_required, and error. The error event payload contains state_version, code, and message.",
+        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and error. The error event payload contains state_version, code, and message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -427,253 +427,6 @@
           }
         }
       }
-    },
-    "/api/integrations": {
-      "get": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "List Integrations",
-        "operationId": "list_integrations_api_integrations_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/IntegrationStatus"
-                  },
-                  "type": "array",
-                  "title": "Response List Integrations Api Integrations Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/integrations/{provider}/tools": {
-      "get": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "List Integration Tools",
-        "operationId": "list_integration_tools_api_integrations__provider__tools_get",
-        "parameters": [
-          {
-            "name": "provider",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Provider"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": true
-                    }
-                  },
-                  "title": "Response List Integration Tools Api Integrations  Provider  Tools Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/integrations/{provider}/refresh-tools": {
-      "post": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "Refresh Integration Tools",
-        "operationId": "refresh_integration_tools_api_integrations__provider__refresh_tools_post",
-        "parameters": [
-          {
-            "name": "provider",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Provider"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Refresh Integration Tools Api Integrations  Provider  Refresh Tools Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/integrations/{provider}/oauth/start": {
-      "get": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "Start Oauth",
-        "operationId": "start_oauth_api_integrations__provider__oauth_start_get",
-        "parameters": [
-          {
-            "name": "provider",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Provider"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OAuthStartResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/integrations/{provider}/oauth/callback": {
-      "get": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "Oauth Callback",
-        "operationId": "oauth_callback_api_integrations__provider__oauth_callback_get",
-        "parameters": [
-          {
-            "name": "provider",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "title": "Provider"
-            }
-          },
-          {
-            "name": "code",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Code"
-            }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Oauth Callback Api Integrations  Provider  Oauth Callback Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -778,45 +531,6 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
-      "IntegrationStatus": {
-        "properties": {
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "is_integrated": {
-            "type": "boolean",
-            "title": "Is Integrated"
-          },
-          "external_account_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "External Account Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "provider",
-          "display_name",
-          "status",
-          "is_integrated"
-        ],
-        "title": "IntegrationStatus"
-      },
       "IntentCreateRequest": {
         "properties": {
           "intent_text": {
@@ -829,7 +543,7 @@
             "type": "string",
             "maxLength": 64,
             "title": "Preferred Provider",
-            "default": "todoist"
+            "default": "native"
           },
           "planner_provider": {
             "anyOf": [
@@ -914,35 +628,6 @@
           "password"
         ],
         "title": "LoginRequest"
-      },
-      "OAuthStartResponse": {
-        "properties": {
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "authorization_url": {
-            "type": "string",
-            "title": "Authorization Url"
-          },
-          "state": {
-            "type": "string",
-            "title": "State"
-          },
-          "expires_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Expires At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "provider",
-          "authorization_url",
-          "state",
-          "expires_at"
-        ],
-        "title": "OAuthStartResponse"
       },
       "RegisterRequest": {
         "properties": {

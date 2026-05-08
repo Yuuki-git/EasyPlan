@@ -13,14 +13,12 @@ def test_prune_state_removes_prompt_raw_response_and_long_reasoning():
             for index in range(25)
         ],
         "task_tree": {"root": {"title": "写论文"}},
-        "mcp_raw_response": {"huge": "payload"},
     }
 
     pruned = prune_state(state)
 
     assert "prompt" not in pruned
     assert "raw_llm_response" not in pruned
-    assert "mcp_raw_response" not in pruned
     assert len(pruned["reasoning_events"]) == 20
     assert all(set(event) <= {"message", "code", "node"} for event in pruned["reasoning_events"])
     assert pruned["task_tree"] == {"root": {"title": "写论文"}}

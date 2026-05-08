@@ -6,7 +6,7 @@ from app.api.routes_threads import get_thread_repository as get_thread_repositor
 from app.db.session import get_db
 from app.main import create_app
 from tests.test_agent_routes_integration import FakeRuntime, FakeThread, FakeThreadRepository
-from tests.test_auth_oauth_checkpoint import FakeUserSession
+from tests.test_auth_checkpoint import FakeUserSession
 
 
 def _client_with_database_auth(session: FakeUserSession, auth_service: AuthService) -> TestClient:
