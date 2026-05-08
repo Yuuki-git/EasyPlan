@@ -25,7 +25,7 @@ export const ActionLayer: React.FC = () => {
               <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
                 ESC
               </div>
-              <span className="text-sm font-light">Cancel</span>
+              <span className="text-sm font-light">取消</span>
             </button>
           ) : (
             <>
@@ -36,7 +36,7 @@ export const ActionLayer: React.FC = () => {
                 <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
                   ESC
                 </div>
-                <span className="text-sm font-light">Cancel</span>
+                <span className="text-sm font-light">取消</span>
               </button>
               
               <button
@@ -47,7 +47,7 @@ export const ActionLayer: React.FC = () => {
                   <Command size={10} />
                   <span>ENTER</span>
                 </div>
-                <span className="text-sm font-medium">Confirm & Save</span>
+                <span className="text-sm font-medium">确认并保存</span>
               </button>
             </>
           )}

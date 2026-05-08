@@ -44,7 +44,7 @@ export const ReasoningStream: React.FC = () => {
           className="flex items-center gap-2 px-6"
         >
           <span className="text-xs font-mono text-muted-foreground/40 tracking-widest">
-            AI is processing...
+            AI 正在思考...
           </span>
         </motion.div>
       )}

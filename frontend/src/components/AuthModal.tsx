@@ -78,16 +78,16 @@ export const AuthModal: React.FC = () => {
           </button>
           
           <h2 className="text-xl font-medium tracking-tight mb-2 text-foreground">
-            {isLogin ? 'Welcome back' : 'Create account'}
+            {isLogin ? '欢迎回来' : '创建账号'}
           </h2>
           <p className="text-sm text-muted-foreground mb-8 font-light">
-            Authenticate to continue with your plan.
+            请先登录或注册，以便我们为您保存计划。
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[10px] tracking-widest text-muted-foreground/60 font-mono">
-                Email
+                邮箱
               </label>
               <input
                 type="email"
@@ -101,7 +101,7 @@ export const AuthModal: React.FC = () => {
             
             <div className="space-y-1.5">
               <label className="text-[10px] tracking-widest text-muted-foreground/60 font-mono">
-                Password
+                密码
               </label>
               <input
                 type="password"
@@ -123,7 +123,7 @@ export const AuthModal: React.FC = () => {
               disabled={isLoading}
               className="w-full mt-6 py-2.5 bg-foreground text-background rounded-xl text-sm font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50 shadow-sm"
             >
-              {isLoading ? 'Processing...' : isLogin ? 'Sign In' : 'Sign Up'}
+              {isLoading ? '处理中...' : isLogin ? '登 录' : '注 册'}
             </button>
           </form>
 
@@ -132,7 +132,7 @@ export const AuthModal: React.FC = () => {
               onClick={() => setIsLogin(!isLogin)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+              {isLogin ? "还没有账号？点击注册" : "已有账号？点击登录"}
             </button>
           </div>
         </motion.div>

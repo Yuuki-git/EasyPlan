@@ -49,7 +49,7 @@ EasyPlan/
 │   ├── agents/         # LangGraph topology & nodes
 │   ├── api/            # REST & SSE endpoints
 │   ├── models/         # ORM Models
-│   └── services/       # LLM & MCP sync services
+│   └── services/       # LLM & core business services
 ├── frontend/           # Frontend React App
 ├── docs/               # Design docs & OpenAPI contract
 └── tests/              # 31+ automated tests
@@ -69,7 +69,7 @@ cd EasyPlan
 cp .env.example .env
 
 # Edit the .env file with your specific settings
-# Required: OPENAI_API_KEY, DATABASE_URL, JWT_SECRET_KEY
+# Required: DATABASE_URL, EASYPLAN_LLM_PROVIDER, EASYPLAN_JWT_SECRET
 ```
 
 ### 3. Database Initialization
@@ -110,4 +110,5 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 License
 Distributed under the **MIT License**.
+
 *MIT License**.

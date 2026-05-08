@@ -58,7 +58,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   reasoningLogs: [],
   taskTree: null,
   nodeStatuses: {},
-  preferredProvider: 'todoist',
+  preferredProvider: 'microsoft_todo',
   isIntegrated: false,
   error: null,
   token: localStorage.getItem('auth_token'),

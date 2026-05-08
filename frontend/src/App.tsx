@@ -49,39 +49,13 @@ const App: React.FC = () => {
         </div>
 
         <ActionLayer />
-        <DateAnchor />
       </main>
     </>
   );
 };
 
-const DateAnchor: React.FC = () => {
-  const { appState } = useAppStore();
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    weekday: 'long'
-  });
-
-  return (
-    <AnimatePresence>
-      {appState === 'INITIAL' && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 1 }}
-          className="fixed bottom-8 left-8 text-[10px] font-mono tracking-widest text-muted-foreground/30 pointer-events-none"
-        >
-          {dateStr}
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-};
-
 const Header: React.FC = () => {
-  const { preferredProvider, setPreferredProvider, setToken } = useAppStore();
+  const { setToken } = useAppStore();
 
   return (
     <header className="fixed top-0 left-0 w-full p-8 flex justify-between items-center z-50">
@@ -89,23 +63,10 @@ const Header: React.FC = () => {
         EasyPlan
       </div>
       <div className="flex items-center gap-6">
-        <select 
-          value={preferredProvider}
-          onChange={(e) => setPreferredProvider(e.target.value)}
-          className="bg-transparent text-xs text-muted-foreground hover:text-foreground transition-colors outline-none cursor-pointer tracking-wide"
-        >
-          <option value="todoist" className="bg-background text-foreground">Todoist</option>
-          <option value="microsoft_todo" className="bg-background text-foreground">Microsoft To Do</option>
-        </select>
-        
-        <button className="text-xs text-muted-foreground hover:text-foreground transition-colors tracking-wide">
-          Integrations
-        </button>
-        
         <button 
           onClick={() => setToken(null)}
           className="text-muted-foreground hover:text-foreground transition-colors"
-          title="Sign Out"
+          title="退出登录"
         >
           <LogOut size={16} />
         </button>
