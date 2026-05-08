@@ -1,5 +1,5 @@
-import React from 'react';
-import { useAppStore } from './store/useAppStore';
+import React, { useEffect } from 'react';
+import { useAppStore, ThemeType } from './store/useAppStore';
 import { DynamicInput } from './components/DynamicInput';
 import { ActionLayer } from './components/ActionLayer';
 import { ReasoningStream } from './components/ReasoningStream';
@@ -9,17 +9,25 @@ import { useSSE } from './hooks/useSSE';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { LogOut } from 'lucide-react';
+import { LogOut, Palette } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const App: React.FC = () => {
-  const { appState, error } = useAppStore();
+  const { appState, error, theme } = useAppStore();
   
   // Initialize SSE listener
   useSSE();
+
+  // Apply theme to HTML root so body picks up the CSS variables
+  useEffect(() => {
+    document.documentElement.classList.remove('theme-void', 'theme-parchment');
+    if (theme !== 'zen') {
+      document.documentElement.classList.add(`theme-${theme}`);
+    }
+  }, [theme]);
 
   return (
     <>
@@ -49,63 +57,39 @@ const App: React.FC = () => {
         </div>
 
         <ActionLayer />
-        <DateAnchor />
       </main>
     </>
   );
 };
 
-const DateAnchor: React.FC = () => {
-  const { appState } = useAppStore();
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    weekday: 'long'
-  });
-
-  return (
-    <AnimatePresence>
-      {appState === 'INITIAL' && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 1 }}
-          className="fixed bottom-8 left-8 text-[10px] font-mono tracking-widest text-muted-foreground/30 uppercase pointer-events-none"
-        >
-          {dateStr}
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-};
-
 const Header: React.FC = () => {
-  const { preferredProvider, setPreferredProvider, setToken } = useAppStore();
+  const { setToken, theme, setTheme } = useAppStore();
+
+  const toggleTheme = () => {
+    const themes: ThemeType[] = ['zen', 'void', 'parchment'];
+    const currentIndex = themes.indexOf(theme);
+    const nextTheme = themes[(currentIndex + 1) % themes.length];
+    setTheme(nextTheme);
+  };
 
   return (
     <header className="fixed top-0 left-0 w-full p-8 flex justify-between items-center z-50">
-      <div className="text-sm font-bold tracking-widest text-foreground/80">
-        EASYPLAN
+      <div className="text-base font-medium tracking-wide text-foreground/70">
+        EasyPlan
       </div>
       <div className="flex items-center gap-6">
-        <select 
-          value={preferredProvider}
-          onChange={(e) => setPreferredProvider(e.target.value)}
-          className="bg-transparent text-xs text-muted-foreground hover:text-foreground transition-colors outline-none cursor-pointer tracking-tighter"
+        <button 
+          onClick={toggleTheme}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="切换主题"
         >
-          <option value="todoist" className="bg-background text-foreground">Todoist</option>
-          <option value="microsoft_todo" className="bg-background text-foreground">Microsoft To Do</option>
-        </select>
-        
-        <button className="text-xs text-muted-foreground hover:text-foreground transition-colors uppercase tracking-tighter">
-          Integrations
+          <Palette size={16} />
         </button>
         
         <button 
           onClick={() => setToken(null)}
           className="text-muted-foreground hover:text-foreground transition-colors"
-          title="Sign Out"
+          title="退出登录"
         >
           <LogOut size={16} />
         </button>

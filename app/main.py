@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import router as auth_router
-from app.api.routes_integrations import router as integrations_router
+from app.api.exceptions import register_exception_handlers
 from app.api.routes_intents import router as intents_router
 from app.api.routes_threads import router as threads_router
 
@@ -40,15 +40,16 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
-        version="0.1.0",
+        version="1.2.0",
         description=(
-            "Intent-driven task planning API with HITL LangGraph checkpoints. "
-            "Supported external providers include todoist and microsoft_todo."
+            "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, "
+            "and Async Queue SSE event streams."
         ),
         openapi_url="/openapi.json",
         docs_url="/docs",
         lifespan=lifespan,
     )
+    register_exception_handlers(app)
     _configure_cors(app, _load_cors_origins())
 
     @app.get("/health", tags=["health"])
@@ -58,7 +59,6 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(intents_router)
     app.include_router(threads_router)
-    app.include_router(integrations_router)
 
     if enable_static:
         resolved_static_dir = Path(static_dir) if static_dir is not None else DEFAULT_STATIC_DIR

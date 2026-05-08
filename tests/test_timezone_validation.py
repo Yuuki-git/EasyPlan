@@ -7,7 +7,7 @@ def test_intent_rejects_invalid_iana_timezone_header():
     response = client.post(
         "/api/intents",
         headers={"X-User-Timezone": "Mars/Olympus"},
-        json={"intent_text": "写论文", "preferred_provider": "todoist"},
+        json={"intent_text": "写论文", "preferred_provider": "native"},
     )
 
     assert response.status_code == 422
@@ -20,7 +20,7 @@ def test_intent_accepts_valid_iana_timezone_header():
     response = client.post(
         "/api/intents",
         headers={"X-User-Timezone": "Asia/Shanghai"},
-        json={"intent_text": "写论文", "preferred_provider": "todoist"},
+        json={"intent_text": "写论文", "preferred_provider": "native"},
     )
 
     assert response.status_code == 202

@@ -42,7 +42,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
             className="flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
           >
             <AlertCircle size={14} />
-            <span className="text-[10px] font-mono">RETRY</span>
+            <span className="text-[10px] font-mono">重试</span>
             <RotateCcw size={10} />
           </button>
         );
@@ -106,7 +106,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
               {renderStatus()}
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 text-[9px] font-mono text-muted-foreground/60 border border-muted/20">
                 <Clock size={10} />
-                <span>{node.estimated_minutes}m</span>
+                <span>{node.estimated_minutes}分钟</span>
               </div>
             </div>
           </div>
@@ -141,17 +141,19 @@ export const TaskTreeRoot: React.FC = () => {
   }
 
   return (
-    <div className="w-full flex flex-col items-center mt-12 pb-32">
-      <div className="w-full max-w-2xl px-2 mb-8">
-        <h3 className="text-xs font-mono text-muted-foreground/30 uppercase tracking-[0.2em] mb-2">
-          Proposed Action Plan
+    <div className="w-full flex flex-col items-center mt-12 pb-40">
+      <div className="w-full max-w-xl px-2 mb-8">
+        <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
+          建议行动计划
         </h3>
         <p className="text-lg font-light text-foreground/80 leading-snug">
           {taskTree.summary}
         </p>
       </div>
       
-      <TaskTreeVisualizer node={taskTree.root} />
+      <div className="w-full max-w-xl px-2">
+        <TaskTreeVisualizer node={taskTree.root} />
+      </div>
 
       {/* "End of Plan" Decorator */}
       <motion.div
@@ -161,8 +163,8 @@ export const TaskTreeRoot: React.FC = () => {
         className="mt-24 flex flex-col items-center gap-4"
       >
         <div className="w-px h-12 bg-gradient-to-b from-muted to-transparent" />
-        <span className="text-[10px] font-mono tracking-[0.3em] text-muted-foreground/20 uppercase">
-          End of Plan
+        <span className="text-[10px] font-mono tracking-widest text-muted-foreground/30">
+          计划结束
         </span>
       </motion.div>
     </div>

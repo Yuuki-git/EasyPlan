@@ -15,13 +15,9 @@ class AgentState(TypedDict, total=False):
     refinement_feedback: str
     request_id: str
     selected_provider: str
-    discovered_tools: list[dict[str, Any]]
-    tool_call_plan: list[dict[str, Any]]
-    sync_results: list[dict[str, Any]]
     error: dict[str, Any]
     prompt: str
     raw_llm_response: Any
-    mcp_raw_response: Any
 
 
 MAX_INTENT_TEXT_CHARS = 2000
@@ -30,7 +26,6 @@ ALLOWED_REASONING_KEYS = {"message", "code", "node"}
 DISALLOWED_CHECKPOINT_KEYS = {
     "prompt",
     "raw_llm_response",
-    "mcp_raw_response",
 }
 
 

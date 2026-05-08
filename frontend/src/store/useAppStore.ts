@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { TaskTree } from '../types/api';
+import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
+import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 
 export type AppState = 
   | 'INITIAL' 
@@ -9,6 +11,8 @@ export type AppState =
   | 'SUCCESS' 
   | 'PARTIAL_ERROR' 
   | 'ERROR';
+
+export type ThemeType = 'zen' | 'void' | 'parchment';
 
 interface AppStore {
   // Data
@@ -25,6 +29,7 @@ interface AppStore {
   token: string | null;
   showAuthModal: boolean;
   pendingIntent: string | null;
+  theme: ThemeType;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -34,6 +39,7 @@ interface AppStore {
   setToken: (token: string | null) => void;
   setShowAuthModal: (show: boolean) => void;
   setPendingIntent: (intent: string | null) => void;
+  setTheme: (theme: ThemeType) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -56,12 +62,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   reasoningLogs: [],
   taskTree: null,
   nodeStatuses: {},
-  preferredProvider: 'todoist',
+  preferredProvider: 'microsoft_todo',
   isIntegrated: false,
   error: null,
   token: localStorage.getItem('auth_token'),
   showAuthModal: false,
   pendingIntent: null,
+  theme: (localStorage.getItem('app_theme') as ThemeType) || 'zen',
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
@@ -77,6 +84,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   setShowAuthModal: (showAuthModal) => set({ showAuthModal }),
   setPendingIntent: (pendingIntent) => set({ pendingIntent }),
+  setTheme: (theme) => {
+    localStorage.setItem('app_theme', theme);
+    set({ theme });
+  },
   
   generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
   
@@ -123,12 +134,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const response = await fetch('/api/intents', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ 
-          intent_text: intentText,
-          preferred_provider: preferredProvider 
-        })
+        body: JSON.stringify(buildIntentRequest({
+          intentText,
+          preferredProvider,
+          plannerProvider: resolvePlannerProvider(import.meta.env),
+        }))
       });
-      
+
+      if (isUnauthorizedResponse(response)) {
+        localStorage.removeItem('auth_token');
+        set(buildAuthRecoveryState(intentText));
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to submit intent');
       
       const data = await response.json();

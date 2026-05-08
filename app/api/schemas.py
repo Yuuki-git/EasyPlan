@@ -57,8 +57,8 @@ class IntentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intent_text: str = Field(..., min_length=1, max_length=2000)
-    preferred_provider: str = Field(default="todoist", max_length=64)
-    planner_provider: Literal["openai", "deepseek", "xiaomi"] = "openai"
+    preferred_provider: str = Field(default="native", max_length=64)
+    planner_provider: Literal["openai", "deepseek", "xiaomi"] | None = None
     planner_model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -101,21 +101,6 @@ class ThreadSnapshot(BaseModel):
     task_tree: dict[str, Any] | None = None
     interrupt_payload: dict[str, Any] | None = None
     latest_checkpoint_id: str | None = None
-
-
-class OAuthStartResponse(BaseModel):
-    provider: str
-    authorization_url: str
-    state: str
-    expires_at: datetime
-
-
-class IntegrationStatus(BaseModel):
-    provider: str
-    display_name: str
-    status: str
-    is_integrated: bool
-    external_account_id: str | None = None
 
 
 TaskNode.model_rebuild()

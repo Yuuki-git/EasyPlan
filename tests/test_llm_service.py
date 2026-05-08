@@ -80,6 +80,8 @@ def test_openai_planner_uses_task_tree_structured_output_and_emits_safe_events()
     parse_call = fake_openai.responses.calls[0]
     assert parse_call["text_format"] is TaskTree
     assert parse_call["model"] == "gpt-4o-2024-08-06"
+    assert "CRITICAL: You MUST respond in the EXACT same language" in parse_call["input"][0]["content"]
+    assert "If the user writes in Chinese" in parse_call["input"][0]["content"]
     assert result["root"]["children"][0]["client_node_id"] == "task-1"
     assert [event["code"] for event in reasoning_sink.events] == [
         "LLM_PLANNING_STARTED",
@@ -133,6 +135,8 @@ def test_deepseek_planner_uses_json_mode_and_pydantic_validation():
     assert create_call["response_format"] == {"type": "json_object"}
     assert "json" in create_call["messages"][0]["content"].lower()
     assert "TaskTree" in create_call["messages"][0]["content"]
+    assert "CRITICAL: You MUST respond in the EXACT same language" in create_call["messages"][0]["content"]
+    assert "If the user writes in Chinese" in create_call["messages"][0]["content"]
     assert result["root"]["children"][0]["client_node_id"] == "task-1"
     assert usage_sink.records[0].provider == "deepseek"
     assert usage_sink.records[0].input_tokens == 31
@@ -159,6 +163,8 @@ def test_xiaomi_mimo_planner_uses_json_mode_and_records_usage():
     assert create_call["response_format"] == {"type": "json_object"}
     assert "json" in create_call["messages"][0]["content"].lower()
     assert "TaskTree" in create_call["messages"][0]["content"]
+    assert "CRITICAL: You MUST respond in the EXACT same language" in create_call["messages"][0]["content"]
+    assert "If the user writes in Chinese" in create_call["messages"][0]["content"]
     assert result["root"]["children"][0]["client_node_id"] == "task-1"
     assert usage_sink.records[0].provider == "xiaomi"
     assert usage_sink.records[0].model == "mimo-v2-flash"

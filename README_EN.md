@@ -49,7 +49,7 @@ EasyPlan/
 │   ├── agents/         # LangGraph topology & nodes
 │   ├── api/            # REST & SSE endpoints
 │   ├── models/         # ORM Models
-│   └── services/       # LLM & MCP sync services
+│   └── services/       # LLM & core business services
 ├── frontend/           # Frontend React App
 ├── docs/               # Design docs & OpenAPI contract
 └── tests/              # 31+ automated tests
@@ -69,7 +69,7 @@ cd EasyPlan
 cp .env.example .env
 
 # Edit the .env file with your specific settings
-# Required: OPENAI_API_KEY, DATABASE_URL, JWT_SECRET_KEY
+# Required: DATABASE_URL, EASYPLAN_LLM_PROVIDER, EASYPLAN_JWT_SECRET
 ```
 
 ### 3. Database Initialization
@@ -89,7 +89,7 @@ cd frontend && npm install && npm run dev
 1. **Enter Intent**: Input `I want to finish a research report on AI agents by next Friday` on the home page.
 2. **AI Decomposition**: The system shows the reasoning stream in real-time and "grows" a task tree (e.g., review latest papers, build architecture diagrams, write abstract, etc.).
 3. **Refinement**: Feel it's too complex? Type `Reduce it to something I can start within 30 minutes`, and the AI will immediately reconstruct the plan.
-4. **One-Click Sync**: Click "Confirm", and the tasks will instantly sync to your Todoist or Microsoft To Do account.
+4. **One-Click Save**: Click "Confirm & Save", and the tasks will seamlessly drop into your native task board, ready for execution.
 
 ---
 
@@ -110,3 +110,5 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 License
 Distributed under the **MIT License**.
+
+*MIT License**.

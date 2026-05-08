@@ -14,6 +14,10 @@ DEFAULT_DEEPSEEK_PLANNER_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_XIAOMI_MIMO_PLANNER_MODEL = "mimo-v2-flash"
 DEFAULT_XIAOMI_MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
+LANGUAGE_MATCH_INSTRUCTION = (
+    "CRITICAL: You MUST respond in the EXACT same language as the user's prompt. "
+    "If the user writes in Chinese, all  fields (title, description, summary) MUST be in Chinese."
+)
 logger = logging.getLogger(__name__)
 
 
@@ -142,7 +146,8 @@ class OpenAIPlannerClient:
                     "role": "system",
                     "content": (
                         "You are EasyPlan's planner. Return only a TaskTree structured "
-                        "output. Do not include hidden reasoning or markdown."
+                        "output. Do not include hidden reasoning or markdown. "
+                        f"{LANGUAGE_MATCH_INSTRUCTION}"
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -418,5 +423,6 @@ def _json_mode_system_prompt(provider_name: str) -> str:
         f"You are EasyPlan's planner running on {provider_name}. Output valid json only. "
         "The json must match this Pydantic TaskTree schema exactly. "
         "Do not include markdown, commentary, hidden reasoning, or extra keys. "
-        f"TaskTree JSON Schema: {schema}"
+        f"TaskTree JSON Schema: {schema} "
+        f"{LANGUAGE_MATCH_INSTRUCTION}"
     )

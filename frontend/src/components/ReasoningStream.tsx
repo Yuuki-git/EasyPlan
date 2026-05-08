@@ -38,15 +38,11 @@ export const ReasoningStream: React.FC = () => {
       </AnimatePresence>
       
       {appState === 'THINKING' && (
-        <motion.div
-          animate={{ opacity: [0.3, 0.6, 0.3] }}
-          transition={{ duration: 1.5, repeat: Infinity }}
-          className="flex items-center gap-2 px-6"
-        >
-          <span className="text-xs font-mono text-muted-foreground/40 tracking-widest uppercase">
-            AI is processing...
+        <div className="flex items-center gap-2 px-6 animate-pulse py-2">
+          <span className="text-xs font-mono text-muted-foreground/60 tracking-widest">
+            AI 正在思考...
           </span>
-        </motion.div>
+        </div>
       )}
     </div>
   );

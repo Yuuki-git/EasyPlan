@@ -19,6 +19,11 @@ class SyncStreamGraph:
         raise AssertionError("AgentRuntime must use graph.stream from its background worker")
 
 
+class CompleteGraph:
+    def stream(self, input_value, config):
+        yield {"planner": {"reasoning_events": [{"code": "PLAN_STARTED", "message": "planning"}]}}
+
+
 def test_agent_runtime_runs_langgraph_stream_in_background_worker(monkeypatch):
     graph = SyncStreamGraph()
     runtime = AgentRuntime(graph_factory=lambda **_: graph)
@@ -29,7 +34,7 @@ def test_agent_runtime_runs_langgraph_stream_in_background_worker(monkeypatch):
             user_id="11111111-1111-1111-1111-111111111111",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="openai",
             planner_model=None,
         )
@@ -65,7 +70,7 @@ def test_agent_runtime_reuses_one_checkpointer_across_initial_run_and_resume():
             user_id="user-1",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="openai",
             planner_model=None,
         )
@@ -105,7 +110,7 @@ def test_agent_runtime_builds_planner_from_requested_provider_and_model():
             user_id="user-1",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
             planner_provider="deepseek",
             planner_model="deepseek-reasoner",
         )
@@ -114,6 +119,53 @@ def test_agent_runtime_builds_planner_from_requested_provider_and_model():
     assert created_planners[0]["provider"] == "deepseek"
     assert created_planners[0]["model"] == "deepseek-reasoner"
     assert graph_planners[0] is created_planners[0]["planner"]
+
+
+def test_agent_runtime_defers_missing_planner_provider_to_factory_default():
+    created_planners = []
+
+    def planner_client_factory(*, provider, model):
+        created_planners.append({"provider": provider, "model": model})
+        return object()
+
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: CompleteGraph(),
+        planner_client_factory=planner_client_factory,
+    )
+
+    asyncio.run(
+        runtime.run_new_thread(
+            user_id="user-1",
+            thread_id="thread-1",
+            intent_text="write paper",
+            selected_provider="native",
+        )
+    )
+
+    assert created_planners[0] == {"provider": None, "model": None}
+
+
+def test_agent_runtime_resume_without_cached_selection_uses_factory_default():
+    created_planners = []
+
+    def planner_client_factory(*, provider, model):
+        created_planners.append({"provider": provider, "model": model})
+        return object()
+
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: CompleteGraph(),
+        planner_client_factory=planner_client_factory,
+    )
+
+    asyncio.run(
+        runtime.resume_thread(
+            user_id="user-1",
+            thread_id="thread-1",
+            decision={"action": "approve"},
+        )
+    )
+
+    assert created_planners[0] == {"provider": None, "model": None}
 
 
 def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
@@ -192,7 +244,7 @@ def test_agent_runtime_persists_interrupt_to_agent_thread(monkeypatch):
             user_id="11111111-1111-1111-1111-111111111111",
             thread_id="thread-1",
             intent_text="write paper",
-            selected_provider="todoist",
+            selected_provider="native",
         )
     )
 

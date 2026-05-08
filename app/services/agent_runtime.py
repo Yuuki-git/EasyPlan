@@ -41,7 +41,7 @@ class AgentRuntime:
         self._planner_client_factory = planner_client_factory or create_planner_client
         self._events: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=max_events_per_thread))
         self._subscribers: dict[str, list[_EventSubscriber]] = defaultdict(list)
-        self._planner_selection: dict[str, tuple[str, str | None]] = {}
+        self._planner_selection: dict[str, tuple[str | None, str | None]] = {}
         self._counter = itertools.count(1)
         self._lock = threading.Lock()
 
@@ -52,7 +52,7 @@ class AgentRuntime:
         thread_id: str,
         intent_text: str,
         selected_provider: str,
-        planner_provider: str = "openai",
+        planner_provider: str | None = None,
         planner_model: str | None = None,
     ) -> None:
         with self._lock:
@@ -74,7 +74,7 @@ class AgentRuntime:
         thread_id: str,
         intent_text: str,
         selected_provider: str,
-        planner_provider: str,
+        planner_provider: str | None,
         planner_model: str | None,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
@@ -108,7 +108,7 @@ class AgentRuntime:
         decision: dict[str, Any],
     ) -> None:
         with self._lock:
-            planner_provider, planner_model = self._planner_selection.get(thread_id, ("openai", None))
+            planner_provider, planner_model = self._planner_selection.get(thread_id, (None, None))
         await asyncio.to_thread(
             self._resume_thread_sync,
             user_id=user_id,
@@ -124,7 +124,7 @@ class AgentRuntime:
         user_id: str,
         thread_id: str,
         decision: dict[str, Any],
-        planner_provider: str,
+        planner_provider: str | None,
         planner_model: str | None,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
@@ -143,7 +143,7 @@ class AgentRuntime:
             logger.exception("agent_thread_resume_failed", extra={"thread_id": thread_id, "user_id": user_id})
             self._append_error(thread_id, code="AGENT_RESUME_FAILED", message=str(exc))
 
-    def _build_graph(self, *, planner_provider: str, planner_model: str | None):
+    def _build_graph(self, *, planner_provider: str | None, planner_model: str | None):
         planner = self._planner_client_factory(provider=planner_provider, model=planner_model)
         return self._graph_factory(planner=planner, checkpointer=_global_checkpointer)
 

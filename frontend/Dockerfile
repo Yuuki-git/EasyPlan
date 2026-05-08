@@ -11,7 +11,9 @@ RUN npm install --frozen-lockfile
 COPY . .
 # Set environment variable for production build if needed
 ARG VITE_API_BASE_URL
+ARG VITE_PLANNER_PROVIDER
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_PLANNER_PROVIDER=$VITE_PLANNER_PROVIDER
 
 RUN npm run build
 
