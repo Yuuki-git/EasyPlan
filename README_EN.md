@@ -108,6 +108,16 @@ docker-compose logs -f backend | grep "initialized"
 
 ---
 
+## 📅 Roadmap
+
+### 🔜 v1.2.0 (Native Ecosystem - *Current Focus*)
+- **Native Task Board**: Moving away from external sync to introduce a built-in, professional-grade task management panel.
+- **Deep Immersion**: Implementing auto-collapsing reasoning logs once the task tree is generated.
+- **Inline Editing**: Support for direct text and time modifications on the generated task tree.
+- **Scope Horizon**: For massive goals, AI will only plan the "activation phase" to prevent cognitive overload, strictly adhering to a 2-level hierarchy.
+
+---
+
 ## 📄 License
 Distributed under the **MIT License**.
 
