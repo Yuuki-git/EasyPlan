@@ -82,22 +82,22 @@ export const useSSE = () => {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      es.addEventListener('error', (e: any) => {
-        if (e.data) {
-          try {
-            const data = JSON.parse(e.data);
-            setError(data.message || data.code || 'An error occurred');
-          } catch {
-            setError(e.data);
-          }
-          es.close();
-        } else {
-          console.warn('SSE Disconnected. Attempting to align and reconnect...');
-          es.close();
-          setTimeout(() => {
-            if (isMounted) connect();
-          }, 3000); // Exponential backoff could be better
+      es.addEventListener('agent_error', (e: any) => {
+        try {
+          const data = JSON.parse(e.data);
+          setError(data.message || data.code || 'An error occurred');
+        } catch {
+          setError(e.data);
         }
+        es.close();
+      });
+
+      es.addEventListener('error', () => {
+        console.warn('SSE Disconnected. Attempting to align and reconnect...');
+        es.close();
+        setTimeout(() => {
+          if (isMounted) connect();
+        }, 3000); // Exponential backoff could be better
       });
     };
 

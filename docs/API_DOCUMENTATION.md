@@ -207,7 +207,7 @@ GET /api/threads/thr_01J.../events?token=<access_token>&last_event_id=evt_01J003
 | `checkpoint` | `state_version`, `node` | LangGraph 节点推进 |
 | `plan_ready` | `state_version`, `thread_id`, `task_tree` | 任务树已通过校验，等待用户确认 |
 | `done` | `state_version`, `status` | 终态事件 |
-| `error` | `state_version`, `code`, `message` | 统一错误事件 |
+| `agent_error` | `state_version`, `code`, `message` | 统一错误事件，避免与浏览器原生 `error` 事件冲突 |
 | `snapshot_required` | 可选 `reason` | 前端必须重新拉取 thread 快照 |
 
 ### POST `/api/threads/{thread_id}/confirm`

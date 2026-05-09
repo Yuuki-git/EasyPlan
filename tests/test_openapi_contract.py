@@ -85,6 +85,17 @@ def test_openapi_contract_documents_sse_last_event_id_query_fallback():
     assert "last_event_id" in events_params
 
 
+def test_openapi_contract_documents_agent_error_sse_event_name():
+    app = create_app()
+
+    schema = app.openapi()
+
+    description = schema["paths"]["/api/threads/{thread_id}/events"]["get"]["description"]
+    assert "agent_error" in description
+    assert " and error" not in description
+    assert "The error event payload" not in description
+
+
 def test_openapi_contract_confirm_action_includes_refine():
     app = create_app()
 

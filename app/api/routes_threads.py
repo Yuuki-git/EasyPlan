@@ -41,8 +41,8 @@ async def get_thread_snapshot(
     "/{thread_id}/events",
     description=(
         "Server-Sent Events stream. Events include reasoning, checkpoint, "
-        "plan_ready, done, snapshot_required, and error. "
-        "The error event payload contains state_version, code, and message."
+        "plan_ready, done, snapshot_required, and agent_error. "
+        "The agent_error event payload contains state_version, code, and message."
     ),
 )
 async def stream_thread_events(

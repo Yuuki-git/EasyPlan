@@ -241,7 +241,7 @@ class AgentRuntime:
     def _append_error(self, thread_id: str, *, code: str, message: str) -> None:
         self._append_event(
             thread_id,
-            "error",
+            "agent_error",
             {
                 "state_version": next(self._counter),
                 "code": code,
@@ -323,7 +323,7 @@ def _extract_event_type(event: str) -> str | None:
 
 
 def _is_terminal_event(event: str) -> bool:
-    return _extract_event_type(event) in {"done", "error"}
+    return _extract_event_type(event) in {"done", "agent_error"}
 
 
 def _safe_sse_error_message(message: Any) -> str:

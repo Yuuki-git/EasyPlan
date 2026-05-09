@@ -217,6 +217,30 @@ def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
     assert "event: done" in done
 
 
+def test_agent_runtime_stream_closes_on_agent_error_event():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+
+    async def collect_live_error_event():
+        stream = runtime.stream_thread_events(user_id="user-1", thread_id="thread-1")
+        iterator = stream.__aiter__()
+        pending_error = asyncio.create_task(iterator.__anext__())
+        await asyncio.sleep(0)
+        assert not pending_error.done()
+
+        runtime._append_error("thread-1", code="AGENT_RUN_FAILED", message="friendly failure")
+        event = await asyncio.wait_for(pending_error, timeout=1)
+
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(iterator.__anext__(), timeout=1)
+        return event
+
+    event = asyncio.run(collect_live_error_event())
+
+    assert "event: agent_error" in event
+    assert "event: error" not in event
+    assert "AGENT_RUN_FAILED" in event
+
+
 class FakeAsyncSession:
     def __init__(self) -> None:
         self.statements = []
@@ -313,7 +337,8 @@ def test_agent_runtime_sanitizes_internal_graph_errors_in_sse(caplog):
         )
     )
 
-    assert "event: error" in event
+    assert "event: agent_error" in event
+    assert "event: error" not in event
     assert "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。" in event
     assert "validation error" not in event.lower()
     assert "estimated_minutes" not in event

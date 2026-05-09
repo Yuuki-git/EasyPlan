@@ -76,7 +76,7 @@
 | `reasoning` | `{ "message": "..." }` | AI 的思考链路，前端追加到日志列表。 |
 | `plan_ready` | `{ "task_tree": {...} }` | 任务拆解完成，前端应渲染任务树并进入 PENDING 态。 |
 | `done` | `null` | 整个流程结束的信号（例如用户 Confirm 后持久化完成）。 |
-| `error` | `{ "code": "...", "message": "..." }` | 业务异常，前端应展示 `message`。 |
+| `agent_error` | `{ "code": "...", "message": "..." }` | 业务异常，前端应展示 `message`。 |
 
 ---
 
