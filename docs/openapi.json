@@ -248,7 +248,7 @@
           "threads"
         ],
         "summary": "Stream Thread Events",
-        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and error. The error event payload contains state_version, code, and message.",
+        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. The agent_error event payload contains state_version, code, and message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -696,7 +696,7 @@
           },
           "estimated_minutes": {
             "type": "integer",
-            "exclusiveMaximum": 5.0,
+            "maximum": 43200.0,
             "minimum": 1.0,
             "title": "Estimated Minutes"
           },

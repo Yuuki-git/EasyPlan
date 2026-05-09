@@ -19,7 +19,7 @@ def format_sse_error_event(
     message: str,
 ) -> str:
     return format_sse_event(
-        "error",
+        "agent_error",
         {
             "state_version": state_version,
             "code": code,

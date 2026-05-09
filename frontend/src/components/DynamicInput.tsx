@@ -34,10 +34,15 @@ export const DynamicInput: React.FC = () => {
         '下午好。进度慢一点也没关系，深呼吸，我们继续完成接下来的目标。',
         '下午好。站起来活动一下吧？然后写下接下来的核心专注点。'
       ];
-    } else {
+    } else if (time >= 18 && time < 22) {
       options = [
         '晚上好。今天辛苦了，把还在脑子里乱转的想法先存放在这吧。',
-        '夜深了。清空待办，把明天的烦恼留给明天，今晚睡个好觉。'
+        '晚上好。今天辛苦了，把还在脑子里乱转的想法先存放在这吧。' // Using same to fulfill exact PM request
+      ];
+    } else {
+      options = [
+        '夜深了。清空待办，把明天的烦恼留给明天，今晚睡个好觉。',
+        '夜深了。清空待办，把明天的烦恼留给明天，今晚睡个好觉。' // Using same to fulfill exact PM request
       ];
     }
     setGreeting(options[Math.floor(Math.random() * options.length)]);
@@ -46,7 +51,7 @@ export const DynamicInput: React.FC = () => {
   const getPlaceholder = () => {
     switch (appState) {
       case 'INITIAL':
-        return '输入您的核心目标...';
+        return '输入您的任何想法...';
       case 'PENDING':
         return '需要微调吗？（例如："缩减一半时间"）';
       default:
@@ -58,7 +63,10 @@ export const DynamicInput: React.FC = () => {
     e.preventDefault();
     if (!value.trim()) return;
 
-    if (appState === 'INITIAL') {
+    if (appState === 'INITIAL' || appState === 'SUCCESS' || appState === 'ERROR' || appState === 'PARTIAL_ERROR') {
+      if (appState !== 'INITIAL') {
+        useAppStore.getState().reset();
+      }
       useAppStore.getState().submitIntent(value);
     } else if (appState === 'PENDING') {
       // Trigger refinement

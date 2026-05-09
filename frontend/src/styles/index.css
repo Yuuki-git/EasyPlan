@@ -3,13 +3,13 @@
 @tailwind utilities;
 
 :root {
-  --background: 40 20% 98%;
-  --foreground: 0 0% 15%;
-  --muted: 40 15% 90%;
-  --muted-foreground: 0 0% 40%;
-  --accent: 40 15% 85%;
-  --accent-foreground: 0 0% 15%;
-  --theme-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --background: 45 40% 92%;
+  --foreground: 25 30% 20%;
+  --muted: 45 30% 85%;
+  --muted-foreground: 25 20% 45%;
+  --accent: 45 30% 80%;
+  --accent-foreground: 25 30% 20%;
+  --theme-font: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
 }
 
 .theme-void {
@@ -20,16 +20,6 @@
   --accent: 240 3.7% 15.9%;
   --accent-foreground: 0 0% 98%;
   --theme-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.theme-parchment {
-  --background: 45 40% 92%;
-  --foreground: 25 30% 20%;
-  --muted: 45 30% 85%;
-  --muted-foreground: 25 20% 45%;
-  --accent: 45 30% 80%;
-  --accent-foreground: 25 30% 20%;
-  --theme-font: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
 }
 
 body {

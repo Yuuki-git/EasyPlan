@@ -44,3 +44,14 @@ def test_task_node_rejects_too_many_children():
 
     with pytest.raises(ValidationError):
         TaskTree.model_validate(tree)
+
+
+def test_task_tree_schema_allows_long_estimates_for_langgraph_validator():
+    tree = valid_plan()
+    tree["root"]["estimated_minutes"] = 120
+    tree["root"]["children"][0]["estimated_minutes"] = 8
+
+    parsed = TaskTree.model_validate(tree)
+
+    assert parsed.root.estimated_minutes == 120
+    assert parsed.root.children[0].estimated_minutes == 8

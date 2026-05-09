@@ -6,26 +6,43 @@ import pytest
 from app.services.agent_runtime import AgentRuntime
 
 
-class SyncStreamGraph:
+class AsyncStreamGraph:
     def __init__(self) -> None:
         self.inputs: list[Any] = []
 
     def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
         self.inputs.append((input_value, config))
         yield {"planner": {"reasoning_events": [{"code": "PLAN_STARTED", "message": "planning"}]}}
         yield {"__interrupt__": [type("Interrupt", (), {"value": {"task_tree": {"root": {}}}})()]}
 
-    async def astream(self, input_value, config):  # pragma: no cover - runtime must call graph.stream.
-        raise AssertionError("AgentRuntime must use graph.stream from its background worker")
-
 
 class CompleteGraph:
     def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
         yield {"planner": {"reasoning_events": [{"code": "PLAN_STARTED", "message": "planning"}]}}
 
 
-def test_agent_runtime_runs_langgraph_stream_in_background_worker(monkeypatch):
-    graph = SyncStreamGraph()
+class FailingAsyncGraph:
+    def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
+        if False:
+            yield {}
+        raise ValueError(
+            "1 validation error for TaskTree\n"
+            "root.children.0.estimated_minutes\n"
+            "Input should be less than 5"
+        )
+
+
+def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
+    graph = AsyncStreamGraph()
     runtime = AgentRuntime(graph_factory=lambda **_: graph)
     _patch_async_session(monkeypatch)
 
@@ -61,7 +78,7 @@ def test_agent_runtime_reuses_one_checkpointer_across_initial_run_and_resume():
 
     def graph_factory(*, planner, checkpointer):
         checkpointers.append(checkpointer)
-        return SyncStreamGraph()
+        return AsyncStreamGraph()
 
     runtime = AgentRuntime(graph_factory=graph_factory)
 
@@ -98,7 +115,7 @@ def test_agent_runtime_builds_planner_from_requested_provider_and_model():
 
     def graph_factory(*, planner, checkpointer):
         graph_planners.append(planner)
-        return SyncStreamGraph()
+        return AsyncStreamGraph()
 
     runtime = AgentRuntime(
         graph_factory=graph_factory,
@@ -169,7 +186,7 @@ def test_agent_runtime_resume_without_cached_selection_uses_factory_default():
 
 
 def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
-    runtime = AgentRuntime(graph_factory=lambda **_: SyncStreamGraph())
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
     runtime._append_event("thread-1", "reasoning", {"message": "first"})
 
     async def collect_live_events():
@@ -198,6 +215,30 @@ def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
     assert "first" in first
     assert "second" in second
     assert "event: done" in done
+
+
+def test_agent_runtime_stream_closes_on_agent_error_event():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+
+    async def collect_live_error_event():
+        stream = runtime.stream_thread_events(user_id="user-1", thread_id="thread-1")
+        iterator = stream.__aiter__()
+        pending_error = asyncio.create_task(iterator.__anext__())
+        await asyncio.sleep(0)
+        assert not pending_error.done()
+
+        runtime._append_error("thread-1", code="AGENT_RUN_FAILED", message="friendly failure")
+        event = await asyncio.wait_for(pending_error, timeout=1)
+
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(iterator.__anext__(), timeout=1)
+        return event
+
+    event = asyncio.run(collect_live_error_event())
+
+    assert "event: agent_error" in event
+    assert "event: error" not in event
+    assert "AGENT_RUN_FAILED" in event
 
 
 class FakeAsyncSession:
@@ -237,7 +278,7 @@ def _patch_async_session(monkeypatch):
 
 def test_agent_runtime_persists_interrupt_to_agent_thread(monkeypatch):
     session = _patch_async_session(monkeypatch)
-    runtime = AgentRuntime(graph_factory=lambda **_: SyncStreamGraph())
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
 
     asyncio.run(
         runtime.run_new_thread(
@@ -255,7 +296,7 @@ def test_agent_runtime_persists_interrupt_to_agent_thread(monkeypatch):
 
 
 def test_agent_runtime_streams_only_events_after_last_event_id():
-    runtime = AgentRuntime(graph_factory=lambda **_: SyncStreamGraph())
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
     runtime._append_event("thread-1", "reasoning", {"message": "first"})
     runtime._append_event("thread-1", "reasoning", {"message": "second"})
     runtime._append_event("thread-1", "reasoning", {"message": "third"})
@@ -273,6 +314,34 @@ def test_agent_runtime_streams_only_events_after_last_event_id():
     assert "third" in event
     assert "first" not in event
     assert "second" not in event
+
+
+def test_agent_runtime_sanitizes_internal_graph_errors_in_sse(caplog):
+    runtime = AgentRuntime(graph_factory=lambda **_: FailingAsyncGraph())
+
+    asyncio.run(
+        runtime.run_new_thread(
+            user_id="user-1",
+            thread_id="thread-1",
+            intent_text="write paper",
+            selected_provider="native",
+        )
+    )
+
+    event = asyncio.run(
+        _next_event(
+            runtime.stream_thread_events(
+                user_id="user-1",
+                thread_id="thread-1",
+            )
+        )
+    )
+
+    assert "event: agent_error" in event
+    assert "event: error" not in event
+    assert "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。" in event
+    assert "validation error" not in event.lower()
+    assert "estimated_minutes" not in event
 
 
 async def _collect_events(stream):

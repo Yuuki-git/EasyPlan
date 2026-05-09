@@ -23,9 +23,9 @@ const App: React.FC = () => {
 
   // Apply theme to HTML root so body picks up the CSS variables
   useEffect(() => {
-    document.documentElement.classList.remove('theme-void', 'theme-parchment');
-    if (theme !== 'zen') {
-      document.documentElement.classList.add(`theme-${theme}`);
+    document.documentElement.classList.remove('theme-void');
+    if (theme === 'void') {
+      document.documentElement.classList.add('theme-void');
     }
   }, [theme]);
 
@@ -66,9 +66,7 @@ const Header: React.FC = () => {
   const { setToken, theme, setTheme } = useAppStore();
 
   const toggleTheme = () => {
-    const themes: ThemeType[] = ['zen', 'void', 'parchment'];
-    const currentIndex = themes.indexOf(theme);
-    const nextTheme = themes[(currentIndex + 1) % themes.length];
+    const nextTheme: ThemeType = theme === 'void' ? 'parchment' : 'void';
     setTheme(nextTheme);
   };
 
@@ -80,10 +78,11 @@ const Header: React.FC = () => {
       <div className="flex items-center gap-6">
         <button 
           onClick={toggleTheme}
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors tracking-wide"
           title="切换主题"
         >
-          <Palette size={16} />
+          <Palette size={14} />
+          <span>Theme: {theme === 'void' ? 'Dark' : 'Light'}</span>
         </button>
         
         <button 

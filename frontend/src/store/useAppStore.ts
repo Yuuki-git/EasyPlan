@@ -12,7 +12,7 @@ export type AppState =
   | 'PARTIAL_ERROR' 
   | 'ERROR';
 
-export type ThemeType = 'zen' | 'void' | 'parchment';
+export type ThemeType = 'parchment' | 'void';
 
 interface AppStore {
   // Data

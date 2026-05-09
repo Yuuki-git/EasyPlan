@@ -19,7 +19,7 @@
 2. **协议层降级与切片重播**：在 FastAPI 依赖注入层 (`get_user_for_sse`) 引入 URL Query Token 降级鉴权；重写 SSE 发送器，引入 `asyncio.Queue` 和基于 `last_event_id` 的精准增量切片算法，解决断网重连时的“暴力回放”问题。
 3. **延迟鉴权 (Lazy Auth) 模式**：前端采用 Zustand 实现意图拦截。未登录状态下允许用户无阻碍输入（降低 Fogg 模型中的门槛），拦截后平滑拉起 AuthModal，并在 JWT 签发后通过暂存态 (`pendingIntent`) 实现请求的无缝重播。
 4. **提示词工程加固 (Prompt Engineering)**：在 System Prompt 中强制注入强约束指令（Hard Constraints）保障多语言一致性。针对颗粒度不足的问题，计划引入 Few-Shot Prompting 与 COT (Chain of Thought) 模板进行深度微调。
-5. **禅意美学 (Zen Mode UX)**：重构 Tailwind CSS 设计系统，从开发者视角的“极客黑”转向面向普通用户的“珍珠白”呼吸态，引入时间感知问候 (Contextual Greeting) 与幽灵提示 (Ghost Prompts) 消除用户的空白画布综合征。
+5. **护眼美学与情感化设计 (Empathetic UX)**：彻底做减法，废弃刺眼的纯白主题，将默认底色改为温润的“护眼羊皮纸 (Parchment)”。精细化问候语情绪引擎，区分“傍晚”的包裹感与“深夜”的释放感，配合低边界感的 Placeholder 彻底消除“空白画布恐惧”。
 
 ### 🎉 业务成果 (Business Value)
 * **高可用底座**：全栈通车 (React -> FastAPI -> LangGraph -> PostgreSQL)，具备云原生 4C4G 服务器的一键 Docker 化自动建表部署能力。
@@ -29,7 +29,19 @@
 
 ## 📅 版本规划 (Roadmap)
 
-### 🔜 v1.2.0 (闭环生态构建)
-**战略调整 (Strategic Pivot)**：暂缓外部工具（Todoist / Microsoft To Do）的 MCP 适配，全面转向构建 EasyPlan 的 **原生闭环生态**。
-* **原生任务引擎 (Native Task Engine)**：在项目内部集成对标 Microsoft To Do 的原生任务管理面板（包含“我的一天 / My Day”、“计划中”等核心视图）。
-* **AI 颗粒度与微调优化**：深入 Prompt Engineering，结合原生面板的数据结构，通过 Few-Shot 注入精确控制 AI 拆解任务的预计时长与行为动词。
+### 🔜 v1.2 系列 (原生生态与沉浸式体验)
+**战略方针 (Strategic Pivot)**：全面转向 UI-Driven Development (UDD)，暂缓外部 MCP 适配，分四个迭代阶段攻克原生闭环与真流式渲染。
+
+#### 📍 v1.2.1: 打地基 —— 原生看板与数据落盘
+*   **前端**：构建包含“我的一天”和“计划中”视图的 Native Task Board 组件树。
+*   **后端**：设计 `tasks` 表，实现 `persist_internal_tasks_node` 将计划落盘。
+
+#### 📍 v1.2.2: 重塑控制权 —— 行内编辑与减法交互
+*   **交互**：支持看板任务双击行内编辑 (Inline Edit)；任务生成完毕后“阅后即焚”平滑折叠思考日志。
+
+#### 📍 v1.2.3: 视野控制 —— 迷雾解锁与微调
+*   **Prompting**：严格控制生成规模（总节点 <= 15），对宏大目标仅规划“启动阶段”。
+*   **交互**：用户在看板完成当前阶段后，AI 主动介入动态解锁 (Fog of War) 下一阶段任务。
+
+#### 📍 v1.2.4: 终极攻坚 —— 真·流式输出 (True Streaming JSON)
+*   **全栈重构**：挑战最高难度，后端引入局部 JSON 解析器，前端容错渲染未闭合的残缺 JSON，实现任务树“打字机”般逐个节点生长的极限魔法动效。

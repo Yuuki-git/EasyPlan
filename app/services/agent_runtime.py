@@ -19,6 +19,7 @@ from app.services.llm_service import create_planner_client
 
 logger = logging.getLogger(__name__)
 _global_checkpointer = TenantAwareMemorySaver()
+SAFE_PLANNING_ERROR_MESSAGE = "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。"
 
 
 @dataclass
@@ -57,8 +58,7 @@ class AgentRuntime:
     ) -> None:
         with self._lock:
             self._planner_selection[thread_id] = (planner_provider, planner_model)
-        await asyncio.to_thread(
-            self._run_new_thread_sync,
+        await self._run_new_thread(
             user_id=user_id,
             thread_id=thread_id,
             intent_text=intent_text,
@@ -67,7 +67,7 @@ class AgentRuntime:
             planner_model=planner_model,
         )
 
-    def _run_new_thread_sync(
+    async def _run_new_thread(
         self,
         *,
         user_id: str,
@@ -90,15 +90,15 @@ class AgentRuntime:
         try:
             interrupted = False
             emitted_terminal = False
-            for chunk in graph.stream(initial_state, config):
+            async for chunk in graph.astream(initial_state, config):
                 interrupted = interrupted or "__interrupt__" in chunk
                 emitted_terminal = emitted_terminal or "failed_validation" in chunk
-                self._append_chunk(user_id=user_id, thread_id=thread_id, chunk=chunk)
+                await self._append_chunk(user_id=user_id, thread_id=thread_id, chunk=chunk)
             if not interrupted and not emitted_terminal:
                 self._append_done(thread_id, status="completed")
-        except Exception as exc:
+        except Exception:
             logger.exception("agent_thread_run_failed", extra={"thread_id": thread_id, "user_id": user_id})
-            self._append_error(thread_id, code="AGENT_RUN_FAILED", message=str(exc))
+            self._append_error(thread_id, code="AGENT_RUN_FAILED", message=SAFE_PLANNING_ERROR_MESSAGE)
 
     async def resume_thread(
         self,
@@ -109,8 +109,7 @@ class AgentRuntime:
     ) -> None:
         with self._lock:
             planner_provider, planner_model = self._planner_selection.get(thread_id, (None, None))
-        await asyncio.to_thread(
-            self._resume_thread_sync,
+        await self._resume_thread(
             user_id=user_id,
             thread_id=thread_id,
             decision=decision,
@@ -118,7 +117,7 @@ class AgentRuntime:
             planner_model=planner_model,
         )
 
-    def _resume_thread_sync(
+    async def _resume_thread(
         self,
         *,
         user_id: str,
@@ -133,15 +132,15 @@ class AgentRuntime:
         try:
             interrupted = False
             emitted_terminal = False
-            for chunk in graph.stream(command, config):
+            async for chunk in graph.astream(command, config):
                 interrupted = interrupted or "__interrupt__" in chunk
                 emitted_terminal = emitted_terminal or "failed_validation" in chunk
-                self._append_chunk(user_id=user_id, thread_id=thread_id, chunk=chunk)
+                await self._append_chunk(user_id=user_id, thread_id=thread_id, chunk=chunk)
             if not interrupted and not emitted_terminal:
                 self._append_done(thread_id, status="completed")
-        except Exception as exc:
+        except Exception:
             logger.exception("agent_thread_resume_failed", extra={"thread_id": thread_id, "user_id": user_id})
-            self._append_error(thread_id, code="AGENT_RESUME_FAILED", message=str(exc))
+            self._append_error(thread_id, code="AGENT_RESUME_FAILED", message=SAFE_PLANNING_ERROR_MESSAGE)
 
     def _build_graph(self, *, planner_provider: str | None, planner_model: str | None):
         planner = self._planner_client_factory(provider=planner_provider, model=planner_model)
@@ -188,18 +187,18 @@ class AgentRuntime:
                 if subscriber in subscribers:
                     subscribers.remove(subscriber)
 
-    def _append_chunk(self, *, user_id: str, thread_id: str, chunk: dict[str, Any]) -> None:
+    async def _append_chunk(self, *, user_id: str, thread_id: str, chunk: dict[str, Any]) -> None:
         if "__interrupt__" in chunk:
             interrupt_payload = chunk["__interrupt__"][0].value
             try:
-                self._persist_interrupt_sync(
+                await self._persist_interrupt(
                     user_id=user_id,
                     thread_id=thread_id,
                     interrupt_payload=interrupt_payload,
                 )
-            except Exception as exc:
+            except Exception:
                 logger.exception("agent_thread_interrupt_persist_failed", extra={"thread_id": thread_id, "user_id": user_id})
-                self._append_error(thread_id, code="AGENT_INTERRUPT_PERSIST_FAILED", message=str(exc))
+                self._append_error(thread_id, code="AGENT_INTERRUPT_PERSIST_FAILED", message=SAFE_PLANNING_ERROR_MESSAGE)
             self._append_event(
                 thread_id,
                 "plan_ready",
@@ -215,7 +214,7 @@ class AgentRuntime:
             self._append_error(
                 thread_id,
                 code=error.get("code", "TASK_TREE_VALIDATION_FAILED"),
-                message=error.get("message", "Task tree validation failed"),
+                message=_safe_sse_error_message(error.get("message")),
             )
             return
         for node_name, payload in chunk.items():
@@ -242,7 +241,7 @@ class AgentRuntime:
     def _append_error(self, thread_id: str, *, code: str, message: str) -> None:
         self._append_event(
             thread_id,
-            "error",
+            "agent_error",
             {
                 "state_version": next(self._counter),
                 "code": code,
@@ -271,21 +270,6 @@ class AgentRuntime:
                 subscriber.loop.call_soon_threadsafe(subscriber.queue.put_nowait, formatted_event)
             except RuntimeError:
                 logger.debug("sse_subscriber_loop_closed", extra={"thread_id": thread_id})
-
-    def _persist_interrupt_sync(
-        self,
-        *,
-        user_id: str,
-        thread_id: str,
-        interrupt_payload: dict[str, Any],
-    ) -> None:
-        asyncio.run(
-            self._persist_interrupt(
-                user_id=user_id,
-                thread_id=thread_id,
-                interrupt_payload=interrupt_payload,
-            )
-        )
 
     async def _persist_interrupt(
         self,
@@ -339,7 +323,25 @@ def _extract_event_type(event: str) -> str | None:
 
 
 def _is_terminal_event(event: str) -> bool:
-    return _extract_event_type(event) in {"done", "error"}
+    return _extract_event_type(event) in {"done", "agent_error"}
+
+
+def _safe_sse_error_message(message: Any) -> str:
+    if not isinstance(message, str) or not message.strip():
+        return SAFE_PLANNING_ERROR_MESSAGE
+    lowered = message.lower()
+    sensitive_markers = (
+        "validation error",
+        "traceback",
+        "estimated_minutes",
+        "input should",
+        "pydantic",
+        "sql",
+        "database",
+    )
+    if any(marker in lowered for marker in sensitive_markers):
+        return SAFE_PLANNING_ERROR_MESSAGE
+    return message
 
 
 agent_runtime = AgentRuntime()

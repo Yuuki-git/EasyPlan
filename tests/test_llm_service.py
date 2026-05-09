@@ -16,6 +16,14 @@ from app.services.llm_service import (
 )
 
 
+EXPECTED_USER_VISIBLE_REASONING_MESSAGES = [
+    "正在分析您的核心目标...",
+    "正在将目标拆解为可执行的微行动...",
+    "正在为您评估每项任务的时间与依赖关系...",
+    "计划生成完毕，请查阅。",
+]
+
+
 def _valid_task_tree() -> dict:
     return {
         "root": {
@@ -89,6 +97,10 @@ def test_openai_planner_uses_task_tree_structured_output_and_emits_safe_events()
         "LLM_PLAN_PARSED",
         "LLM_USAGE_RECORDED",
     ]
+    assert [event["message"] for event in reasoning_sink.events] == EXPECTED_USER_VISIBLE_REASONING_MESSAGES
+    assert all("JSON" not in event["message"] for event in reasoning_sink.events)
+    assert all("schema" not in event["message"].lower() for event in reasoning_sink.events)
+    assert all("token" not in event["message"].lower() for event in reasoning_sink.events)
     assert all("raw" not in event for event in reasoning_sink.events)
     assert usage_sink.records[0].provider == "openai"
     assert usage_sink.records[0].model == "gpt-4o-2024-08-06"
@@ -126,9 +138,16 @@ class FakeChatClient:
 def test_deepseek_planner_uses_json_mode_and_pydantic_validation():
     fake_deepseek = FakeChatClient(json.dumps(_valid_task_tree()))
     planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+    reasoning_sink = ListReasoningSink()
     usage_sink = ListUsageSink()
 
-    result = asyncio.run(planner.create_plan("Create a launch plan", usage_sink=usage_sink))
+    result = asyncio.run(
+        planner.create_plan(
+            "Create a launch plan",
+            reasoning_sink=reasoning_sink,
+            usage_sink=usage_sink,
+        )
+    )
 
     create_call = fake_deepseek.chat.completions.calls[0]
     assert create_call["model"] == "deepseek-chat"
@@ -138,6 +157,7 @@ def test_deepseek_planner_uses_json_mode_and_pydantic_validation():
     assert "CRITICAL: You MUST respond in the EXACT same language" in create_call["messages"][0]["content"]
     assert "If the user writes in Chinese" in create_call["messages"][0]["content"]
     assert result["root"]["children"][0]["client_node_id"] == "task-1"
+    assert [event["message"] for event in reasoning_sink.events] == EXPECTED_USER_VISIBLE_REASONING_MESSAGES
     assert usage_sink.records[0].provider == "deepseek"
     assert usage_sink.records[0].input_tokens == 31
     assert usage_sink.records[0].output_tokens == 43
@@ -154,9 +174,16 @@ def test_deepseek_planner_rejects_json_that_does_not_match_task_tree():
 def test_xiaomi_mimo_planner_uses_json_mode_and_records_usage():
     fake_mimo = FakeChatClient(json.dumps(_valid_task_tree()))
     planner = XiaomiMiMoPlannerClient(client=fake_mimo, model="mimo-v2-flash")
+    reasoning_sink = ListReasoningSink()
     usage_sink = ListUsageSink()
 
-    result = asyncio.run(planner.create_plan("Create a launch plan", usage_sink=usage_sink))
+    result = asyncio.run(
+        planner.create_plan(
+            "Create a launch plan",
+            reasoning_sink=reasoning_sink,
+            usage_sink=usage_sink,
+        )
+    )
 
     create_call = fake_mimo.chat.completions.calls[0]
     assert create_call["model"] == "mimo-v2-flash"
@@ -166,6 +193,7 @@ def test_xiaomi_mimo_planner_uses_json_mode_and_records_usage():
     assert "CRITICAL: You MUST respond in the EXACT same language" in create_call["messages"][0]["content"]
     assert "If the user writes in Chinese" in create_call["messages"][0]["content"]
     assert result["root"]["children"][0]["client_node_id"] == "task-1"
+    assert [event["message"] for event in reasoning_sink.events] == EXPECTED_USER_VISIBLE_REASONING_MESSAGES
     assert usage_sink.records[0].provider == "xiaomi"
     assert usage_sink.records[0].model == "mimo-v2-flash"
     assert usage_sink.records[0].total_tokens == 74
