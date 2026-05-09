@@ -24,9 +24,13 @@ export const useSSE = () => {
       return;
     }
 
+    let isMounted = true;
+
     const connect = async () => {
       // 1. Align State first to ensure UI is in sync
       await alignState(threadId);
+
+      if (!isMounted) return;
 
       // 2. Setup EventSource with Last-Event-ID for recovery
       const url = new URL(`/api/threads/${threadId}/events`, window.location.origin);
@@ -90,7 +94,9 @@ export const useSSE = () => {
         } else {
           console.warn('SSE Disconnected. Attempting to align and reconnect...');
           es.close();
-          setTimeout(connect, 3000); // Exponential backoff could be better
+          setTimeout(() => {
+            if (isMounted) connect();
+          }, 3000); // Exponential backoff could be better
         }
       });
     };
@@ -98,6 +104,7 @@ export const useSSE = () => {
     connect();
 
     return () => {
+      isMounted = false;
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;

@@ -63,7 +63,10 @@ export const DynamicInput: React.FC = () => {
     e.preventDefault();
     if (!value.trim()) return;
 
-    if (appState === 'INITIAL') {
+    if (appState === 'INITIAL' || appState === 'SUCCESS' || appState === 'ERROR' || appState === 'PARTIAL_ERROR') {
+      if (appState !== 'INITIAL') {
+        useAppStore.getState().reset();
+      }
       useAppStore.getState().submitIntent(value);
     } else if (appState === 'PENDING') {
       // Trigger refinement

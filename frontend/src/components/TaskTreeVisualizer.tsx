@@ -39,7 +39,10 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
       case 'error':
         return (
           <button 
-            onClick={() => retryNode(node.client_node_id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              retryNode(node.client_node_id);
+            }}
             className="flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors"
           >
             <AlertCircle size={14} />
@@ -75,15 +78,19 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
         <div className="absolute -left-4 top-0 bottom-0 w-[1px] bg-gradient-to-b from-muted via-muted/50 to-transparent" />
       )}
 
-      <div className="flex items-start gap-4 group">
+      <div 
+        className={clsx("flex items-start gap-4 group", isGroup && "cursor-pointer")}
+        onClick={() => {
+          if (isGroup) setIsExpanded(!isExpanded);
+        }}
+      >
         <div 
           className={clsx(
             "mt-1.5 shrink-0 transition-transform duration-500",
-            isGroup ? "text-accent-foreground cursor-pointer" : "text-muted-foreground/40",
+            isGroup ? "text-accent-foreground" : "text-muted-foreground/40",
             status === 'success' && "text-green-500/50",
             status === 'error' && "text-red-500/50"
           )}
-          onClick={() => isGroup && setIsExpanded(!isExpanded)}
         >
           {isGroup ? (
             <motion.div 
@@ -105,10 +112,9 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
             <h4 
               className={clsx(
                 "tracking-tight transition-colors",
-                isGroup ? "text-lg font-medium text-foreground cursor-pointer" : "text-base font-normal text-foreground/80",
+                isGroup ? "text-lg font-medium text-foreground" : "text-base font-normal text-foreground/80",
                 status === 'success' && "text-foreground/40 line-through decoration-muted-foreground/30"
               )}
-              onClick={() => isGroup && setIsExpanded(!isExpanded)}
             >
               {node.title}
             </h4>
