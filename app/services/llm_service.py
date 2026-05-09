@@ -18,6 +18,12 @@ LANGUAGE_MATCH_INSTRUCTION = (
     "CRITICAL: You MUST respond in the EXACT same language as the user's prompt. "
     "If the user writes in Chinese, all  fields (title, description, summary) MUST be in Chinese."
 )
+USER_VISIBLE_REASONING_MESSAGES = {
+    "LLM_PLANNING_STARTED": "正在分析您的核心目标...",
+    "LLM_SCHEMA_LOCKED": "正在将目标拆解为可执行的微行动...",
+    "LLM_PLAN_PARSED": "正在为您评估每项任务的时间与依赖关系...",
+    "LLM_USAGE_RECORDED": "计划生成完毕，请查阅。",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -104,7 +110,7 @@ async def emit_usage(
     await emit_reasoning(
         reasoning_sink,
         code="LLM_USAGE_RECORDED",
-        message="已记录本次模型调用的 token usage",
+        message=USER_VISIBLE_REASONING_MESSAGES["LLM_USAGE_RECORDED"],
     )
 
 
@@ -131,12 +137,12 @@ class OpenAIPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLANNING_STARTED",
-            message="正在分析目标、时间复杂度和可执行边界",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLANNING_STARTED"],
         )
         await emit_reasoning(
             reasoning_sink,
             code="LLM_SCHEMA_LOCKED",
-            message="正在按 TaskTree 结构组织任务，并匹配动词开头规则",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_SCHEMA_LOCKED"],
         )
 
         response = await self._openai_client.responses.parse(
@@ -168,7 +174,7 @@ class OpenAIPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLAN_PARSED",
-            message="结构化任务树已生成，正在进入规则校验",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLAN_PARSED"],
         )
         await emit_usage(
             usage_sink or self.usage_sink,
@@ -216,12 +222,12 @@ class DeepSeekPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLANNING_STARTED",
-            message="正在使用 DeepSeek JSON mode 生成任务树草案",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLANNING_STARTED"],
         )
         await emit_reasoning(
             reasoning_sink,
             code="LLM_SCHEMA_LOCKED",
-            message="正在用 TaskTree schema 约束 JSON 输出，并准备后端校验",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_SCHEMA_LOCKED"],
         )
         response = await self._deepseek_client.chat.completions.create(
             model=self.model,
@@ -249,7 +255,7 @@ class DeepSeekPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLAN_PARSED",
-            message="DeepSeek JSON 已通过 TaskTree 校验，正在进入规则校验",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLAN_PARSED"],
         )
         await emit_usage(
             usage_sink or self.usage_sink,
@@ -300,12 +306,12 @@ class XiaomiMiMoPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLANNING_STARTED",
-            message="正在使用小米 MiMo JSON mode 生成任务树草案",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLANNING_STARTED"],
         )
         await emit_reasoning(
             reasoning_sink,
             code="LLM_SCHEMA_LOCKED",
-            message="正在用 TaskTree schema 约束 MiMo JSON 输出，并准备后端校验",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_SCHEMA_LOCKED"],
         )
         response = await self._mimo_client.chat.completions.create(
             model=self.model,
@@ -333,7 +339,7 @@ class XiaomiMiMoPlannerClient:
         await emit_reasoning(
             reasoning_sink,
             code="LLM_PLAN_PARSED",
-            message="小米 MiMo JSON 已通过 TaskTree 校验，正在进入规则校验",
+            message=USER_VISIBLE_REASONING_MESSAGES["LLM_PLAN_PARSED"],
         )
         await emit_usage(
             usage_sink or self.usage_sink,

@@ -122,4 +122,3 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 开源协议
 本项目基于 **MIT 协议** 开源。
-�。

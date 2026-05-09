@@ -1,8 +1,8 @@
-# EasyPlan 项目需求规格说明书 (PRD) v1.0
+# EasyPlan 项目需求规格说明书 (PRD) v1.1.0
 
 ## 1. 项目综述
 **项目名称：** EasyPlan
-**项目愿景：** 打造一款基于意图驱动（Intentional Productivity）的智能任务管理 SaaS，通过 AI 深度拆解将宏大目标转化为无阻力的微行动。
+**项目愿景：** 打造一款基于意图驱动（Intentional Productivity）的智能原生任务管理 SaaS，通过 AI 深度拆解将宏大目标转化为无阻力的微行动。
 **核心理念：** 
 - 意图驱动：让用户从“盲目忙碌”转向“有意识行动”。
 - 行为设计：利用 BJ Fogg 模型，通过 AI 拆解极大降低启动门槛（能力提升）。
@@ -17,46 +17,47 @@
 
 ## 3. 产品功能矩阵
 
-### 3.1 核心功能 (MVP)
+### 3.1 核心功能 (v1.1.0 已实现)
 1. **自然语言意图捕获 (Intent Capture)：**
-   - 极简输入框，支持模糊口语输入（例如：“这周末前我想把这篇论文初稿写完”）。
+   - 极简输入框，支持模糊口语输入。
 2. **AI 智能拆解引擎 (Agentic Decomposition)：**
-   - 基于 LangGraph 的多步推理，将意图拆解为符合“两分钟法则”的微任务。
-   - 生成任务树状结构，识别依赖关系。
-3. **人工确认流 (Human-in-the-Loop)：**
-   - 展示 AI 拆解结果，支持用户一键确认、修改或拒绝任务。
-4. **外部生态同步 (Sync)：**
-   - 通过 MCP 协议或 Webhook 写入主流 Todo List (Todoist, Microsoft To Do 等)。
-5. **多用户 SaaS 体系：**
-   - 基础用户注册/登录、数据云端同步。
+   - 基于 LangGraph 的多步推理，将意图拆解为两级扁平化的任务树。
+3. **人工确认流与对话式微调 (HITL & Refine)：**
+   - 展示 AI 拆解结果，支持用户通过自然语言一键修改或重构计划。
+4. **多用户 SaaS 体系：**
+   - 基础用户注册/登录、JWT 严格鉴权。
+5. **沉浸式交互 (Zen Mode)：**
+   - 护眼羊皮纸主题，时间感知问候语，幽灵提示词，消除空白画布焦虑。
 
-### 3.2 进阶功能 (Future)
-1. **个性化偏好记忆 (Personalized Memory)：** 记录用户的工作节奏（如：早上不处理琐事）。
-2. **生成式 UI (GenUI)：** 根据任务类型实时生成最匹配的交互组件。
-3. **进度反思与动态调整：** 任务执行失败时，AI 自动提出复盘与调整建议。
+### 3.2 进阶功能 (v1.2.0 Roadmap)
+1. **原生任务看板 (Native Task Board)：**
+   - 废弃外部应用依赖，内部构建包含“我的一天”和“计划中”视图的闭环看板。
+2. **行内编辑 (Inline Editing)：** 
+   - 任务树直接支持文本/时间修改。
+3. **视野控制 (Scope Horizon)：** 
+   - 限制宏大目标的拆解深度，仅规划启动阶段。
 
 ## 4. 技术架构概览 (SaaS 模式)
 
-### 4.1 后端 (Codex 负责)
+### 4.1 后端 
 - **核心框架：** FastAPI (Python) - 负责异步网关与业务逻辑。
-- **Agent 编排：** LangGraph - 实现带状态的任务拆解工作流。
-- **数据结构：** Pydantic - 强制约束 AI 输出结构。
-- **存储：** PostgreSQL + pgvector - 存储用户信息、任务状态及向量化记忆。
-- **外部集成：** MCP (Model Context Protocol) - 驱动第三方工具调用。
+- **Agent 编排：** LangGraph - 全异步执行，带 Checkpoint 持久化。
+- **数据结构：** Pydantic V2 - 强制约束 AI 输出结构。
+- **存储：** PostgreSQL - 存储用户信息、线程快照。
 
-### 4.2 前端 (Gemini 负责)
-- **框架：** React (TypeScript) + Vanilla CSS。
-- **交互：** 采用 GenUI 理念，重视流式响应展示（Streaming Visualization）。
-- **通信：** 通过 WebSocket 或 SSE (Server-Sent Events) 与后端进行 AI 推理过程的实时同步。
+### 4.2 前端 
+- **框架：** React (TypeScript) + Tailwind CSS + Framer Motion。
+- **状态管理：** Zustand - 维护全局应用状态机。
+- **通信：** Async Queue SSE (Server-Sent Events) 提供真正的断网恢复长连接。
 
 ## 5. 关键业务流程
-1. **输入阶段：** 用户提交意图字符串。
-2. **规划阶段：** Backend 启动 LangGraph 图，Node 1 (Router) 分析意图，Node 2 (Planner) 生成任务树。
-3. **挂起阶段：** LangGraph 执行 `interrupt()`，保存 Checkpoint，等待用户信号。
-4. **反馈阶段：** Frontend 渲染任务树，用户点击“确认同步”。
-5. **执行阶段：** Backend 恢复执行，Node 3 (Executor) 调用 MCP 接口写入外部工具。
+1. **输入阶段：** 用户提交意图字符串 (附带 JWT Auth)。
+2. **规划阶段：** Backend 启动 LangGraph 图，Node 1 (Planner) 生成任务树，Node 2 (Validator) 校验。
+3. **挂起阶段：** LangGraph 挂起，状态落盘数据库，等待用户信号。
+4. **反馈与微调：** Frontend 渲染任务树，用户可提交自然语言要求重拆 (Refine)。
+5. **确认阶段：** Backend 接收 Approve 信号，图执行到终态 (Done)。(v1.2.0 将在此处写入原生 Task 表)。
 
 ## 6. 非功能性需求
-- **响应速度：** 意图捕获阶段应在 1s 内响应，AI 拆解过程需有明确的流式反馈。
-- **安全性：** 采用零信任架构，最小权限调用第三方 API。
-- **可落地性：** 界面极致清爽，无干扰元素。
+- **响应速度：** AI 拆解过程必须有明确的 SSE 增量日志推送（沉浸感）。
+- **安全性：** 所有核心路由受 JWT 联合 user_id 隔离保护。
+- **可落地性：** 界面采用呼吸感的 Zen Mode 美学。

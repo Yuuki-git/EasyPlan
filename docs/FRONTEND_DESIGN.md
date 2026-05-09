@@ -54,17 +54,16 @@ App
 | **SYNCING** | 进度反馈 | 无操作，仅保留进度感知 | 节点内部平滑填充 |
 | **SUCCESS** | 开启新循环 | 成功徽章 + 外部链接 | 整体淡出/新意图聚焦 |
 
-## 6. 未来展望 (v1.1.0 Roadmap)
+## 6. 未来展望 (v1.2.0 Roadmap)
 
-为了支持后续接入 Microsoft To Do 等更多集成，前端已在架构上预留了以下扩展点：
+随着战略向原生闭环转移，前端将在下一版本重点发力以下架构扩展：
 
-### 6.1 集成管理扩展 (Multi-provider Integrations)
-- **UI 增补**: 在 `IntegrationModal` 中采用卡片式布局，支持动态渲染多个提供商。接入新服务仅需更换 Logo 与文字。
-- **逻辑流**: 统一通过 `/api/integrations/{provider}/oauth/start` 触发授权。
+### 6.1 原生任务看板 (Native Task Board)
+- **UI 增补**: 当状态机流转至 `SUCCESS` 时，不再只是简单的成功提示，而是平滑转场至功能完整的任务面板。
+- **视图支持**: 引入“我的一天”、“计划中”等核心视图。
 
-### 6.2 目标选择器 (Provider Selector)
-- **UI 交互**: 在 `DynamicInput` 底部增加一个极简的 Provider 切换图标。
-- **状态联动**: 提交意图时动态修改 `preferred_provider` 参数。
+### 6.2 深度沉浸体验 (Deep Immersion)
+- **阅后即焚**: 完善 `ReasoningStream` 的动画逻辑，在树状图渲染完毕后自动将其高度折叠为 0 并淡出，确保界面的极简呼吸感不受破坏。
 
-### 6.3 动态回调处理 (Dynamic OAuth Callback)
-- **URL 解析**: 回调页面将支持 `provider` 查询参数，实现通用的授权成功/失败提示逻辑。
+### 6.3 行内编辑能力 (Inline Editing)
+- **交互逻辑**: 在现有的 `TaskTreeVisualizer` 组件基础上，支持双击节点直接修改任务标题与预估时间，补齐纯自然语言 Refine 的颗粒度控制短板。

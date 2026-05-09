@@ -9,7 +9,7 @@
 - **工作流：** LangGraph (必须使用 Checkpointer 机制实现 HITL)
 - **校验：** Pydantic v2 (用于约束模型输出 JSON Schema)
 - **数据库：** PostgreSQL (推荐配合 SQLAlchemy 或 Tortoise ORM)
-- **工具协议：** MCP (用于集成 Todoist 等第三方服务)
+- **工具协议：** 原生闭环，废弃外部 MCP 同步依赖。
 
 ## 3. 核心节点逻辑 (LangGraph Nodes)
 1. **`router_node`**: 解析用户输入，判断是新建计划还是查询状态。
@@ -17,9 +17,9 @@
    - 使用 LLM 进行循环递归拆解。
    - 每一个叶子节点必须满足：预计耗时 < 5分钟，且包含具体的动词。
    - 输出必须符合定义的 `TaskTree` Pydantic 模型。
-3. **`executor_node`**: 
+3. **`executor_node` (v1.2 预留)**: 
    - 接收人类确认信号后触发。
-   - 循环调用 MCP 工具将任务写入外部系统。
+   - 负责将 TaskTree 持久化到原生 PostgreSQL `tasks` 表中。
 
 ## 4. 重点实现：HITL (人工干预)
 - 在 `planner_node` 完成后，必须调用 LangGraph 的中断机制。

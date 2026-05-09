@@ -1,5 +1,5 @@
-import React from 'react';
-import { motion } from 'framer-motion';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { TaskNode } from '../types/api';
 import { useAppStore } from '../store/useAppStore';
 import { 
@@ -20,6 +20,7 @@ interface TaskTreeVisualizerProps {
 
 export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, depth = 0 }) => {
   const { nodeStatuses, retryNode, appState, taskTree } = useAppStore();
+  const [isExpanded, setIsExpanded] = useState(true);
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   const status = nodeStatuses[node.client_node_id] || 'pending';
@@ -75,18 +76,25 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
       )}
 
       <div className="flex items-start gap-4 group">
-        <div className={clsx(
-          "mt-1.5 shrink-0 transition-transform duration-500 group-hover:scale-110",
-          isGroup ? "text-accent-foreground" : "text-muted-foreground/40",
-          status === 'success' && "text-green-500/50",
-          status === 'error' && "text-red-500/50"
-        )}>
+        <div 
+          className={clsx(
+            "mt-1.5 shrink-0 transition-transform duration-500",
+            isGroup ? "text-accent-foreground cursor-pointer" : "text-muted-foreground/40",
+            status === 'success' && "text-green-500/50",
+            status === 'error' && "text-red-500/50"
+          )}
+          onClick={() => isGroup && setIsExpanded(!isExpanded)}
+        >
           {isGroup ? (
-            <div className="w-5 h-5 flex items-center justify-center rounded-sm bg-accent/20 border border-accent/30">
+            <motion.div 
+              animate={{ rotate: isExpanded ? 90 : 0 }}
+              transition={{ duration: 0.2 }}
+              className="w-5 h-5 flex items-center justify-center rounded-sm bg-accent/20 border border-accent/30 group-hover:scale-110 transition-transform"
+            >
               <ChevronRight size={14} className="text-accent-foreground" />
-            </div>
+            </motion.div>
           ) : (
-            <div className="w-5 h-5 flex items-center justify-center">
+            <div className="w-5 h-5 flex items-center justify-center group-hover:scale-110 transition-transform">
               <Circle size={8} fill="currentColor" />
             </div>
           )}
@@ -94,11 +102,14 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
         
         <div className="flex-1 space-y-1.5 pb-2">
           <div className="flex items-center justify-between gap-4">
-            <h4 className={clsx(
-              "text-sm tracking-tight transition-colors",
-              isGroup ? "font-semibold text-foreground" : "font-normal text-foreground/70",
-              status === 'success' && "text-foreground/40 line-through decoration-muted-foreground/30"
-            )}>
+            <h4 
+              className={clsx(
+                "tracking-tight transition-colors",
+                isGroup ? "text-lg font-medium text-foreground cursor-pointer" : "text-base font-normal text-foreground/80",
+                status === 'success' && "text-foreground/40 line-through decoration-muted-foreground/30"
+              )}
+              onClick={() => isGroup && setIsExpanded(!isExpanded)}
+            >
               {node.title}
             </h4>
             
@@ -122,13 +133,21 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
         </div>
       </div>
 
-      {hasChildren && (
-        <div className="flex flex-col">
-          {node.children!.map((child) => (
-            <TaskTreeVisualizer key={child.client_node_id} node={child} depth={depth + 1} />
-          ))}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {hasChildren && isExpanded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+            className="flex flex-col overflow-hidden"
+          >
+            {node.children!.map((child) => (
+              <TaskTreeVisualizer key={child.client_node_id} node={child} depth={depth + 1} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

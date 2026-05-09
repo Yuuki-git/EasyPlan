@@ -24,8 +24,7 @@
 - **Payload**:
   ```json
   {
-    "intent_text": "这周末我想把那篇关于量子力学的论文初稿写完",
-    "preferred_provider": "todoist" 
+    "intent_text": "这周末我想把那篇关于量子力学的论文初稿写完"
   }
   ```
 - **Response (202 Accepted)**:
@@ -74,26 +73,13 @@
 
 | 事件名 (Event) | 负载数据 (Data) | 描述 |
 | :--- | :--- | :--- |
-| `reasoning` | `{ "content": "..." }` | AI 的思考链路，前端追加到日志列表。 |
-| `plan_ready` | `TaskTree` JSON | 任务拆解完成，前端应渲染任务树并进入 PENDING 态。 |
-| `sync_status` | `{ "node_id": "...", "status": "success/error" }` | 任务同步到第三方工具的实时进度。 |
-| `sync_complete`| `{ "status": "success/partial_error" }` | 整个同步流程结束的信号。 |
+| `reasoning` | `{ "message": "..." }` | AI 的思考链路，前端追加到日志列表。 |
+| `plan_ready` | `{ "task_tree": {...} }` | 任务拆解完成，前端应渲染任务树并进入 PENDING 态。 |
+| `done` | `null` | 整个流程结束的信号（例如用户 Confirm 后持久化完成）。 |
+| `error` | `{ "code": "...", "message": "..." }` | 业务异常，前端应展示 `message`。 |
 
 ---
 
-## 4. 集成管理 (Integrations)
-
-### 4.1 获取集成状态
-- **Endpoint**: `GET /api/integrations`
-- **Response**: `IntegrationStatus[]`
-
-### 4.2 OAuth 授权流程
-1. 前端调用 `GET /api/integrations/todoist/oauth/start` 获取 `authorization_url`。
-2. 引导用户在新窗口打开该 URL。
-3. 后端处理回调后，前端通过 SSE 或定时轮询更新 `is_integrated` 状态。
-
----
-
-## 5. 错误处理与幂等性
+## 4. 错误处理与幂等性
 - **422 Unprocessable Entity**: 输入校验失败（如任务超过 5 分钟限制），请检查 `detail` 字段。
 - **幂等性**: 在同步请求中务必携带生成的 `request_id`。后端会根据此 ID 确保 24 小时内不重复创建任务。
