@@ -10,7 +10,8 @@ export const useSSE = () => {
     setError, 
     setNodeStatus,
     alignState,
-    token
+    token,
+    setView
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
@@ -65,9 +66,6 @@ export const useSSE = () => {
         lastEventIdRef.current = e.lastEventId;
         const { node_id, status } = JSON.parse(e.data);
         setNodeStatus(node_id, status);
-        
-        // If all nodes done, check for partial errors or success
-        // This logic is usually driven by a final 'sync_complete' event
       });
 
       es.addEventListener('sync_complete', (e) => {
@@ -78,6 +76,7 @@ export const useSSE = () => {
 
       es.addEventListener('done', () => {
         setAppState('SUCCESS');
+        setView('board');
         es.close();
       });
 

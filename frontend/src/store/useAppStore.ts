@@ -30,6 +30,7 @@ interface AppStore {
   showAuthModal: boolean;
   pendingIntent: string | null;
   theme: ThemeType;
+  view: 'input' | 'board';
 
   // Actions
   setIntent: (intent: string) => void;
@@ -40,6 +41,7 @@ interface AppStore {
   setShowAuthModal: (show: boolean) => void;
   setPendingIntent: (intent: string | null) => void;
   setTheme: (theme: ThemeType) => void;
+  setView: (view: 'input' | 'board') => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -68,7 +70,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   token: localStorage.getItem('auth_token'),
   showAuthModal: false,
   pendingIntent: null,
-  theme: (localStorage.getItem('app_theme') as ThemeType) || 'zen',
+  theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
+  view: 'input',
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
@@ -88,6 +91,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.setItem('app_theme', theme);
     set({ theme });
   },
+  setView: (view) => set({ view }),
   
   generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
   
@@ -114,6 +118,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     error: null,
     showAuthModal: false,
     pendingIntent: null,
+    view: 'input',
   }),
 
   submitIntent: async (intentText: string) => {
