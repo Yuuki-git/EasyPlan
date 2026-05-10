@@ -71,14 +71,14 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   if (isGroup) {
     return (
-      <div className={clsx("mb-6", depth > 0 && "ml-4")}>
+      <div className={clsx(node.title !== 'root_dummy' && "mb-8")}>
         {node.title !== 'root_dummy' && (
-          <h2 className="text-xl font-medium text-foreground tracking-tight mb-3">
+          <h2 className="text-lg font-semibold text-foreground/90 tracking-tight mt-6 mb-3 pb-2 border-b border-muted/60">
             {node.title}
           </h2>
         )}
         {hasChildren && (
-          <div className="flex flex-col space-y-1">
+          <div className="flex flex-col space-y-2">
             {node.children!.map(child => (
               <BoardTaskNode key={child.id} node={child} depth={node.title === 'root_dummy' ? depth : depth + 1} />
             ))}
