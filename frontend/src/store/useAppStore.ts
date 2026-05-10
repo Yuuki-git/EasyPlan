@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TaskTree } from '../types/api';
+import { TaskTree, TaskResponse } from '../types/api';
 import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 
@@ -31,6 +31,8 @@ interface AppStore {
   pendingIntent: string | null;
   theme: ThemeType;
   view: 'input' | 'board';
+  currentViewBucket: 'planned' | 'my_day';
+  boardTasks: TaskResponse[] | null;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -42,6 +44,7 @@ interface AppStore {
   setPendingIntent: (intent: string | null) => void;
   setTheme: (theme: ThemeType) => void;
   setView: (view: 'input' | 'board') => void;
+  setCurrentViewBucket: (bucket: 'planned' | 'my_day') => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -54,6 +57,8 @@ interface AppStore {
   retryNode: (nodeId: string) => Promise<void>;
   submitIntent: (intentText: string) => Promise<void>;
   confirmPlan: () => Promise<void>;
+  fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
+  updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -72,10 +77,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pendingIntent: null,
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: 'input',
+  currentViewBucket: 'my_day',
+  boardTasks: null,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
-  setAppState: (appState) => set({ appState }),
+  setAppState: (appState) => {
+    set({ appState });
+    if (appState === 'SUCCESS' && get().view === 'board') {
+      get().fetchTasks();
+    }
+  },
   setThreadId: (threadId) => set({ threadId }),
   setToken: (token) => {
     if (token) {
@@ -91,7 +103,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.setItem('app_theme', theme);
     set({ theme });
   },
-  setView: (view) => set({ view }),
+  setView: (view) => {
+    set({ view });
+    if (view === 'board') {
+      get().fetchTasks();
+    }
+  },
+  setCurrentViewBucket: (bucket) => {
+    set({ currentViewBucket: bucket });
+    get().fetchTasks(bucket);
+  },
   
   generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
   
@@ -119,7 +140,55 @@ export const useAppStore = create<AppStore>((set, get) => ({
     showAuthModal: false,
     pendingIntent: null,
     view: 'input',
+    boardTasks: null
   }),
+
+  fetchTasks: async (bucket) => {
+    const targetBucket = bucket || get().currentViewBucket;
+    const { token } = get();
+    if (!token) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks?view_bucket=${targetBucket}`, { headers });
+      if (!response.ok) throw new Error('Failed to fetch tasks');
+      const tasks = await response.json();
+      set({ boardTasks: tasks });
+    } catch (err) {
+      console.error("Fetch tasks failed", err);
+    }
+  },
+
+  updateTaskStatus: async (taskId: string, status: 'completed' | 'active') => {
+    const { token, boardTasks } = get();
+    if (!token) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status })
+      });
+      
+      if (!response.ok) throw new Error('Failed to update task status');
+      
+      const updatedTask = await response.json();
+      
+      // Optimistic/Post-update UI sync
+      set({
+        boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status: updatedTask.status } : t)
+      });
+    } catch (err) {
+      console.error("Update task status failed", err);
+      throw err; // allow component to revert visual state
+    }
+  },
 
   submitIntent: async (intentText: string) => {
     const { token, preferredProvider } = get();

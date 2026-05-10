@@ -109,5 +109,5 @@ export const useSSE = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token]);
+  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token, setView]);
 };
