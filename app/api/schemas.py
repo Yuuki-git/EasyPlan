@@ -108,6 +108,15 @@ TaskViewBucket = Literal["planned", "my_day", "backlog"]
 TaskStatus = Literal["draft", "active", "today", "completed", "archived"]
 
 
+class TaskCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    view_bucket: TaskViewBucket = "my_day"
+    parent_task_id: UUID | None = None
+
+
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

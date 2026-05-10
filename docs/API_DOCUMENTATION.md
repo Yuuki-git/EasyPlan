@@ -355,6 +355,32 @@ Query：
 ]
 ```
 
+### POST `/api/tasks`
+
+手动创建当前用户的原生任务，用于 v1.2.2 看板侧边栏“添加任务”。接口必须携带合法 JWT；后端始终使用当前登录用户的 `user_id` 落库，不接受客户端传入 `user_id`。
+
+请求字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `title` | 必填；1-160 字符 |
+| `description` | 可选；最多 1000 字符 |
+| `view_bucket` | 可选；`my_day` / `planned` / `backlog`，默认 `my_day` |
+| `parent_task_id` | 可选；父任务必须属于当前用户，否则返回 `404` |
+
+请求：
+
+```json
+{
+  "title": "整理今天的阅读笔记",
+  "description": "先写 3 条要点",
+  "view_bucket": "my_day",
+  "parent_task_id": null
+}
+```
+
+响应状态码为 `201 Created`，响应体为创建后的 `TaskResponse`。手动创建的根任务会生成内部 `manual_*` thread 容器以满足任务表外键；手动子任务会继承父任务的 `thread_id`。
+
 ### PATCH `/api/tasks/{task_id}`
 
 支持行内编辑任务标题、描述、状态、预计时间、视图归属和排序。所有更新必须绑定 `user_id + task_id`；找不到当前用户任务时返回 `404`。
@@ -387,7 +413,7 @@ Fog of War 草案接口。以已完成阶段任务为上下文，重新进入 pl
 - `GET /api/threads/{thread_id}/events` 已接入 thread 归属校验、增量重播和 Async Queue 长连接推送。
 - `POST /api/threads/{thread_id}/confirm` 已接入 HITL resume，支持 `refine` 自然语言反馈回到 planner。
 - `approve` 已接入 `persist_internal_tasks_node`，会把 `TaskTree` 展开写入 `tasks` 与 `task_dependencies`。
-- `GET /api/tasks` 和 `PATCH /api/tasks/{task_id}` 已接入 JWT 与 `user_id` 隔离。
+- `GET /api/tasks`、`POST /api/tasks` 和 `PATCH /api/tasks/{task_id}` 已接入 JWT 与 `user_id` 隔离。
 - SSE 错误事件为 `agent_error`。
 - 全局异常处理已接入，500 响应不会暴露 traceback、SQL、token 或内部实现细节。
 - 下一步是补齐 `POST /api/tasks/{task_id}/complete`、My Day/Planned 索引策略和 Fog of War 阶段解锁。

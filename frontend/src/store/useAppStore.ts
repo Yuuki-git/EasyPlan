@@ -67,6 +67,8 @@ interface AppStore {
   confirmPlan: () => Promise<void>;
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
+  createTask: (title: string) => Promise<void>;
+  moveTaskToMyDay: (taskId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -201,6 +203,65 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (err) {
       console.error("Update task status failed", err);
       throw err; // allow component to revert visual state
+    }
+  },
+
+  createTask: async (title: string) => {
+    const { token, currentViewBucket, fetchTasks } = get();
+    if (!token) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title,
+          node_type: 'action',
+          view_bucket: currentViewBucket,
+          status: 'active'
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to create task');
+      
+      // Refresh the board to get the newly created task with proper sorting and id
+      await fetchTasks();
+    } catch (err) {
+      console.error("Create task failed", err);
+      throw err;
+    }
+  },
+
+  moveTaskToMyDay: async (taskId: string) => {
+    const { token, boardTasks } = get();
+    if (!token) return;
+
+    // Optimistically remove from current planned view immediately for visual smoothness
+    set({
+      boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ view_bucket: 'my_day' })
+      });
+      
+      if (!response.ok) throw new Error('Failed to move task to my day');
+    } catch (err) {
+      console.error("Move task to my day failed", err);
+      // Revert if failed by refetching
+      get().fetchTasks();
+      throw err;
     }
   },
 

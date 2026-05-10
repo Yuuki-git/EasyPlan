@@ -382,6 +382,17 @@ approve
 -> 若 phase_1 清空，允许触发下一阶段规划
 ```
 
+### 11.4 v1.2.2 手动任务闭环
+
+```text
+POST /api/tasks
+-> JWT 鉴权得到 user_id
+-> 校验 parent_task_id 归属当前用户（如有）
+-> 根任务创建 manual_* AgentThread 容器，子任务继承父任务 thread_id
+-> 写入 tasks，默认 view_bucket=my_day、node_type=action、status=active
+-> 返回 201 TaskResponse
+```
+
 ## 12. v1.2.0 准备清单
 
 已完成：
@@ -395,7 +406,7 @@ approve
 - 外部集成与同步代码已移除，OpenAPI 不再暴露相关接口。
 - 全局 500 异常响应已脱敏。
 - `persist_internal_tasks_node` 已在 approve 后展开 `TaskTree`，保留 `client_node_id -> parent_task_id` 层级映射并写入 `tasks` / `task_dependencies`。
-- 已暴露 `GET /api/tasks` 与 `PATCH /api/tasks/{task_id}`，所有查询和更新均绑定 `user_id`。
+- 已暴露 `GET /api/tasks`、`POST /api/tasks` 与 `PATCH /api/tasks/{task_id}`，所有查询、创建和更新均绑定 `user_id`。
 
 待实现：
 

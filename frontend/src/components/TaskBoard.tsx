@@ -51,7 +51,7 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus } = useAppStore();
+  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   const isCompleted = node.status === 'completed';
@@ -66,6 +66,15 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       await updateTaskStatus(node.id, newStatus);
     } catch (err) {
       // Error is handled/logged in store
+    }
+  };
+
+  const handleMoveToMyDay = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await moveTaskToMyDay(node.id);
+    } catch (err) {
+      // Error handled in store
     }
   };
 
@@ -92,8 +101,11 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   return (
     <motion.div 
       layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
       className={clsx(
-        "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer",
+        "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
         isCompleted 
           ? "bg-muted/10 border-transparent" 
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
@@ -108,7 +120,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           <Circle size={18} className="text-muted-foreground/30 group-hover:text-foreground/50 transition-colors" />
         )}
       </div>
-      <div className="flex-1">
+      <div className="flex-1 pr-8">
         <h4 className={clsx(
           "text-base transition-colors",
           isCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
@@ -131,6 +143,90 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           </div>
         )}
       </div>
+      
+      {currentViewBucket === 'planned' && !isCompleted && (
+        <button
+          onClick={handleMoveToMyDay}
+          className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md"
+          title="加入我的一天"
+        >
+          <Sun size={16} />
+        </button>
+      )}
+    </motion.div>
+  );
+};
+
+const InlineTaskInput: React.FC = () => {
+  const { createTask } = useAppStore();
+  const [isAdding, setIsAdding] = React.useState(false);
+  const [title, setTitle] = React.useState('');
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (isAdding && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isAdding]);
+
+  const handleSubmit = async () => {
+    if (!title.trim()) {
+      setIsAdding(false);
+      return;
+    }
+    
+    const taskTitle = title.trim();
+    setTitle(''); // Clear immediately for UX
+    try {
+      await createTask(taskTitle);
+      // Keep input open to add more
+    } catch (err) {
+      // Error is handled/logged in store
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSubmit();
+    } else if (e.key === 'Escape') {
+      setIsAdding(false);
+      setTitle('');
+    }
+  };
+
+  if (!isAdding) {
+    return (
+      <button 
+        onClick={() => setIsAdding(true)}
+        className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group w-full"
+      >
+        <div className="p-1 rounded-full group-hover:bg-muted/20 transition-colors">
+          <Plus size={16} />
+        </div>
+        <span className="text-sm">添加任务...</span>
+      </button>
+    );
+  }
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-8 flex items-center gap-3 p-2 rounded-xl border border-muted/50 bg-background focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-foreground/10 transition-all"
+    >
+      <Circle size={18} className="text-muted-foreground/30 ml-1" />
+      <input
+        ref={inputRef}
+        type="text"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={() => {
+          if (!title.trim()) setIsAdding(false);
+        }}
+        placeholder="输入任务名称，按回车保存"
+        className="flex-1 bg-transparent border-none focus:outline-none text-base text-foreground/90 placeholder:text-muted-foreground/40"
+      />
     </motion.div>
   );
 };
@@ -200,7 +296,13 @@ export const TaskBoard: React.FC = () => {
 
   if (boardError) {
     return (
-      <div className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-4">
+      <motion.div 
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 20 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-4 z-40"
+      >
         <p className="text-destructive font-medium">{boardError}</p>
         <button 
           onClick={() => fetchTasks()} 
@@ -208,15 +310,21 @@ export const TaskBoard: React.FC = () => {
         >
           重新加载
         </button>
-      </div>
+      </motion.div>
     );
   }
 
   if (!displayTree) {
     return (
-      <div className="fixed inset-0 bg-background flex items-center justify-center">
+      <motion.div 
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 20 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="fixed inset-0 bg-background flex items-center justify-center z-40"
+      >
         <p className="text-muted-foreground animate-pulse">Loading tasks...</p>
-      </div>
+      </motion.div>
     );
   }
 
@@ -283,13 +391,7 @@ export const TaskBoard: React.FC = () => {
             ) : (
               <>
                 <BoardTaskNode node={displayTree} />
-                
-                <button className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group">
-                  <div className="p-1 rounded-full group-hover:bg-muted/20 transition-colors">
-                    <Plus size={16} />
-                  </div>
-                  <span className="text-sm">添加任务...</span>
-                </button>
+                <InlineTaskInput />
               </>
             )}
           </div>
