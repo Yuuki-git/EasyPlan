@@ -18,6 +18,10 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "get" in schema["paths"]["/api/threads/{thread_id}/events"]
     assert "/api/threads/{thread_id}/confirm" in schema["paths"]
     assert "post" in schema["paths"]["/api/threads/{thread_id}/confirm"]
+    assert "/api/tasks" in schema["paths"]
+    assert "get" in schema["paths"]["/api/tasks"]
+    assert "/api/tasks/{task_id}" in schema["paths"]
+    assert "patch" in schema["paths"]["/api/tasks/{task_id}"]
 
 
 def test_openapi_contract_is_native_task_board_only():
@@ -52,11 +56,31 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     snapshot_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}"]["get"])
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
+    tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
+    task_patch_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["patch"])
 
     assert "Authorization" in intent_params
     assert "Authorization" in snapshot_params
     assert "Authorization" in events_params
     assert "Authorization" in confirm_params
+    assert "Authorization" in tasks_params
+    assert "Authorization" in task_patch_params
+
+
+def test_openapi_contract_exposes_native_task_board_schemas():
+    app = create_app()
+
+    schema = app.openapi()
+
+    task_response = schema["components"]["schemas"]["TaskResponse"]
+    task_update = schema["components"]["schemas"]["TaskUpdateRequest"]
+    task_properties = task_response["properties"]
+
+    assert "view_bucket" in task_properties
+    assert "estimated_minutes" in task_properties
+    assert "parent_task_id" in task_properties
+    assert "client_node_id" in task_properties
+    assert "view_bucket" in task_update["properties"]
 
 
 def test_openapi_contract_documents_sse_token_query_fallback():

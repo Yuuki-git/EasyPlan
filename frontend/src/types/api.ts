@@ -94,6 +94,30 @@ export interface TokenResponse {
   expires_at: string;
 }
 
+export interface TaskResponse {
+  id: string;
+  user_id: string;
+  thread_id: string;
+  parent_task_id: string | null;
+  client_node_id: string;
+  title: string;
+  description: string | null;
+  node_type: 'group' | 'action';
+  status: string;
+  view_bucket: string;
+  estimated_minutes: number | null;
+  sort_order: number;
+}
+
+export interface TaskUpdateRequest {
+  title?: string | null;
+  description?: string | null;
+  status?: 'draft' | 'active' | 'today' | 'completed' | 'archived' | null;
+  view_bucket?: 'planned' | 'my_day' | 'backlog' | null;
+  estimated_minutes?: number | null;
+  sort_order?: number | null;
+}
+
 export interface ValidationError {
   loc: (string | number)[];
   msg: string;

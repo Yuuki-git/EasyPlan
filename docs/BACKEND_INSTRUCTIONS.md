@@ -42,7 +42,7 @@ PM 文档中的后端重点：
    - 支持 `approve`、`edit`、`refine`、`reject`。
    - `refine` 接收自然语言反馈，回到 `planner_node`。
 
-4. `persist_internal_tasks_node`（v1.2.0 待实现）
+4. `persist_internal_tasks_node`
    - 在用户 `approve` 后展开 `TaskTree`。
    - 写入 `tasks` 和 `task_dependencies`。
    - 写入时必须绑定 `user_id + thread_id`。
@@ -58,6 +58,8 @@ PM 文档中的后端重点：
 - `GET /api/threads/{thread_id}`
 - `GET /api/threads/{thread_id}/events`
 - `POST /api/threads/{thread_id}/confirm`
+- `GET /api/tasks?view_bucket=planned|my_day|backlog`
+- `PATCH /api/tasks/{task_id}`
 - `GET /health`
 
 SSE 事件名：
@@ -71,10 +73,8 @@ SSE 事件名：
 
 禁止发送 `event: error` 作为业务错误事件名，因为它会与浏览器原生保留事件冲突。
 
-v1.2.0 待实现接口草案：
+v1.2 后续接口草案：
 
-- `GET /api/tasks?view=my_day|planned|backlog`
-- `PATCH /api/tasks/{task_id}`
 - `POST /api/tasks/{task_id}/complete`
 - `POST /api/threads/{thread_id}/unlock-next-phase`
 

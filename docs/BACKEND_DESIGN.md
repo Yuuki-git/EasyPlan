@@ -157,7 +157,7 @@ CREATE TABLE langgraph_checkpoints (
 
 ### 5.4 Tasks
 
-当前模型已包含任务树落库的核心列。v1.2.0 迁移建议补齐看板视图、阶段解锁和排期字段。
+当前模型已包含任务树落库的核心列，并已补齐 `view_bucket` 作为原生看板蓄水池字段。
 
 ```sql
 CREATE TABLE tasks (
@@ -170,6 +170,7 @@ CREATE TABLE tasks (
     description TEXT,
     node_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
+    view_bucket TEXT NOT NULL DEFAULT 'planned',
     estimated_minutes INT,
     sort_order INT NOT NULL DEFAULT 0,
     ai_generated BOOLEAN NOT NULL DEFAULT true,
@@ -181,7 +182,7 @@ CREATE TABLE tasks (
 );
 ```
 
-v1.2.0 建议在 `metadata` 或后续迁移列中表达：
+v1.2 后续建议在 `metadata` 或迁移列中继续表达：
 
 | 字段 | 用途 |
 | --- | --- |
@@ -227,7 +228,7 @@ START
 -> interrupt(task_tree_review)
 
 human_review_node
--> approve: END 当前实现 / persist_internal_tasks_node v1.2.0
+-> approve: persist_internal_tasks_node
 -> refine: planner_node
 -> edit: task_tree_validator_node
 -> reject: END
@@ -365,17 +366,17 @@ Frontend POST /api/threads/{thread_id}/confirm
 -> approve/edit/refine/reject 转成 Command(resume=...)
 -> refine 回到 planner_node
 -> edit 回到 validator
--> approve 当前结束图执行；v1.2.0 接 persist_internal_tasks_node
+-> approve 进入 persist_internal_tasks_node，写入原生任务表
 -> reject 结束本次计划
 ```
 
-### 11.3 v1.2.0 原生看板草案
+### 11.3 v1.2.1 原生看板基建
 
 ```text
 approve
 -> 展开 TaskTree
 -> 写入 tasks / task_dependencies
--> GET /api/tasks?view=my_day|planned|backlog
+-> GET /api/tasks?view_bucket=my_day|planned|backlog
 -> PATCH /api/tasks/{task_id}
 -> POST /api/tasks/{task_id}/complete
 -> 若 phase_1 清空，允许触发下一阶段规划
@@ -393,11 +394,12 @@ approve
 - SSE 错误事件改为 `agent_error`。
 - 外部集成与同步代码已移除，OpenAPI 不再暴露相关接口。
 - 全局 500 异常响应已脱敏。
+- `persist_internal_tasks_node` 已在 approve 后展开 `TaskTree`，保留 `client_node_id -> parent_task_id` 层级映射并写入 `tasks` / `task_dependencies`。
+- 已暴露 `GET /api/tasks` 与 `PATCH /api/tasks/{task_id}`，所有查询和更新均绑定 `user_id`。
 
 待实现：
 
-- `persist_internal_tasks_node`：确认后展开 `TaskTree` 写入 `tasks` 与 `task_dependencies`。
-- 原生任务看板 API：`GET /api/tasks`、`PATCH /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/complete`。
+- 原生任务完成 API：`POST /api/tasks/{task_id}/complete`。
 - My Day / Planned 查询索引与排序策略。
 - Scope Horizon prompt 与 `metadata.scope_horizon` 落库约定。
 - Fog of War 阶段解锁：完成 Phase 1 后生成 Phase 2。

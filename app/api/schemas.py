@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from uuid import UUID
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -101,6 +102,44 @@ class ThreadSnapshot(BaseModel):
     task_tree: dict[str, Any] | None = None
     interrupt_payload: dict[str, Any] | None = None
     latest_checkpoint_id: str | None = None
+
+
+TaskViewBucket = Literal["planned", "my_day", "backlog"]
+TaskStatus = Literal["draft", "active", "today", "completed", "archived"]
+
+
+class TaskResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    user_id: UUID
+    thread_id: str
+    parent_task_id: UUID | None
+    client_node_id: str
+    title: str
+    description: str | None
+    node_type: Literal["group", "action"]
+    status: str
+    view_bucket: str
+    estimated_minutes: int | None
+    sort_order: int
+
+
+class TaskUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    status: TaskStatus | None = None
+    view_bucket: TaskViewBucket | None = None
+    estimated_minutes: int | None = Field(default=None, ge=1, le=43200)
+    sort_order: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_at_least_one_change(self) -> "TaskUpdateRequest":
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("At least one task field must be provided")
+        return self
 
 
 TaskNode.model_rebuild()

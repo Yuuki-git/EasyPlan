@@ -9,6 +9,7 @@ from app.agents.nodes import (
     PlannerClient,
     RuleBasedPlannerClient,
     failed_validation_node,
+    persist_internal_tasks_node,
     planner_node_factory,
     route_after_validation,
     task_tree_validator_node,
@@ -69,6 +70,8 @@ def route_after_human_review(state: AgentState) -> str:
         return "validator"
     if action == "reject":
         return "end"
+    if action == "approve":
+        return "persist_tasks"
     return "end"
 
 
@@ -84,6 +87,7 @@ def build_task_graph(
     graph.add_node("planner", planner_node_factory(planner_client))
     graph.add_node("validator", task_tree_validator_node)
     graph.add_node("human_review", human_review_node)
+    graph.add_node("persist_tasks", persist_internal_tasks_node)
     graph.add_node("failed_validation", failed_validation_node)
 
     graph.add_edge(START, "planner")
@@ -103,9 +107,11 @@ def build_task_graph(
         {
             "planner": "planner",
             "validator": "validator",
+            "persist_tasks": "persist_tasks",
             "end": END,
         },
     )
+    graph.add_edge("persist_tasks", END)
     graph.add_edge("failed_validation", END)
 
     return graph.compile(checkpointer=checkpoint_saver)

@@ -10,12 +10,19 @@ export const useSSE = () => {
     setError, 
     setNodeStatus,
     alignState,
-    token
+    token,
+    setView
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
+  const prevThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (threadId !== prevThreadIdRef.current) {
+      lastEventIdRef.current = null;
+      prevThreadIdRef.current = threadId;
+    }
+
     if (!threadId) {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -65,9 +72,6 @@ export const useSSE = () => {
         lastEventIdRef.current = e.lastEventId;
         const { node_id, status } = JSON.parse(e.data);
         setNodeStatus(node_id, status);
-        
-        // If all nodes done, check for partial errors or success
-        // This logic is usually driven by a final 'sync_complete' event
       });
 
       es.addEventListener('sync_complete', (e) => {
@@ -78,7 +82,14 @@ export const useSSE = () => {
 
       es.addEventListener('done', () => {
         setAppState('SUCCESS');
+        setView('board');
         es.close();
+      });
+
+      es.addEventListener('snapshot_required', async () => {
+        console.warn('SSE Snapshot Required. Re-aligning state and breaking loop...');
+        es.close();
+        await alignState(threadId);
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,5 +121,5 @@ export const useSSE = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token]);
+  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token, setView]);
 };
