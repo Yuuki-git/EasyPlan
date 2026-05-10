@@ -1,4 +1,4 @@
-# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.1.0)
+# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.2.1)
 
 > **Detailed plan is all you need. Efficiency is everything.**  
 > **"Don't let grand visions become a burden. Let technology carry the weight of planning."**
@@ -14,9 +14,9 @@ EasyPlan is a minimalist task management tool built on the philosophy of **Inten
 Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × Ability × Prompt)**.
 - **Eliminate Starting Anxiety**: AI breaks big goals into tiny tasks, significantly boosting your "Ability" and making action a natural response.
 - **Maintain Human Agency**: We stick to "Human-in-the-Loop (HITL)" design. AI handles the tedious planning; you retain ultimate control.
-- **Absolute Certainty**: Industrial-grade "Resilient Sync" ensures your plans are synchronized accurately and without duplicates, even in unstable networks.
+- **Seamless Closed-Loop**：Say goodbye to clunky external syncing. A built-in "My Day" and "Planned" task board ensures your data is private, lighting-fast, and distraction-free.
 
-## ✨ Features (v1.1.0)
+## ✨ Features (v1.2.1)
 
 - **Spotlight Capture**: A single dynamic input box for fuzzy natural language goal entry.
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.
@@ -120,3 +120,4 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 License
 Distributed under the **MIT License**.
+ the **MIT License**.

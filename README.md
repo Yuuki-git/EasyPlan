@@ -1,4 +1,4 @@
-# EasyPlan 🪐 - **意图驱动**的智能任务管理工具 (v1.1.0)
+# EasyPlan 🪐 - **意图驱动**的智能任务管理工具 (v1.2.1)
 
 > **Detailed plan is all you need. Efficiency is everything.**  
 > **“不要让宏大的愿景成为负担，让技术替你承受规划的重量。”**
