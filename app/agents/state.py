@@ -10,6 +10,7 @@ class AgentState(TypedDict, total=False):
     task_tree: dict[str, Any]
     validation_status: Literal["valid", "needs_replan", "failed"]
     validation_errors: list[str]
+    task_persistence_status: Literal["succeeded"]
     replan_attempts: int
     human_decision: dict[str, Any]
     refinement_feedback: str

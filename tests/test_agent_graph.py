@@ -6,7 +6,7 @@ from typing import Any
 
 from langgraph.types import Command
 
-from app.agents.graph import build_task_graph, create_graph_config
+from app.agents.graph import build_task_graph, create_graph_config, route_after_human_review
 from app.agents.nodes import PlannerClient, build_planner_prompt, task_tree_validator_node
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
@@ -166,6 +166,12 @@ def test_graph_auto_replans_when_validator_finds_large_leaf_task():
 
 def test_planner_client_contract_is_async():
     assert inspect.iscoroutinefunction(PlannerClient.create_plan)
+
+
+def test_route_after_human_review_approve_persists_internal_tasks():
+    state = {"human_decision": {"action": "approve"}}
+
+    assert route_after_human_review(state) == "persist_tasks"
 
 
 async def _collect_astream(stream):

@@ -35,6 +35,7 @@ class Task(Base):
     description: Mapped[str | None] = mapped_column(Text)
     node_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="draft")
+    view_bucket: Mapped[str] = mapped_column(String(64), nullable=False, default="planned")
     estimated_minutes: Mapped[int | None]
     sort_order: Mapped[int] = mapped_column(nullable=False, default=0)
     ai_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

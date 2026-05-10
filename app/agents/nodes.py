@@ -1,10 +1,15 @@
+from datetime import datetime, timezone
 import inspect
 from typing import Any, Protocol
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
+from sqlalchemy import update
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
 from app.api.schemas import TaskTree
+from app.models.task import Task, TaskDependency
+from app.models.thread import AgentThread
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 
 
@@ -157,6 +162,88 @@ async def failed_validation_node(state: AgentState) -> AgentState:
             "message": "; ".join(state.get("validation_errors", [])),
         }
     }
+
+
+async def persist_internal_tasks_node(state: AgentState) -> AgentState:
+    from app.db.session import async_session
+
+    tasks, dependencies = flatten_task_tree_for_persistence(
+        state["task_tree"],
+        user_id=state["user_id"],
+        thread_id=state["thread_id"],
+    )
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        async with session.begin():
+            session.add_all([*tasks, *dependencies])
+            await session.execute(
+                update(AgentThread)
+                .where(
+                    AgentThread.user_id == UUID(str(state["user_id"])),
+                    AgentThread.thread_id == state["thread_id"],
+                )
+                .values(
+                    status="succeeded",
+                    current_node="persist_internal_tasks",
+                    task_tree=state.get("task_tree"),
+                    completed_at=now,
+                    updated_at=now,
+                )
+            )
+    return {"task_persistence_status": "succeeded"}
+
+
+def flatten_task_tree_for_persistence(
+    task_tree: dict[str, Any],
+    *,
+    user_id: str | UUID,
+    thread_id: str,
+    default_view_bucket: str = "planned",
+) -> tuple[list[Task], list[TaskDependency]]:
+    parsed = TaskTree.model_validate(task_tree)
+    user_uuid = UUID(str(user_id))
+    tasks: list[Task] = []
+    dependency_pairs: list[tuple[str, str]] = []
+    id_by_client_node_id: dict[str, UUID] = {}
+
+    def visit(node: Any, parent_task_id: UUID | None, sort_order: int) -> None:
+        task_id = uuid4()
+        id_by_client_node_id[node.client_node_id] = task_id
+        tasks.append(
+            Task(
+                id=task_id,
+                user_id=user_uuid,
+                thread_id=thread_id,
+                parent_task_id=parent_task_id,
+                client_node_id=node.client_node_id,
+                title=node.title,
+                description=node.description,
+                node_type=node.node_type,
+                status="active",
+                view_bucket=default_view_bucket,
+                estimated_minutes=node.estimated_minutes,
+                sort_order=sort_order,
+                ai_generated=True,
+                user_edited=False,
+                metadata_={},
+            )
+        )
+        for dependency in node.depends_on:
+            dependency_pairs.append((node.client_node_id, dependency))
+        for child_index, child in enumerate(node.children):
+            visit(child, task_id, child_index)
+
+    visit(parsed.root, None, 0)
+
+    dependencies = [
+        TaskDependency(
+            id=uuid4(),
+            task_id=id_by_client_node_id[task_id],
+            depends_on_task_id=id_by_client_node_id[depends_on_task_id],
+        )
+        for task_id, depends_on_task_id in dependency_pairs
+    ]
+    return tasks, dependencies
 
 
 def _validate_task_tree(task_tree: Any) -> list[str]:

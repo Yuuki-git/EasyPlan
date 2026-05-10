@@ -320,25 +320,58 @@ X-User-Timezone: Asia/Shanghai
 | `interrupt_payload` | object/null | HITL 中断 payload |
 | `latest_checkpoint_id` | string/null | 最新 checkpoint id |
 
-## 8. v1.2.0 原生任务看板草案
+## 8. v1.2.1 原生任务看板
 
-以下接口是后端目标契约，尚未进入当前 OpenAPI 暴露面。正式实现时必须先更新 `app/api/schemas.py` 与 `docs/openapi.json`。
+`approve` 后，LangGraph 会通过 `persist_internal_tasks_node` 将 `TaskTree` 展开写入内部 `tasks` 与 `task_dependencies`。所有任务默认进入 `view_bucket="planned"`。
 
 ### GET `/api/tasks`
 
-查询原生任务看板。
+查询当前用户的原生任务。所有查询都通过 `user_id` 过滤，不会返回其他租户数据。
 
 Query：
 
 | 参数 | 说明 |
 | --- | --- |
-| `view` | `my_day` / `planned` / `backlog` |
-| `status` | `active` / `completed` / `archived` |
-| `phase_key` | Fog of War 阶段过滤，例如 `phase_1` |
+| `view_bucket` | 可选；`my_day` / `planned` / `backlog` |
+
+响应：
+
+```json
+[
+  {
+    "id": "6e9d9ef7-f68a-4a11-ae24-4b94fb1a9b23",
+    "user_id": "11111111-1111-1111-1111-111111111111",
+    "thread_id": "thr_01J...",
+    "parent_task_id": null,
+    "client_node_id": "root",
+    "title": "论文初稿",
+    "description": null,
+    "node_type": "group",
+    "status": "active",
+    "view_bucket": "planned",
+    "estimated_minutes": 120,
+    "sort_order": 0
+  }
+]
+```
 
 ### PATCH `/api/tasks/{task_id}`
 
-支持行内编辑任务标题、描述、预计时间、视图归属和排序。所有更新必须绑定 `user_id + task_id`。
+支持行内编辑任务标题、描述、状态、预计时间、视图归属和排序。所有更新必须绑定 `user_id + task_id`；找不到当前用户任务时返回 `404`。
+
+请求：
+
+```json
+{
+  "title": "整理论文提纲",
+  "view_bucket": "my_day",
+  "estimated_minutes": 4
+}
+```
+
+响应为更新后的 `TaskResponse`。
+
+## 9. v1.2 后续接口草案
 
 ### POST `/api/tasks/{task_id}/complete`
 
@@ -348,11 +381,13 @@ Query：
 
 Fog of War 草案接口。以已完成阶段任务为上下文，重新进入 planner，生成下一阶段 `TaskTree`，仍需 HITL 确认。
 
-## 9. 当前实现状态
+## 10. 当前实现状态
 
 - `POST /api/intents` 已接入 JWT、`AgentThread` 持久化和 LangGraph 后台运行。
 - `GET /api/threads/{thread_id}/events` 已接入 thread 归属校验、增量重播和 Async Queue 长连接推送。
 - `POST /api/threads/{thread_id}/confirm` 已接入 HITL resume，支持 `refine` 自然语言反馈回到 planner。
+- `approve` 已接入 `persist_internal_tasks_node`，会把 `TaskTree` 展开写入 `tasks` 与 `task_dependencies`。
+- `GET /api/tasks` 和 `PATCH /api/tasks/{task_id}` 已接入 JWT 与 `user_id` 隔离。
 - SSE 错误事件为 `agent_error`。
 - 全局异常处理已接入，500 响应不会暴露 traceback、SQL、token 或内部实现细节。
-- v1.2.0 下一步是把用户确认后的 `TaskTree` 展开写入内部 `tasks` 与 `task_dependencies`，供原生任务看板消费。
+- 下一步是补齐 `POST /api/tasks/{task_id}/complete`、My Day/Planned 索引策略和 Fog of War 阶段解锁。
