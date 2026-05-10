@@ -136,7 +136,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, reset, setView } = useAppStore();
+  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
 
   const displayTree = useMemo(() => {
@@ -198,6 +198,20 @@ export const TaskBoard: React.FC = () => {
     }
   }, [boardTasks, currentViewBucket]);
 
+  if (boardError) {
+    return (
+      <div className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-4">
+        <p className="text-destructive font-medium">{boardError}</p>
+        <button 
+          onClick={() => fetchTasks()} 
+          className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-md transition-colors"
+        >
+          重新加载
+        </button>
+      </div>
+    );
+  }
+
   if (!displayTree) {
     return (
       <div className="fixed inset-0 bg-background flex items-center justify-center">
@@ -205,6 +219,8 @@ export const TaskBoard: React.FC = () => {
       </div>
     );
   }
+
+  const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
   return (
     <motion.div 
@@ -245,14 +261,37 @@ export const TaskBoard: React.FC = () => {
         
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
-            <BoardTaskNode node={displayTree} />
-            
-            <button className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group">
-              <div className="p-1 rounded-full group-hover:bg-muted/20 transition-colors">
-                <Plus size={16} />
+            {isEmpty ? (
+              <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+                <p className="text-muted-foreground/60 text-lg">
+                  {currentViewBucket === 'planned' 
+                    ? "您的计划库空空如也。点击右上角新建意图，让 AI 为您分忧。"
+                    : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
+                </p>
+                {currentViewBucket === 'planned' && (
+                  <button 
+                    onClick={() => {
+                      reset();
+                      setView('input');
+                    }}
+                    className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
+                  >
+                    新建意图
+                  </button>
+                )}
               </div>
-              <span className="text-sm">添加任务...</span>
-            </button>
+            ) : (
+              <>
+                <BoardTaskNode node={displayTree} />
+                
+                <button className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group">
+                  <div className="p-1 rounded-full group-hover:bg-muted/20 transition-colors">
+                    <Plus size={16} />
+                  </div>
+                  <span className="text-sm">添加任务...</span>
+                </button>
+              </>
+            )}
           </div>
         </main>
       </div>

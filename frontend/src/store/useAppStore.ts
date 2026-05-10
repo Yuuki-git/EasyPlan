@@ -33,6 +33,7 @@ interface AppStore {
   view: 'input' | 'board';
   currentViewBucket: 'planned' | 'my_day';
   boardTasks: TaskResponse[] | null;
+  boardError: string | null;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -77,15 +78,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pendingIntent: null,
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: 'input',
-  currentViewBucket: 'my_day',
+  currentViewBucket: 'planned', // Default to planned after transition
   boardTasks: null,
+  boardError: null,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
   setAppState: (appState) => {
     set({ appState });
     if (appState === 'SUCCESS' && get().view === 'board') {
-      get().fetchTasks();
+      set({ currentViewBucket: 'planned' });
+      get().fetchTasks('planned');
     }
   },
   setThreadId: (threadId) => set({ threadId }),
@@ -106,7 +109,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => {
     set({ view });
     if (view === 'board') {
-      get().fetchTasks();
+      set({ currentViewBucket: 'planned' });
+      get().fetchTasks('planned');
     }
   },
   setCurrentViewBucket: (bucket) => {
@@ -140,7 +144,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     showAuthModal: false,
     pendingIntent: null,
     view: 'input',
-    boardTasks: null
+    boardTasks: null,
+    boardError: null
   }),
 
   fetchTasks: async (bucket) => {
@@ -148,6 +153,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { token } = get();
     if (!token) return;
 
+    set({ boardError: null });
     try {
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${token}`
@@ -158,6 +164,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ boardTasks: tasks });
     } catch (err) {
       console.error("Fetch tasks failed", err);
+      set({ boardError: "获取任务失败，请重试" });
     }
   },
 

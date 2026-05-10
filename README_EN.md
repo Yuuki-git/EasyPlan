@@ -22,8 +22,8 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.
 - **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans instantly.
 - **Fluid Motion UI**: "Balanced Minimalism" interface where the task tree grows organically as you plan.
-- **Resilient Synchronization**: Supports **Todoist** and **Microsoft To Do** integration with strong idempotency. Failed syncs can be retried without creating duplicates.
-- **Enterprise-Grade Security**: Multi-tenant isolation, JWT authentication, and OAuth2 integration closure.
+- **Native Task Engine**: Stripping away heavy external dependencies to introduce a built-in task board, creating a seamless "Plan -> Decompose -> Execute" closed-loop experience.
+- **Enterprise-Grade Security**: Multi-tenant isolation and strict JWT-based authentication.
 
 ## 🛠️ Architecture
 
@@ -120,5 +120,3 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 License
 Distributed under the **MIT License**.
-
-*MIT License**.
