@@ -15,8 +15,14 @@ export const useSSE = () => {
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
+  const prevThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (threadId !== prevThreadIdRef.current) {
+      lastEventIdRef.current = null;
+      prevThreadIdRef.current = threadId;
+    }
+
     if (!threadId) {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -78,6 +84,12 @@ export const useSSE = () => {
         setAppState('SUCCESS');
         setView('board');
         es.close();
+      });
+
+      es.addEventListener('snapshot_required', async () => {
+        console.warn('SSE Snapshot Required. Re-aligning state and breaking loop...');
+        es.close();
+        await alignState(threadId);
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

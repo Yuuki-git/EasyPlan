@@ -3,6 +3,13 @@ import { TaskTree, TaskResponse } from '../types/api';
 import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
 export type AppState = 
   | 'INITIAL' 
   | 'THINKING' 
@@ -118,7 +125,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().fetchTasks(bucket);
   },
   
-  generateSyncId: () => set({ syncRequestId: crypto.randomUUID() }),
+  generateSyncId: () => set({ syncRequestId: generateUUID() }),
   
   addReasoningLog: (log) => set((state) => ({ 
     reasoningLogs: [...state.reasoningLogs, log] 
@@ -302,7 +309,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ appState: 'SYNCING', error: null });
     
     // Generate request ID if it doesn't exist yet
-    const requestId = syncRequestId || crypto.randomUUID();
+    const requestId = syncRequestId || generateUUID();
     if (!syncRequestId) {
       set({ syncRequestId: requestId });
     }
