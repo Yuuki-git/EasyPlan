@@ -158,7 +158,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 };
 
 const InlineTaskInput: React.FC = () => {
-  const { createTask } = useAppStore();
+  const { createManualTask } = useAppStore();
   const [isAdding, setIsAdding] = React.useState(false);
   const [title, setTitle] = React.useState('');
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -178,7 +178,7 @@ const InlineTaskInput: React.FC = () => {
     const taskTitle = title.trim();
     setTitle(''); // Clear immediately for UX
     try {
-      await createTask(taskTitle);
+      await createManualTask(taskTitle);
       // Keep input open to add more
     } catch (err) {
       // Error is handled/logged in store
@@ -330,6 +330,12 @@ export const TaskBoard: React.FC = () => {
 
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
+  const handleNewPlan = () => {
+    setView('input');
+    useAppStore.getState().setAppState('INITIAL');
+    setTimeout(() => reset(), 500);
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
@@ -356,10 +362,7 @@ export const TaskBoard: React.FC = () => {
           
           <div className="flex items-center gap-4">
             <button 
-              onClick={() => {
-                reset();
-                setView('input');
-              }}
+              onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
               新计划
@@ -378,10 +381,7 @@ export const TaskBoard: React.FC = () => {
                 </p>
                 {currentViewBucket === 'planned' && (
                   <button 
-                    onClick={() => {
-                      reset();
-                      setView('input');
-                    }}
+                    onClick={handleNewPlan}
                     className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
                   >
                     新建意图
@@ -389,11 +389,10 @@ export const TaskBoard: React.FC = () => {
                 )}
               </div>
             ) : (
-              <>
-                <BoardTaskNode node={displayTree} />
-                <InlineTaskInput />
-              </>
+              <BoardTaskNode node={displayTree} />
             )}
+            
+            <InlineTaskInput />
           </div>
         </main>
       </div>

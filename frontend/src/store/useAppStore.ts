@@ -67,7 +67,7 @@ interface AppStore {
   confirmPlan: () => Promise<void>;
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
-  createTask: (title: string) => Promise<void>;
+  createManualTask: (title: string) => Promise<void>;
   moveTaskToMyDay: (taskId: string) => Promise<void>;
 }
 
@@ -206,8 +206,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  createTask: async (title: string) => {
-    const { token, currentViewBucket, fetchTasks } = get();
+  createManualTask: async (title: string) => {
+    const { token, currentViewBucket, boardTasks } = get();
     if (!token) return;
 
     try {
@@ -228,10 +228,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       
       if (!response.ok) throw new Error('Failed to create task');
       
-      // Refresh the board to get the newly created task with proper sorting and id
-      await fetchTasks();
+      const newTask = await response.json();
+      
+      // Optimistically append to boardTasks to save a network request
+      set({
+        boardTasks: [...(boardTasks || []), newTask]
+      });
     } catch (err) {
-      console.error("Create task failed", err);
+      console.error("Create manual task failed", err);
       throw err;
     }
   },
