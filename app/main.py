@@ -41,7 +41,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
-        version="1.2.0",
+        version="1.2.2",
         description=(
             "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, "
             "and Async Queue SSE event streams."

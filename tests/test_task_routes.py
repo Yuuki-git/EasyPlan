@@ -27,6 +27,7 @@ class FakeTaskRepository:
     def __init__(self) -> None:
         self.tasks: dict[UUID, FakeTask] = {}
         self.list_calls: list[dict] = []
+        self.create_calls: list[dict] = []
         self.update_calls: list[dict] = []
 
     async def list_tasks_for_user(self, *, user_id, view_bucket=None):
@@ -46,6 +47,39 @@ class FakeTaskRepository:
             setattr(task, key, value)
         return task
 
+    async def create_task_for_user(
+        self,
+        *,
+        user_id,
+        title,
+        description,
+        view_bucket,
+        parent_task_id,
+    ):
+        self.create_calls.append(
+            {
+                "user_id": user_id,
+                "title": title,
+                "description": description,
+                "view_bucket": view_bucket,
+                "parent_task_id": parent_task_id,
+            }
+        )
+        if parent_task_id is not None:
+            parent_task = self.tasks.get(parent_task_id)
+            if parent_task is None or parent_task.user_id != user_id:
+                return None
+        task = _fake_task(
+            user_id=user_id,
+            view_bucket=view_bucket,
+            title=title,
+            parent_task_id=parent_task_id,
+            description=description,
+        )
+        task.client_node_id = f"manual-{uuid4().hex}"
+        self.tasks[task.id] = task
+        return task
+
 
 def test_get_tasks_filters_by_authenticated_user_and_view_bucket():
     repository = FakeTaskRepository()
@@ -60,6 +94,51 @@ def test_get_tasks_filters_by_authenticated_user_and_view_bucket():
     assert response.status_code == 200
     assert [task["title"] for task in response.json()] == ["Draft outline"]
     assert repository.list_calls == [{"user_id": user.id, "view_bucket": "planned"}]
+
+
+def test_get_tasks_returns_empty_array_for_authenticated_user_with_no_tasks():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    assert response.json() == []
+    assert repository.list_calls == [{"user_id": user.id, "view_bucket": "planned"}]
+
+
+def test_post_tasks_creates_manual_task_for_authenticated_user_with_default_bucket():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.post("/api/tasks", json={"title": "Buy notebooks"})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["user_id"] == str(user.id)
+    assert payload["title"] == "Buy notebooks"
+    assert payload["description"] is None
+    assert payload["view_bucket"] == "my_day"
+    assert payload["node_type"] == "action"
+    assert payload["status"] == "active"
+    assert payload["parent_task_id"] is None
+    assert repository.create_calls[0]["user_id"] == user.id
+    assert repository.create_calls[0]["view_bucket"] == "my_day"
+
+
+def test_post_tasks_rejects_parent_task_from_another_tenant():
+    repository = FakeTaskRepository()
+    client, _user = _client_with_task_repository(repository)
+    other_task = _fake_task(user_id=uuid4(), view_bucket="planned", title="Other tenant")
+    repository.tasks[other_task.id] = other_task
+
+    response = client.post(
+        "/api/tasks",
+        json={"title": "Nested task", "parent_task_id": str(other_task.id)},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Parent task not found"
 
 
 def test_patch_task_updates_only_authenticated_users_task():
@@ -102,15 +181,22 @@ def _client_with_task_repository(repository: FakeTaskRepository):
     return TestClient(app), user
 
 
-def _fake_task(*, user_id: UUID, view_bucket: str, title: str) -> FakeTask:
+def _fake_task(
+    *,
+    user_id: UUID,
+    view_bucket: str,
+    title: str,
+    parent_task_id: UUID | None = None,
+    description: str | None = None,
+) -> FakeTask:
     return FakeTask(
         id=uuid4(),
         user_id=user_id,
         thread_id="thread-1",
         client_node_id=f"node-{uuid4().hex}",
-        parent_task_id=None,
+        parent_task_id=parent_task_id,
         title=title,
-        description=None,
+        description=description,
         node_type="action",
         status="active",
         view_bucket=view_bucket,

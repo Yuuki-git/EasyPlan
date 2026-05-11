@@ -4,7 +4,8 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import update
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
 from app.api.schemas import TaskTree
@@ -175,7 +176,7 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
     now = datetime.now(timezone.utc)
     async with async_session() as session:
         async with session.begin():
-            session.add_all([*tasks, *dependencies])
+            await _persist_tasks_idempotently(session, tasks, dependencies)
             await session.execute(
                 update(AgentThread)
                 .where(
@@ -191,6 +192,159 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 )
             )
     return {"task_persistence_status": "succeeded"}
+
+
+async def _persist_tasks_idempotently(
+    session: Any,
+    tasks: list[Task],
+    dependencies: list[TaskDependency],
+) -> None:
+    tasks_by_generated_id = {task.id: task for task in tasks}
+    client_id_by_generated_id = {
+        task.id: task.client_node_id
+        for task in tasks
+    }
+    task_layers = _group_tasks_by_depth(tasks, tasks_by_generated_id)
+    actual_task_id_by_client_id: dict[str, UUID] = {}
+
+    for depth in sorted(task_layers):
+        rows = [
+            _task_insert_row(
+                task,
+                parent_task_id=_resolve_parent_task_id(
+                    task=task,
+                    actual_task_id_by_client_id=actual_task_id_by_client_id,
+                    client_id_by_generated_id=client_id_by_generated_id,
+                ),
+            )
+            for task in task_layers[depth]
+        ]
+        if rows:
+            await session.execute(
+                insert(Task.__table__)
+                .values(rows)
+                .on_conflict_do_nothing(index_elements=["thread_id", "client_node_id"])
+            )
+        actual_task_id_by_client_id.update(
+            await _load_task_ids_by_client_node_id(
+                session,
+                user_id=tasks[0].user_id,
+                thread_id=tasks[0].thread_id,
+                client_node_ids=[task.client_node_id for task in tasks],
+            )
+        )
+
+    dependency_rows = _dependency_insert_rows(
+        dependencies,
+        actual_task_id_by_client_id=actual_task_id_by_client_id,
+        client_id_by_generated_id=client_id_by_generated_id,
+    )
+    if dependency_rows:
+        await session.execute(
+            insert(TaskDependency.__table__)
+            .values(dependency_rows)
+            .on_conflict_do_nothing(index_elements=["task_id", "depends_on_task_id"])
+        )
+
+
+def _group_tasks_by_depth(
+    tasks: list[Task],
+    tasks_by_generated_id: dict[UUID, Task],
+) -> dict[int, list[Task]]:
+    depth_by_task_id: dict[UUID, int] = {}
+
+    def depth_for(task: Task) -> int:
+        if task.id in depth_by_task_id:
+            return depth_by_task_id[task.id]
+        if task.parent_task_id is None:
+            depth = 0
+        else:
+            parent = tasks_by_generated_id[task.parent_task_id]
+            depth = depth_for(parent) + 1
+        depth_by_task_id[task.id] = depth
+        return depth
+
+    layers: dict[int, list[Task]] = {}
+    for task in tasks:
+        layers.setdefault(depth_for(task), []).append(task)
+    return layers
+
+
+def _resolve_parent_task_id(
+    *,
+    task: Task,
+    actual_task_id_by_client_id: dict[str, UUID],
+    client_id_by_generated_id: dict[UUID, str],
+) -> UUID | None:
+    if task.parent_task_id is None:
+        return None
+    parent_client_id = client_id_by_generated_id[task.parent_task_id]
+    return actual_task_id_by_client_id[parent_client_id]
+
+
+async def _load_task_ids_by_client_node_id(
+    session: Any,
+    *,
+    user_id: UUID,
+    thread_id: str,
+    client_node_ids: list[str],
+) -> dict[str, UUID]:
+    result = await session.execute(
+        select(Task).where(
+            Task.user_id == user_id,
+            Task.thread_id == thread_id,
+            Task.client_node_id.in_(client_node_ids),
+        )
+    )
+    rows = result.scalars().all()
+    return {task.client_node_id: task.id for task in rows}
+
+
+def _task_insert_row(task: Task, *, parent_task_id: UUID | None) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "user_id": task.user_id,
+        "thread_id": task.thread_id,
+        "parent_task_id": parent_task_id,
+        "client_node_id": task.client_node_id,
+        "title": task.title,
+        "description": task.description,
+        "node_type": task.node_type,
+        "status": task.status,
+        "view_bucket": task.view_bucket,
+        "estimated_minutes": task.estimated_minutes,
+        "sort_order": task.sort_order,
+        "ai_generated": task.ai_generated,
+        "user_edited": task.user_edited,
+        "metadata": task.metadata_,
+    }
+
+
+def _dependency_insert_rows(
+    dependencies: list[TaskDependency],
+    *,
+    actual_task_id_by_client_id: dict[str, UUID],
+    client_id_by_generated_id: dict[UUID, str],
+) -> list[dict[str, UUID]]:
+    rows: list[dict[str, UUID]] = []
+    seen: set[tuple[UUID, UUID]] = set()
+    for dependency in dependencies:
+        task_client_id = client_id_by_generated_id[dependency.task_id]
+        depends_on_client_id = client_id_by_generated_id[dependency.depends_on_task_id]
+        task_id = actual_task_id_by_client_id[task_client_id]
+        depends_on_task_id = actual_task_id_by_client_id[depends_on_client_id]
+        pair = (task_id, depends_on_task_id)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        rows.append(
+            {
+                "id": dependency.id,
+                "task_id": task_id,
+                "depends_on_task_id": depends_on_task_id,
+            }
+        )
+    return rows
 
 
 def flatten_task_tree_for_persistence(

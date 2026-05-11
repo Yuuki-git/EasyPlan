@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import AuthUser, get_current_user
-from app.api.schemas import TaskResponse, TaskUpdateRequest, TaskViewBucket
+from app.api.schemas import TaskCreateRequest, TaskResponse, TaskUpdateRequest, TaskViewBucket
 from app.db.session import get_db
 from app.services.task_repository import TaskRepository
 
@@ -29,6 +29,24 @@ async def list_tasks(
         user_id=current_user.id,
         view_bucket=view_bucket,
     )
+
+
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_task(
+    payload: TaskCreateRequest,
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[TaskRepository, Depends(get_task_repository)],
+) -> TaskResponse:
+    task = await repository.create_task_for_user(
+        user_id=current_user.id,
+        title=payload.title,
+        description=payload.description,
+        view_bucket=payload.view_bucket,
+        parent_task_id=payload.parent_task_id,
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent task not found")
+    return task
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

@@ -93,10 +93,10 @@ const Header: React.FC = () => {
         <button 
           onClick={() => setView('board')}
           className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors tracking-wide"
-          title="进入看板"
+          title="进入手帐"
         >
           <LayoutDashboard size={14} />
-          <span>看板</span>
+          <span>我的手帐</span>
         </button>
 
         <button 

@@ -67,6 +67,8 @@ interface AppStore {
   confirmPlan: () => Promise<void>;
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
+  createManualTask: (title: string) => Promise<void>;
+  moveTaskToMyDay: (taskId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -104,6 +106,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       localStorage.setItem('auth_token', token);
     } else {
       localStorage.removeItem('auth_token');
+      // P0 Fix: Force memory cleanup on logout to prevent privacy leaks
+      get().reset();
     }
     set({ token });
   },
@@ -166,6 +170,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         'Authorization': `Bearer ${token}`
       };
       const response = await fetch(`/api/tasks?view_bucket=${targetBucket}`, { headers });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const tasks = await response.json();
       set({ boardTasks: tasks });
@@ -190,6 +202,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         body: JSON.stringify({ status })
       });
       
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to update task status');
       
       const updatedTask = await response.json();
@@ -201,6 +220,83 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (err) {
       console.error("Update task status failed", err);
       throw err; // allow component to revert visual state
+    }
+  },
+
+  createManualTask: async (title: string) => {
+    const { token, currentViewBucket, boardTasks } = get();
+    if (!token) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title,
+          node_type: 'action',
+          view_bucket: currentViewBucket,
+          status: 'active'
+        })
+      });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to create task');
+      
+      const newTask = await response.json();
+      
+      // Optimistically append to boardTasks to save a network request
+      set({
+        boardTasks: [...(boardTasks || []), newTask]
+      });
+    } catch (err) {
+      console.error("Create manual task failed", err);
+      throw err;
+    }
+  },
+
+  moveTaskToMyDay: async (taskId: string) => {
+    const { token, boardTasks } = get();
+    if (!token) return;
+
+    // Optimistically remove from current planned view immediately for visual smoothness
+    set({
+      boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ view_bucket: 'my_day' })
+      });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to move task to my day');
+    } catch (err) {
+      console.error("Move task to my day failed", err);
+      // Revert if failed by refetching
+      get().fetchTasks();
+      throw err;
     }
   },
 

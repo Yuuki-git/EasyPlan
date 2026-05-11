@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.2.0"
+    "version": "1.2.2"
   },
   "paths": {
     "/health": {
@@ -500,6 +500,63 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create Task",
+        "operationId": "create_task_api_tasks_post",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/tasks/{task_id}": {
@@ -806,6 +863,56 @@
           "password"
         ],
         "title": "RegisterRequest"
+      },
+      "TaskCreateRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "view_bucket": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "my_day",
+              "backlog"
+            ],
+            "title": "View Bucket",
+            "default": "my_day"
+          },
+          "parent_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Task Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "TaskCreateRequest"
       },
       "TaskNode": {
         "properties": {

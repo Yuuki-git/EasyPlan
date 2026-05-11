@@ -20,6 +20,7 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "post" in schema["paths"]["/api/threads/{thread_id}/confirm"]
     assert "/api/tasks" in schema["paths"]
     assert "get" in schema["paths"]["/api/tasks"]
+    assert "post" in schema["paths"]["/api/tasks"]
     assert "/api/tasks/{task_id}" in schema["paths"]
     assert "patch" in schema["paths"]["/api/tasks/{task_id}"]
 
@@ -57,6 +58,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
     tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
+    task_create_params = _parameter_names(schema["paths"]["/api/tasks"]["post"])
     task_patch_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["patch"])
 
     assert "Authorization" in intent_params
@@ -64,6 +66,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     assert "Authorization" in events_params
     assert "Authorization" in confirm_params
     assert "Authorization" in tasks_params
+    assert "Authorization" in task_create_params
     assert "Authorization" in task_patch_params
 
 
@@ -73,6 +76,7 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     schema = app.openapi()
 
     task_response = schema["components"]["schemas"]["TaskResponse"]
+    task_create = schema["components"]["schemas"]["TaskCreateRequest"]
     task_update = schema["components"]["schemas"]["TaskUpdateRequest"]
     task_properties = task_response["properties"]
 
@@ -80,6 +84,10 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     assert "estimated_minutes" in task_properties
     assert "parent_task_id" in task_properties
     assert "client_node_id" in task_properties
+    assert {"title", "description", "view_bucket", "parent_task_id"}.issubset(
+        task_create["properties"]
+    )
+    assert task_create["properties"]["view_bucket"]["default"] == "my_day"
     assert "view_bucket" in task_update["properties"]
 
 
