@@ -106,6 +106,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       localStorage.setItem('auth_token', token);
     } else {
       localStorage.removeItem('auth_token');
+      // P0 Fix: Force memory cleanup on logout to prevent privacy leaks
+      get().reset();
     }
     set({ token });
   },
@@ -168,6 +170,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         'Authorization': `Bearer ${token}`
       };
       const response = await fetch(`/api/tasks?view_bucket=${targetBucket}`, { headers });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const tasks = await response.json();
       set({ boardTasks: tasks });
@@ -192,6 +202,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         body: JSON.stringify({ status })
       });
       
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to update task status');
       
       const updatedTask = await response.json();
@@ -226,6 +243,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         })
       });
       
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to create task');
       
       const newTask = await response.json();
@@ -260,6 +284,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         body: JSON.stringify({ view_bucket: 'my_day' })
       });
       
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to move task to my day');
     } catch (err) {
       console.error("Move task to my day failed", err);

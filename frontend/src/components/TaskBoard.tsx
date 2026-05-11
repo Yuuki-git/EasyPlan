@@ -16,7 +16,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
     >
       <div className="w-[240px] p-4 flex flex-col h-full">
         <div className="flex items-center justify-between mb-8">
-          <span className="font-medium text-foreground/80 tracking-wide px-2">Views</span>
+          <span className="font-medium text-foreground/80 tracking-wide px-2">我的手帐</span>
         </div>
         
         <div className="space-y-1 flex-1">
@@ -54,18 +54,49 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const { updateTaskStatus, moveTaskToMyDay, currentViewBucket } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
-  const isCompleted = node.status === 'completed';
+  
+  const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    setLocalCompleted(node.status === 'completed');
+  }, [node.status]);
+
+  React.useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isGroup) return;
     
-    // Optistic update handled by store, but we call the api here
-    const newStatus = isCompleted ? 'active' : 'completed';
-    try {
-      await updateTaskStatus(node.id, newStatus);
-    } catch (err) {
-      // Error is handled/logged in store
+    // Prevent double clicking during ritual
+    if (timeoutRef.current) return;
+
+    if (!localCompleted) {
+      // Complete with ritual delay
+      setLocalCompleted(true);
+      timeoutRef.current = setTimeout(async () => {
+        try {
+          await updateTaskStatus(node.id, 'completed');
+        } catch (err) {
+          setLocalCompleted(false);
+        } finally {
+          timeoutRef.current = null;
+        }
+      }, 2000);
+    } else {
+      // Uncheck instantly
+      setLocalCompleted(false);
+      try {
+        await updateTaskStatus(node.id, 'active');
+      } catch (err) {
+        setLocalCompleted(true);
+      }
     }
   };
 
@@ -106,16 +137,23 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
       className={clsx(
         "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
-        isCompleted 
+        localCompleted 
           ? "bg-muted/10 border-transparent" 
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
+        timeoutRef.current && "pointer-events-none",
         depth > 0 && "ml-4"
       )}
       onClick={handleToggle}
     >
       <div className="mt-0.5 shrink-0">
-        {isCompleted ? (
-          <CheckCircle2 size={18} className="text-green-500" />
+        {localCompleted ? (
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          >
+            <CheckCircle2 size={18} className="text-green-500" />
+          </motion.div>
         ) : (
           <Circle size={18} className="text-muted-foreground/30 group-hover:text-foreground/50 transition-colors" />
         )}
@@ -123,19 +161,19 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       <div className="flex-1 pr-8">
         <h4 className={clsx(
           "text-base transition-colors",
-          isCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
+          localCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
         )}>
           {node.title}
         </h4>
         {node.description && (
           <p className={clsx(
             "text-xs mt-1 transition-colors",
-            isCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
+            localCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
           )}>
             {node.description}
           </p>
         )}
-        {!isCompleted && node.estimated_minutes != null && (
+        {!localCompleted && node.estimated_minutes != null && (
           <div className="flex items-center gap-2 mt-2">
             <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/20 px-2 py-0.5 rounded-full">
               {node.estimated_minutes} min
@@ -144,7 +182,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         )}
       </div>
       
-      {currentViewBucket === 'planned' && !isCompleted && (
+      {currentViewBucket === 'planned' && !localCompleted && (
         <button
           onClick={handleMoveToMyDay}
           className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md"
@@ -232,8 +270,10 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks } = useAppStore();
+  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  
+  const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
 
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;
@@ -331,9 +371,13 @@ export const TaskBoard: React.FC = () => {
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
   const handleNewPlan = () => {
-    setView('input');
-    useAppStore.getState().setAppState('INITIAL');
-    setTimeout(() => reset(), 500);
+    if (isGenerating) {
+      setView('input');
+    } else {
+      setView('input');
+      useAppStore.getState().setAppState('INITIAL');
+      setTimeout(() => reset(), 500);
+    }
   };
 
   return (
@@ -365,7 +409,7 @@ export const TaskBoard: React.FC = () => {
               onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
-              新计划
+              {isGenerating ? '返回当前意图' : '新计划'}
             </button>
           </div>
         </header>
@@ -376,7 +420,7 @@ export const TaskBoard: React.FC = () => {
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
                 <p className="text-muted-foreground/60 text-lg">
                   {currentViewBucket === 'planned' 
-                    ? "您的计划库空空如也。点击右上角新建意图，让 AI 为您分忧。"
+                    ? "您的专属空间空空如也。点击右上角，让 AI 为您分忧。"
                     : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
                 </p>
                 {currentViewBucket === 'planned' && (
@@ -384,7 +428,7 @@ export const TaskBoard: React.FC = () => {
                     onClick={handleNewPlan}
                     className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
                   >
-                    新建意图
+                    {isGenerating ? '返回当前意图' : '新建意图'}
                   </button>
                 )}
               </div>

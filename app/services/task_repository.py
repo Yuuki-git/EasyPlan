@@ -34,61 +34,62 @@ class TaskRepository:
         view_bucket: str,
         parent_task_id: UUID | None,
     ) -> Task | None:
-        parent_task: Task | None = None
-        if parent_task_id is not None:
-            result = await self.session.execute(
-                select(Task).where(
-                    Task.user_id == user_id,
-                    Task.id == parent_task_id,
+        async with self.session.begin():
+            parent_task: Task | None = None
+            if parent_task_id is not None:
+                result = await self.session.execute(
+                    select(Task).where(
+                        Task.user_id == user_id,
+                        Task.id == parent_task_id,
+                    )
                 )
-            )
-            parent_task = result.scalar_one_or_none()
+                parent_task = result.scalar_one_or_none()
+                if parent_task is None:
+                    return None
+
+            thread_id = parent_task.thread_id if parent_task is not None else f"manual_{uuid4().hex}"
             if parent_task is None:
-                return None
-
-        thread_id = parent_task.thread_id if parent_task is not None else f"manual_{uuid4().hex}"
-        if parent_task is None:
-            self.session.add(
-                AgentThread(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intent_text=title,
-                    status="completed",
-                    current_node="manual_task",
-                    next_nodes=[],
-                    interrupt_payload=None,
-                    latest_checkpoint_id=None,
-                    task_tree=None,
-                    error_code=None,
-                    error_message=None,
-                    expires_at=None,
-                    interrupted_at=None,
-                    completed_at=None,
+                self.session.add(
+                    AgentThread(
+                        user_id=user_id,
+                        thread_id=thread_id,
+                        intent_text=title,
+                        status="completed",
+                        current_node="manual_task",
+                        next_nodes=[],
+                        interrupt_payload=None,
+                        latest_checkpoint_id=None,
+                        task_tree=None,
+                        error_code=None,
+                        error_message=None,
+                        expires_at=None,
+                        interrupted_at=None,
+                        completed_at=None,
+                    )
                 )
-            )
 
-        task = Task(
-            user_id=user_id,
-            thread_id=thread_id,
-            parent_task_id=parent_task_id,
-            client_node_id=f"manual_{uuid4().hex}",
-            title=title,
-            description=description,
-            node_type="action",
-            status="active",
-            view_bucket=view_bucket,
-            estimated_minutes=None,
-            sort_order=await self._next_sort_order(
+            task = Task(
                 user_id=user_id,
-                view_bucket=view_bucket,
+                thread_id=thread_id,
                 parent_task_id=parent_task_id,
-            ),
-            ai_generated=False,
-            user_edited=True,
-            metadata_={"source": "manual"},
-        )
-        self.session.add(task)
-        await self.session.commit()
+                client_node_id=f"manual_{uuid4().hex}",
+                title=title,
+                description=description,
+                node_type="action",
+                status="active",
+                view_bucket=view_bucket,
+                estimated_minutes=None,
+                sort_order=await self._next_sort_order(
+                    user_id=user_id,
+                    view_bucket=view_bucket,
+                    parent_task_id=parent_task_id,
+                ),
+                ai_generated=False,
+                user_edited=True,
+                metadata_={"source": "manual"},
+            )
+            self.session.add(task)
+
         await self.session.refresh(task)
         return task
 

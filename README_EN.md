@@ -16,7 +16,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Maintain Human Agency**: We stick to "Human-in-the-Loop (HITL)" design. AI handles the tedious planning; you retain ultimate control.
 - **Seamless Closed-Loop**：Say goodbye to clunky external syncing. A built-in "My Day" and "Planned" task board ensures your data is private, lighting-fast, and distraction-free.
 
-## ✨ Features (v1.2.1)
+## ✨ Features (v1.2.2)
 
 - **Spotlight Capture**: A single dynamic input box for fuzzy natural language goal entry.
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.

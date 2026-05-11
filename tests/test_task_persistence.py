@@ -1,6 +1,9 @@
 import asyncio
 from uuid import UUID
 
+import pytest
+from sqlalchemy.sql import Select, Update
+
 from app.agents.nodes import flatten_task_tree_for_persistence, persist_internal_tasks_node
 from app.models.task import Task, TaskDependency
 
@@ -90,22 +93,79 @@ def test_persist_internal_tasks_node_inserts_tasks_dependencies_and_marks_thread
         )
     )
 
-    tasks = [item for item in session.added if isinstance(item, Task)]
-    dependencies = [item for item in session.added if isinstance(item, TaskDependency)]
-
     assert result == {"task_persistence_status": "succeeded"}
     assert session.begin_count == 1
-    assert len(tasks) == 3
-    assert len(dependencies) == 1
+    assert session.add_all_calls == 0
+    assert session.task_rows_inserted == 3
+    assert session.dependency_rows_inserted == 1
+    assert len(session.conflict_safe_inserts) == 3
+    assert all("ON CONFLICT" in statement for statement in session.conflict_safe_inserts)
+    assert any("thread_id, client_node_id" in statement for statement in session.conflict_safe_inserts)
+    assert any("task_id, depends_on_task_id" in statement for statement in session.conflict_safe_inserts)
     assert session.executed_updates
     compiled_params = session.executed_updates[0].compile().params
     assert "succeeded" in compiled_params.values()
 
 
+def test_persist_internal_tasks_node_does_not_use_add_all(monkeypatch):
+    session = FakePersistSession(raise_on_add_all=True)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    result = asyncio.run(
+        persist_internal_tasks_node(
+            {
+                "user_id": USER_ID,
+                "thread_id": "thread-1",
+                "task_tree": valid_tree_with_hierarchy_and_dependency(),
+            }
+        )
+    )
+
+    assert result == {"task_persistence_status": "succeeded"}
+    assert session.add_all_calls == 0
+
+
+def test_persist_internal_tasks_node_can_retry_without_duplicate_rows(monkeypatch):
+    session = FakePersistSession()
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+    state = {
+        "user_id": USER_ID,
+        "thread_id": "thread-1",
+        "task_tree": valid_tree_with_hierarchy_and_dependency(),
+    }
+
+    first_result = asyncio.run(persist_internal_tasks_node(state))
+    second_result = asyncio.run(persist_internal_tasks_node(state))
+
+    assert first_result == {"task_persistence_status": "succeeded"}
+    assert second_result == {"task_persistence_status": "succeeded"}
+    assert session.add_all_calls == 0
+    assert session.task_rows_inserted == 3
+    assert session.dependency_rows_inserted == 1
+
+
 class FakePersistSession:
-    def __init__(self) -> None:
-        self.added = []
+    def __init__(self, *, raise_on_add_all: bool = False) -> None:
+        self.raise_on_add_all = raise_on_add_all
+        self.add_all_calls = 0
         self.executed_updates = []
+        self.conflict_safe_inserts = []
+        self.persisted_tasks: dict[str, Task] = {}
+        self.persisted_dependency_pairs: set[tuple[UUID, UUID]] = set()
+        self.task_rows_inserted = 0
+        self.dependency_rows_inserted = 0
         self.begin_count = 0
 
     def begin(self):
@@ -113,10 +173,46 @@ class FakePersistSession:
         return FakeTransaction()
 
     def add_all(self, items):
-        self.added.extend(items)
+        self.add_all_calls += 1
+        if self.raise_on_add_all:
+            raise AssertionError("persist_internal_tasks_node must use conflict-safe upserts")
 
     async def execute(self, statement):
-        self.executed_updates.append(statement)
+        if isinstance(statement, Select):
+            return FakeScalarResult(list(self.persisted_tasks.values()))
+        if isinstance(statement, Update):
+            self.executed_updates.append(statement)
+            return None
+        sql = _compile_postgresql(statement)
+        if "ON CONFLICT" in sql:
+            self.conflict_safe_inserts.append(sql)
+        rows = list(getattr(statement, "_multi_values", [()])[0])
+        if "INSERT INTO tasks " in sql:
+            for row in rows:
+                row = dict(row)
+                row["metadata_"] = row.pop("metadata")
+                task = Task(**row)
+                if task.client_node_id not in self.persisted_tasks:
+                    self.persisted_tasks[task.client_node_id] = task
+                    self.task_rows_inserted += 1
+        elif "INSERT INTO task_dependencies " in sql:
+            for row in rows:
+                pair = (row["task_id"], row["depends_on_task_id"])
+                if pair not in self.persisted_dependency_pairs:
+                    self.persisted_dependency_pairs.add(pair)
+                    self.dependency_rows_inserted += 1
+        return None
+
+
+class FakeScalarResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
 
 
 class FakeSessionContext:
@@ -136,3 +232,12 @@ class FakeTransaction:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+def _compile_postgresql(statement) -> str:
+    from sqlalchemy.dialects import postgresql
+
+    try:
+        return str(statement.compile(dialect=postgresql.dialect()))
+    except Exception as exc:
+        pytest.fail(f"statement did not compile for PostgreSQL: {exc}")
