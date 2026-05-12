@@ -1,0 +1,4 @@
+{"input": "我想明年考过日语 N3，现在零基础", "expected_intent_type": "long_term_growth", "expected_horizon": "72h", "must_have_icebreaker": true, "max_nodes": 12, "description": "长周期目标，应只拆解启动阶段（如下单教材、测词汇量），第一步必须是小于5分钟的破冰动作。"}
+{"input": "今天下午4点前必须把这份关于AI架构的商业计划书写完", "expected_intent_type": "short_term_delivery", "expected_horizon": "hours", "must_have_icebreaker": false, "max_nodes": 8, "description": "短期交付，必须采用 Time-boxing 策略，绝对不能出现'打开电脑'这种低智破冰动作，应直接拆解核心模块。"}
+{"input": "下班顺便去买点番茄和鸡蛋，还要去顺丰拿两个快递，回家记得交一下水费", "expected_intent_type": "context_checklist", "expected_horizon": "hours", "must_have_icebreaker": false, "max_nodes": 5, "description": "情境清单，无需复杂嵌套，直接按地理位置或工具（手机/路上）聚合成简单的 Checklist。"}
+{"input": "我最近觉得工作很迷茫，不知道是不是应该辞职转行去做自媒体", "expected_intent_type": "exploration_decision", "expected_horizon": "days", "must_have_icebreaker": true, "max_nodes": 6, "description": "探索决策型，不要强行生成具体的转行计划，而应生成帮助澄清信息的小实验（如列出核心焦虑点、找人聊聊）。"}

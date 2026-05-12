@@ -120,4 +120,3 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📄 License
 Distributed under the **MIT License**.
- the **MIT License**.
