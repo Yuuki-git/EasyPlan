@@ -249,8 +249,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
         set({ showAuthModal: true });
-        // Revert optimistic update
-        set({ boardTasks: originalTasks });
         return;
       }
 
@@ -286,9 +284,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers,
         body: JSON.stringify({
           title,
-          node_type: 'action',
-          view_bucket: currentViewBucket,
-          status: 'active'
+          view_bucket: currentViewBucket
         })
       });
       
