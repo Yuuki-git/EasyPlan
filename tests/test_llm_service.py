@@ -194,6 +194,18 @@ def test_deepseek_planner_uses_json_mode_and_pydantic_validation():
     assert usage_sink.records[0].output_tokens == 43
 
 
+def test_deepseek_planner_accepts_zero_estimate_for_group_container():
+    task_tree = _valid_task_tree()
+    task_tree["root"]["estimated_minutes"] = 0
+    fake_deepseek = FakeChatClient(json.dumps(task_tree))
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["root"]["estimated_minutes"] == 0
+    assert result["root"]["children"][0]["estimated_minutes"] == 2
+
+
 def test_deepseek_planner_rejects_json_that_does_not_match_task_tree():
     fake_deepseek = FakeChatClient(json.dumps({"root": {"title": "missing fields"}}))
     planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")

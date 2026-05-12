@@ -18,10 +18,16 @@ class TaskNode(BaseModel):
     title: str = Field(..., min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
     verb: str = Field(..., min_length=1)
-    estimated_minutes: int = Field(..., ge=1, le=43200)
+    estimated_minutes: int = Field(..., ge=0, le=43200)
     node_type: Literal["group", "action"]
     depends_on: list[str] = Field(default_factory=list)
     children: list["TaskNode"] = Field(default_factory=list, max_length=MAX_TASK_TREE_SIBLINGS)
+
+    @model_validator(mode="after")
+    def validate_action_estimate(self) -> "TaskNode":
+        if self.node_type == "action" and self.estimated_minutes < 1:
+            raise ValueError("action estimated_minutes must be greater than or equal to 1")
+        return self
 
 
 class TaskTree(BaseModel):
