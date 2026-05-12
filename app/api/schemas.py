@@ -69,6 +69,23 @@ class IntentCreateResponse(BaseModel):
     events_url: str
 
 
+IntentType = Literal[
+    "long_term_growth",
+    "short_term_delivery",
+    "context_checklist",
+    "exploration_decision",
+]
+TimeHorizon = Literal["minutes", "hours", "days", "weeks", "months"]
+
+
+class IntentProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent_type: IntentType
+    time_horizon: TimeHorizon
+    confidence_score: float = Field(..., ge=0.0, le=1.0)
+
+
 class ConfirmationAction(str, Enum):
     approve = "approve"
     edit = "edit"

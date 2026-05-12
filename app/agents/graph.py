@@ -6,9 +6,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.agents.nodes import (
+    IntentProfilerClient,
     PlannerClient,
+    RuleBasedIntentProfilerClient,
     RuleBasedPlannerClient,
     failed_validation_node,
+    intent_profiler_node_factory,
     persist_internal_tasks_node,
     planner_node_factory,
     route_after_validation,
@@ -78,19 +81,27 @@ def route_after_human_review(state: AgentState) -> str:
 def build_task_graph(
     *,
     planner: PlannerClient | None = None,
+    intent_profiler: IntentProfilerClient | None = None,
     checkpointer: TenantAwareMemorySaver | None = None,
 ):
     planner_client = planner or RuleBasedPlannerClient()
+    intent_profiler_client = intent_profiler or (
+        planner_client
+        if hasattr(planner_client, "profile_intent")
+        else RuleBasedIntentProfilerClient()
+    )
     checkpoint_saver = checkpointer or TenantAwareMemorySaver()
 
     graph = StateGraph(AgentState)
+    graph.add_node("intent_profiler", intent_profiler_node_factory(intent_profiler_client))
     graph.add_node("planner", planner_node_factory(planner_client))
     graph.add_node("validator", task_tree_validator_node)
     graph.add_node("human_review", human_review_node)
     graph.add_node("persist_tasks", persist_internal_tasks_node)
     graph.add_node("failed_validation", failed_validation_node)
 
-    graph.add_edge(START, "planner")
+    graph.add_edge(START, "intent_profiler")
+    graph.add_edge("intent_profiler", "planner")
     graph.add_edge("planner", "validator")
     graph.add_conditional_edges(
         "validator",

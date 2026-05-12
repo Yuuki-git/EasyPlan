@@ -67,6 +67,7 @@ interface AppStore {
   confirmPlan: () => Promise<void>;
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
+  updateTaskDetails: (taskId: string, updates: { title?: string; estimated_minutes?: number | null }) => Promise<void>;
   createManualTask: (title: string) => Promise<void>;
   moveTaskToMyDay: (taskId: string) => Promise<void>;
 }
@@ -220,6 +221,54 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (err) {
       console.error("Update task status failed", err);
       throw err; // allow component to revert visual state
+    }
+  },
+
+  updateTaskDetails: async (taskId: string, updates: { title?: string; estimated_minutes?: number | null }) => {
+    const { token, boardTasks } = get();
+    if (!token) return;
+
+    // Optimistic UI sync
+    const originalTasks = boardTasks ? [...boardTasks] : [];
+    set({
+      boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, ...updates } : t)
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(updates)
+      });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        // Revert optimistic update
+        set({ boardTasks: originalTasks });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to update task details');
+      }
+      
+      const updatedTask = await response.json();
+      
+      // Update with server truth
+      set({
+        boardTasks: (get().boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
+      });
+    } catch (err) {
+      console.error("Update task details failed", err);
+      // Revert optimistic update on error
+      set({ boardTasks: originalTasks });
+      throw err;
     }
   },
 

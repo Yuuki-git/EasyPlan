@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from app.api.schemas import TaskTree
+from app.api.schemas import IntentProfile, TaskTree
 
 
 DEFAULT_OPENAI_PLANNER_MODEL = "gpt-4o-2024-08-06"
@@ -188,6 +188,44 @@ class OpenAIPlannerClient:
         )
         return task_tree.model_dump(mode="json")
 
+    async def profile_intent(
+        self,
+        intent_text: str,
+        reasoning_sink: ReasoningSink | None = None,
+        usage_sink: UsageSink | None = None,
+    ) -> dict[str, Any]:
+        response = await self._openai_client.responses.parse(
+            model=self.model,
+            input=[
+                {
+                    "role": "system",
+                    "content": _intent_profile_system_prompt("OpenAI"),
+                },
+                {"role": "user", "content": intent_text},
+            ],
+            text_format=IntentProfile,
+            temperature=0.0,
+            store=False,
+        )
+        parsed = getattr(response, "output_parsed", None)
+        if parsed is None:
+            raise LLMStructuredOutputError("OpenAI response did not include intent profile")
+
+        try:
+            intent_profile = parsed if isinstance(parsed, IntentProfile) else IntentProfile.model_validate(parsed)
+        except ValidationError as exc:
+            raise LLMStructuredOutputError(str(exc)) from exc
+
+        await (usage_sink or self.usage_sink).record(
+            _usage_record(
+                provider="openai",
+                model=self.model,
+                operation="planner.profile_intent",
+                usage=getattr(response, "usage", None),
+            )
+        )
+        return intent_profile.model_dump(mode="json")
+
     @property
     def _openai_client(self) -> Any:
         if self._client is None:
@@ -268,6 +306,36 @@ class DeepSeekPlannerClient:
             reasoning_sink,
         )
         return task_tree.model_dump(mode="json")
+
+    async def profile_intent(
+        self,
+        intent_text: str,
+        reasoning_sink: ReasoningSink | None = None,
+        usage_sink: UsageSink | None = None,
+    ) -> dict[str, Any]:
+        response = await self._deepseek_client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": _intent_profile_system_prompt("DeepSeek"),
+                },
+                {"role": "user", "content": intent_text},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=int(os.getenv("EASYPLAN_DEEPSEEK_PROFILE_MAX_TOKENS", "512")),
+        )
+        intent_profile = _parse_intent_profile_response(response, "DeepSeek")
+        await (usage_sink or self.usage_sink).record(
+            _usage_record(
+                provider="deepseek",
+                model=self.model,
+                operation="planner.profile_intent",
+                usage=getattr(response, "usage", None),
+            )
+        )
+        return intent_profile.model_dump(mode="json")
 
     @property
     def _deepseek_client(self) -> Any:
@@ -353,6 +421,36 @@ class XiaomiMiMoPlannerClient:
         )
         return task_tree.model_dump(mode="json")
 
+    async def profile_intent(
+        self,
+        intent_text: str,
+        reasoning_sink: ReasoningSink | None = None,
+        usage_sink: UsageSink | None = None,
+    ) -> dict[str, Any]:
+        response = await self._mimo_client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": _intent_profile_system_prompt("Xiaomi MiMo"),
+                },
+                {"role": "user", "content": intent_text},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=int(os.getenv("EASYPLAN_XIAOMI_MIMO_PROFILE_MAX_TOKENS", "512")),
+        )
+        intent_profile = _parse_intent_profile_response(response, "Xiaomi MiMo")
+        await (usage_sink or self.usage_sink).record(
+            _usage_record(
+                provider="xiaomi",
+                model=self.model,
+                operation="planner.profile_intent",
+                usage=getattr(response, "usage", None),
+            )
+        )
+        return intent_profile.model_dump(mode="json")
+
     @property
     def _mimo_client(self) -> Any:
         if self._client is None:
@@ -421,6 +519,32 @@ def _first_message_content(response: Any) -> str | None:
 
 def _deepseek_system_prompt() -> str:
     return _json_mode_system_prompt("DeepSeek")
+
+
+def _parse_intent_profile_response(response: Any, provider_name: str) -> IntentProfile:
+    content = _first_message_content(response)
+    if not content:
+        raise LLMStructuredOutputError(f"{provider_name} response did not include intent profile JSON content")
+
+    try:
+        parsed_json = json.loads(content)
+        return IntentProfile.model_validate(parsed_json)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise LLMStructuredOutputError(str(exc)) from exc
+
+
+def _intent_profile_system_prompt(provider_name: str) -> str:
+    schema = json.dumps(IntentProfile.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+    return (
+        f"You are EasyPlan's intent profiler running on {provider_name}. Output valid json only. "
+        "Classify the user's intent before planning. The json must match this Pydantic "
+        "IntentProfile schema exactly. intent_type must be one of long_term_growth, "
+        "short_term_delivery, context_checklist, exploration_decision. time_horizon must be "
+        "one of minutes, hours, days, weeks, months. confidence_score must be between 0 and 1. "
+        "Do not include markdown, commentary, hidden reasoning, or extra keys. "
+        f"IntentProfile JSON Schema: {schema} "
+        f"{LANGUAGE_MATCH_INSTRUCTION}"
+    )
 
 
 def _json_mode_system_prompt(provider_name: str) -> str:
