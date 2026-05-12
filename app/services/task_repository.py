@@ -34,7 +34,7 @@ class TaskRepository:
         view_bucket: str,
         parent_task_id: UUID | None,
     ) -> Task | None:
-        async with self.session.begin():
+        try:
             parent_task: Task | None = None
             if parent_task_id is not None:
                 result = await self.session.execute(
@@ -45,6 +45,7 @@ class TaskRepository:
                 )
                 parent_task = result.scalar_one_or_none()
                 if parent_task is None:
+                    await self.session.rollback()
                     return None
 
             thread_id = parent_task.thread_id if parent_task is not None else f"manual_{uuid4().hex}"
@@ -89,6 +90,10 @@ class TaskRepository:
                 metadata_={"source": "manual"},
             )
             self.session.add(task)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
         await self.session.refresh(task)
         return task

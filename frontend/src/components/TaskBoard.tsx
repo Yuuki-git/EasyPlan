@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
 
@@ -278,14 +278,28 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         )}
       </div>
       
-      {currentViewBucket === 'planned' && !localCompleted && !isEditing && (
-        <button
-          onClick={handleMoveToMyDay}
-          className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto"
-          title="加入我的一天"
-        >
-          <Sun size={16} />
-        </button>
+      {!localCompleted && !isEditing && (
+        <div className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsEditing(true);
+            }}
+            className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md pointer-events-auto transition-colors"
+            title="编辑"
+          >
+            <Pencil size={16} />
+          </button>
+          {currentViewBucket === 'planned' && (
+            <button
+              onClick={handleMoveToMyDay}
+              className="p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto transition-colors"
+              title="加入我的一天"
+            >
+              <Sun size={16} />
+            </button>
+          )}
+        </div>
       )}
     </motion.div>
   );

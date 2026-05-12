@@ -9,7 +9,7 @@ from app.models.thread import AgentThread
 from app.services.task_repository import TaskRepository
 
 
-def test_create_task_for_user_wraps_manual_thread_and_task_in_one_transaction():
+def test_create_task_for_user_commits_manual_thread_and_task_together():
     session = FakeTaskSession()
     repository = TaskRepository(session)
     user_id = uuid4()
@@ -24,11 +24,11 @@ def test_create_task_for_user_wraps_manual_thread_and_task_in_one_transaction():
         )
     )
 
-    assert session.begin_count == 1
-    assert session.commit_count == 0
+    assert session.begin_count == 0
+    assert session.commit_count == 1
+    assert session.rollback_count == 0
     assert [type(item) for item in session.added] == [AgentThread, Task]
     assert task in session.refreshed
-    assert session.transaction_exit_exc_type is None
 
 
 def test_create_task_for_user_rolls_back_manual_thread_when_task_add_fails():
@@ -46,9 +46,9 @@ def test_create_task_for_user_rolls_back_manual_thread_when_task_add_fails():
             )
         )
 
-    assert session.begin_count == 1
+    assert session.begin_count == 0
     assert session.commit_count == 0
-    assert session.transaction_exit_exc_type is RuntimeError
+    assert session.rollback_count == 1
 
 
 class FakeTaskSession:
@@ -58,6 +58,7 @@ class FakeTaskSession:
         self.refreshed = []
         self.begin_count = 0
         self.commit_count = 0
+        self.rollback_count = 0
         self.transaction_exit_exc_type = None
 
     def begin(self):
@@ -75,6 +76,9 @@ class FakeTaskSession:
 
     async def commit(self):
         self.commit_count += 1
+
+    async def rollback(self):
+        self.rollback_count += 1
 
     async def refresh(self, item):
         self.refreshed.append(item)
