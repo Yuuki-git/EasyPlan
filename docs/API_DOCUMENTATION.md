@@ -302,7 +302,8 @@ X-User-Timezone: Asia/Shanghai
 - 总节点数上限：`200`
 - 单节点 `children` 最大数量：`20`
 - `estimated_minutes` 的结构化 schema 范围为 `1..43200`，允许 group/root 表达总时长
-- `action.estimated_minutes` 必须 `< 5`；该业务规则只在 LangGraph `task_tree_validator_node` 中执行，并触发自动 replan
+- 不再存在全局 `<5 分钟` 规则；`task_tree_validator_node` 会根据 `IntentProfile.intent_type` 做策略校验
+- `long_term_growth` 的首个 action 应是低门槛破冰动作，且计划必须限制在最近 `72h` 的 Phase 1
 - `depends_on` 只能引用同一棵树内存在的 `client_node_id`
 - 不允许依赖环
 
@@ -385,17 +386,38 @@ Query：
 
 支持行内编辑任务标题、描述、状态、预计时间、视图归属和排序。所有更新必须绑定 `user_id + task_id`；找不到当前用户任务时返回 `404`。
 
+字段语义：
+
+| 字段 | 说明 |
+| --- | --- |
+| `title` | 可选；未传表示不改；显式 `null` 返回 `422` |
+| `description` | 可选；未传表示不改；显式 `null` 表示清空描述 |
+| `status` | 可选；未传表示不改；显式 `null` 返回 `422` |
+| `view_bucket` | 可选；未传表示不改；显式 `null` 返回 `422` |
+| `estimated_minutes` | 可选；未传表示不改；显式 `null` 表示清空预计时间 |
+| `sort_order` | 可选；未传表示不改；显式 `null` 返回 `422` |
+
 请求：
 
 ```json
 {
   "title": "整理论文提纲",
+  "description": null,
   "view_bucket": "my_day",
-  "estimated_minutes": 4
+  "estimated_minutes": null
 }
 ```
 
-响应为更新后的 `TaskResponse`。
+响应为更新后的 `TaskResponse`。`description: null` 与 `estimated_minutes: null` 表示清空对应字段；未传字段保持不变。
+
+### DELETE `/api/tasks/{task_id}`
+
+硬删除当前用户的一条原生任务。后端使用 `user_id + task_id` 作为删除条件，防止 IDOR 越权删除；找不到当前用户任务时统一返回 `404`。
+
+响应：
+
+- `204 No Content`：删除成功，无响应体
+- `404 Not Found`：任务不存在，或任务不属于当前登录用户
 
 ## 9. v1.2 后续接口草案
 
@@ -413,7 +435,7 @@ Fog of War 草案接口。以已完成阶段任务为上下文，重新进入 pl
 - `GET /api/threads/{thread_id}/events` 已接入 thread 归属校验、增量重播和 Async Queue 长连接推送。
 - `POST /api/threads/{thread_id}/confirm` 已接入 HITL resume，支持 `refine` 自然语言反馈回到 planner。
 - `approve` 已接入 `persist_internal_tasks_node`，会把 `TaskTree` 展开写入 `tasks` 与 `task_dependencies`。
-- `GET /api/tasks`、`POST /api/tasks` 和 `PATCH /api/tasks/{task_id}` 已接入 JWT 与 `user_id` 隔离。
+- `GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/{task_id}` 和 `DELETE /api/tasks/{task_id}` 已接入 JWT 与 `user_id` 隔离。
 - SSE 错误事件为 `agent_error`。
 - 全局异常处理已接入，500 响应不会暴露 traceback、SQL、token 或内部实现细节。
-- 下一步是补齐 `POST /api/tasks/{task_id}/complete`、My Day/Planned 索引策略和 Fog of War 阶段解锁。
+- Fog of War Lite 的“生成下一阶段计划”前端会复用 `POST /api/intents` 创建新的 Agent thread；后端仍通过 HITL 确认后落库。

@@ -45,7 +45,7 @@
 *   **划除的仪式感 (The Completion Ritual)**：任务勾选后触发 Framer Motion 弹簧动画，停留 2 秒后再伴随渐变滑出，延缓多巴胺释放。
 *   **深水区排雷 (Security & DB Integrity)**：建立全局 401 鉴权熔断网防范 Token 过期；在 `task_repository.py` 严格引入 DDD 事务隔离 (`session.begin()`) 杜绝高并发脏写；使用 `isMounted` 并发锁和退场延时清理解决单页应用连接池泄漏与 Framer Motion 死锁。
 
-#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing)
+#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing) (Completed)
 **总纲 (Minimum Closed Loop)**：`Intent Profiling → Strategy Routing → Few-shot Selection → JSON Size Control → Basic Eval`。
 
 **🧠 核心 AI 能力升级 (Core AI Capabilities)**：
@@ -57,8 +57,9 @@
 *   **轻量级策略校验 (Strategy Validator)**：Validator 不只检查 JSON 合法性，也检查策略红线。例如短期冲刺不得出现低智破冰动作，长周期目标不得排满三个月计划，情境清单不得生成复杂深度任务树。违规时触发有限次数 Replan，失败后进入降级方案。
 
 **✨ 附加交互体验 (Additional UX Experience)**：
-*   **轻量版迷雾解锁 (Fog of War Lite)**：用户完成启动阶段任务后，系统提示是否继续解锁下一阶段计划。v1.2.3 先实现手动触发式解锁，后续版本再升级为 AI 主动介入。
-*   **行内编辑 (Inline Edit)**：支持看板任务双击直接修改标题、时间和描述，让用户可以在不重新生成整套计划的情况下完成细粒度微调。
+*   **轻量版迷雾解锁 (Fog of War Lite)**：用户完成启动阶段任务后，系统提示是否继续解锁下一阶段计划。v1.2.3 实现了手动触发式解锁闭环 (`generateNextPhasePlan`)。
+*   **沉浸式行内编辑 (Inline Edit)**：支持看板任务双击直接修改标题、描述和时间。并且后端 `PATCH /api/tasks/{task_id}` 契约已升级，支持显式传入 `null` 来清空字段。
+*   **SSE 韧性升级**：收到 `snapshot_required` 时，彻底清空游标并执行 250ms 延迟重连，攻克断流死锁。
 
 **✅ v1.2.3 验收标准 (Acceptance Criteria)**：
 1. 能精准识别 4 类 `intent_type`。

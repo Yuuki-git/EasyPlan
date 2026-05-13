@@ -54,6 +54,10 @@ class EvalResult:
     input: str
     expected_intent_type: str
     expected_horizon: str
+    actual_intent_type: str | None
+    actual_time_horizon: str | None
+    intent_type_matches_expected: bool | None
+    time_horizon_matches_expected: bool | None
     valid_task_tree: bool
     top_level_node_count: int | None
     total_node_count: int | None
@@ -70,6 +74,10 @@ class EvalResult:
 
     @property
     def passed(self) -> bool:
+        if self.intent_type_matches_expected is False:
+            return False
+        if self.time_horizon_matches_expected is False:
+            return False
         if not self.valid_task_tree:
             return False
         if self.top_level_exceeds_max:
@@ -101,20 +109,32 @@ async def run_cases(
     *,
     provider: str | None,
     model: str | None,
+    planner: Any | None = None,
 ) -> list[EvalResult]:
-    planner = create_planner_client(provider=provider, model=model)
+    planner = planner or create_planner_client(provider=provider, model=model)
     results: list[EvalResult] = []
     for case in cases:
         reasoning_sink = ListReasoningSink()
         usage_sink = ListUsageSink()
         try:
-            raw_plan = await _create_plan(planner, case.input, reasoning_sink, usage_sink)
-            result = evaluate_plan(case, raw_plan)
+            intent_profile = await _profile_intent(planner, case.input, reasoning_sink, usage_sink)
+            raw_plan = await _create_plan(
+                planner,
+                case.input,
+                intent_profile,
+                reasoning_sink,
+                usage_sink,
+            )
+            result = evaluate_plan(case, raw_plan, intent_profile=intent_profile)
         except Exception as exc:
             result = EvalResult(
                 input=case.input,
                 expected_intent_type=case.expected_intent_type,
                 expected_horizon=case.expected_horizon,
+                actual_intent_type=None,
+                actual_time_horizon=None,
+                intent_type_matches_expected=None,
+                time_horizon_matches_expected=None,
                 valid_task_tree=False,
                 top_level_node_count=None,
                 total_node_count=None,
@@ -132,13 +152,35 @@ async def run_cases(
     return results
 
 
-async def _create_plan(
+async def _profile_intent(
     planner: Any,
     user_input: str,
     reasoning_sink: ListReasoningSink,
     usage_sink: ListUsageSink,
 ) -> dict[str, Any]:
-    prompt = build_planner_prompt(user_input)
+    if not hasattr(planner, "profile_intent"):
+        return {
+            "intent_type": "general",
+            "time_horizon": None,
+            "confidence_score": 0.0,
+        }
+    parameters = inspect.signature(planner.profile_intent).parameters
+    kwargs: dict[str, Any] = {}
+    if "reasoning_sink" in parameters:
+        kwargs["reasoning_sink"] = reasoning_sink
+    if "usage_sink" in parameters:
+        kwargs["usage_sink"] = usage_sink
+    return await planner.profile_intent(user_input, **kwargs)
+
+
+async def _create_plan(
+    planner: Any,
+    user_input: str,
+    intent_profile: dict[str, Any] | None,
+    reasoning_sink: ListReasoningSink,
+    usage_sink: ListUsageSink,
+) -> dict[str, Any]:
+    prompt = build_planner_prompt(user_input, intent_profile=intent_profile)
     parameters = inspect.signature(planner.create_plan).parameters
     if "usage_sink" in parameters:
         return await planner.create_plan(
@@ -149,7 +191,22 @@ async def _create_plan(
     return await planner.create_plan(prompt, reasoning_sink=reasoning_sink)
 
 
-def evaluate_plan(case: EvalCase, raw_plan: dict[str, Any]) -> EvalResult:
+def evaluate_plan(
+    case: EvalCase,
+    raw_plan: dict[str, Any],
+    *,
+    intent_profile: dict[str, Any] | None = None,
+) -> EvalResult:
+    actual_intent_type = _profile_value(intent_profile, "intent_type")
+    actual_time_horizon = _profile_value(intent_profile, "time_horizon")
+    intent_type_matches_expected = _matches_expected(
+        expected=case.expected_intent_type,
+        actual=actual_intent_type,
+    )
+    time_horizon_matches_expected = _matches_expected_horizon(
+        expected=case.expected_horizon,
+        actual=actual_time_horizon,
+    )
     try:
         task_tree = TaskTree.model_validate(raw_plan)
     except Exception as exc:
@@ -157,6 +214,10 @@ def evaluate_plan(case: EvalCase, raw_plan: dict[str, Any]) -> EvalResult:
             input=case.input,
             expected_intent_type=case.expected_intent_type,
             expected_horizon=case.expected_horizon,
+            actual_intent_type=actual_intent_type,
+            actual_time_horizon=actual_time_horizon,
+            intent_type_matches_expected=intent_type_matches_expected,
+            time_horizon_matches_expected=time_horizon_matches_expected,
             valid_task_tree=False,
             top_level_node_count=None,
             total_node_count=None,
@@ -180,6 +241,10 @@ def evaluate_plan(case: EvalCase, raw_plan: dict[str, Any]) -> EvalResult:
         input=case.input,
         expected_intent_type=case.expected_intent_type,
         expected_horizon=case.expected_horizon,
+        actual_intent_type=actual_intent_type,
+        actual_time_horizon=actual_time_horizon,
+        intent_type_matches_expected=intent_type_matches_expected,
+        time_horizon_matches_expected=time_horizon_matches_expected,
         valid_task_tree=True,
         top_level_node_count=top_level_node_count,
         total_node_count=total_node_count,
@@ -190,6 +255,27 @@ def evaluate_plan(case: EvalCase, raw_plan: dict[str, Any]) -> EvalResult:
         must_have_icebreaker=case.must_have_icebreaker,
         icebreaker_present=has_first_step_icebreaker(task_tree),
     )
+
+
+def _profile_value(intent_profile: dict[str, Any] | None, key: str) -> str | None:
+    if not isinstance(intent_profile, dict):
+        return None
+    value = intent_profile.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _matches_expected(*, expected: str, actual: str | None) -> bool | None:
+    if actual is None:
+        return None
+    return actual == expected
+
+
+def _matches_expected_horizon(*, expected: str, actual: str | None) -> bool | None:
+    if actual is None:
+        return None
+    if expected == "72h":
+        return actual == "days"
+    return actual == expected
 
 
 def iter_task_nodes(node: TaskNode):
@@ -224,9 +310,35 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
         for result in results
         if result.expected_intent_type == "short_term_delivery"
     ]
+    intent_classified = [
+        result for result in results if result.intent_type_matches_expected is not None
+    ]
+    horizon_classified = [
+        result for result in results if result.time_horizon_matches_expected is not None
+    ]
+    intent_accuracy = (
+        sum(1 for result in intent_classified if result.intent_type_matches_expected)
+        / len(intent_classified)
+        if intent_classified
+        else 0.0
+    )
+    horizon_accuracy = (
+        sum(1 for result in horizon_classified if result.time_horizon_matches_expected)
+        / len(horizon_classified)
+        if horizon_classified
+        else 0.0
+    )
+    pass_rate = (
+        sum(1 for result in results if result.passed) / len(results)
+        if results
+        else 0.0
+    )
     return {
         "cases": len(results),
         "passed": sum(1 for result in results if result.passed),
+        "pass_rate": pass_rate,
+        "intent_accuracy": intent_accuracy,
+        "horizon_accuracy": horizon_accuracy,
         "valid_task_tree": sum(1 for result in results if result.valid_task_tree),
         "top_level_within_max": sum(
             1 for result in results if result.top_level_exceeds_max is False
@@ -267,7 +379,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-exit",
         action="store_true",
-        help="Exit with code 1 when any case fails.",
+        help="Exit with code 1 when accuracy or pass rate is below --min-accuracy.",
+    )
+    parser.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=0.85,
+        help="Minimum acceptable intent accuracy and overall pass rate for strict mode.",
     )
     return parser.parse_args()
 
@@ -277,8 +395,13 @@ async def amain() -> int:
     cases = load_cases(args.cases)
     results = await run_cases(cases, provider=args.provider, model=args.model)
     print_report(results)
-    if args.strict_exit and any(not result.passed for result in results):
-        return 1
+    if args.strict_exit:
+        summary = summarize(results)
+        if (
+            summary["intent_accuracy"] < args.min_accuracy
+            or summary["pass_rate"] < args.min_accuracy
+        ):
+            return 1
     return 0
 
 

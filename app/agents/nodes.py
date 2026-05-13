@@ -18,6 +18,20 @@ MAX_REPLAN_ATTEMPTS = 3
 MAX_TOP_LEVEL_NODES = 12
 MAX_CHILDREN_PER_TOP_LEVEL = 3
 LONG_TERM_MAX_DEPTH = 4
+LONG_TERM_SCOPE_KEYWORDS = (
+    "全年",
+    "一年",
+    "12个月",
+    "十二个月",
+    "半年",
+    "完整周期",
+    "完整计划",
+    "全部阶段",
+    "所有阶段",
+    "长期计划",
+    "每周",
+    "每月",
+)
 LOW_VALUE_ICEBREAKER_TERMS = (
     "打开电脑",
     "打开 word",
@@ -45,7 +59,7 @@ INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
 第一个任务必须是极其简单的破冰动作，建议 <5 分钟，用来降低启动阻力。
 但后续任务可以是 25-60 分钟的深度工作。
-不要排满整个周期，只输出当前启动阶段 Phase 1。
+不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
@@ -669,6 +683,10 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
             errors.append("long_term_growth: scope is too broad for Phase 1")
         if max_depth > LONG_TERM_MAX_DEPTH:
             errors.append("long_term_growth: phase depth is too deep for Phase 1")
+        if _contains_long_term_full_cycle_language(task_tree):
+            errors.append(
+                "long_term_growth: plan must stay within 72-hour Phase 1 instead of covering the full long-term cycle"
+            )
         return
 
     if intent_type == "context_checklist":
@@ -715,6 +733,18 @@ def _is_low_value_icebreaker(node: Any) -> bool:
         if value
     ).lower()
     return any(term.lower() in text for term in LOW_VALUE_ICEBREAKER_TERMS)
+
+
+def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
+    text_parts = [task_tree.summary, *task_tree.assumptions]
+    for node in _iter_task_nodes(task_tree.root):
+        text_parts.extend(
+            value
+            for value in (node.title, node.description or "", node.verb)
+            if value
+        )
+    text = " ".join(text_parts)
+    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
 
 
 def _task_tree_summary(task_tree: dict[str, Any] | None) -> str | None:

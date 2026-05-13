@@ -1,4 +1,32 @@
-{"input": "我想明年考过日语 N3，现在零基础", "expected_intent_type": "long_term_growth", "expected_horizon": "72h", "must_have_icebreaker": true, "max_nodes": 12, "description": "长周期目标，应只拆解启动阶段（如下单教材、测词汇量），第一步必须是小于5分钟的破冰动作。"}
-{"input": "今天下午4点前必须把这份关于AI架构的商业计划书写完", "expected_intent_type": "short_term_delivery", "expected_horizon": "hours", "must_have_icebreaker": false, "max_nodes": 8, "description": "短期交付，必须采用 Time-boxing 策略，绝对不能出现'打开电脑'这种低智破冰动作，应直接拆解核心模块。"}
-{"input": "下班顺便去买点番茄和鸡蛋，还要去顺丰拿两个快递，回家记得交一下水费", "expected_intent_type": "context_checklist", "expected_horizon": "hours", "must_have_icebreaker": false, "max_nodes": 5, "description": "情境清单，无需复杂嵌套，直接按地理位置或工具（手机/路上）聚合成简单的 Checklist。"}
-{"input": "我最近觉得工作很迷茫，不知道是不是应该辞职转行去做自媒体", "expected_intent_type": "exploration_decision", "expected_horizon": "days", "must_have_icebreaker": true, "max_nodes": 6, "description": "探索决策型，不要强行生成具体的转行计划，而应生成帮助澄清信息的小实验（如列出核心焦虑点、找人聊聊）。"}
+{"input":"我想明年考过日语 N3，现在零基础","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长周期目标，应只拆解启动阶段，第一步必须是低门槛破冰动作。"}
+{"input":"半年后想跑完人生第一场半程马拉松，但我现在只能跑 2 公里","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期体能成长，只输出最近 72 小时启动动作，不要排完整训练周期。"}
+{"input":"我希望 6 个月后能用 Python 做基础数据分析","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期技能成长，先建立低阻力学习入口和摸底动作。"}
+{"input":"今年想把英语口语练到可以参加海外面试","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期成长型目标，应限制在 Phase 1 启动阶段。"}
+{"input":"我想在三个月内养成稳定早睡早起的习惯","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"习惯养成属于长期成长，第一步应非常小。"}
+{"input":"我想年底前学会弹一首完整的钢琴曲","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期技能目标，只给最近 72 小时启动地图。"}
+{"input":"我想用一年时间把自己的设计作品集做起来","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期作品集建设，不能输出全年排期。"}
+{"input":"接下来几个月我想系统减脂 10 斤并保持运动习惯","expected_intent_type":"long_term_growth","expected_horizon":"72h","must_have_icebreaker":true,"max_nodes":12,"description":"长期健康目标，必须有低门槛启动任务。"}
+{"input":"今天下午4点前必须把这份关于AI架构的商业计划书写完","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"短期交付，必须采用 Time-boxing 策略，不能出现低智破冰动作。"}
+{"input":"今晚 10 点前我要交一份周报，内容还没整理","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"短期写作交付，应按产出模块拆分。"}
+{"input":"明早 9 点开会前需要准备好产品汇报 PPT","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"紧急交付任务，应直接拆 PPT 结构和内容。"}
+{"input":"两小时后要发版，我还得修完登录页的几个 bug","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"短期工程交付，避免打开 IDE 之类废动作。"}
+{"input":"今天下班前必须把客户报价单和邮件发出去","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"明确截止时间和产出，按交付物拆解。"}
+{"input":"中午前要写完公众号推文初稿，主题是 AI 工具效率","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"短期内容交付，应该按大纲、段落、校对拆。"}
+{"input":"下午面试前我要把自我介绍和项目亮点准备好","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"短期准备任务，必须有明确输出。"}
+{"input":"明天早上提交申请材料，今晚要把简历和作品链接整理完","expected_intent_type":"short_term_delivery","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":8,"description":"截止时间近，按材料清单和检查流程拆。"}
+{"input":"下班顺便去买点番茄和鸡蛋，还要去顺丰拿两个快递，回家记得交一下水费","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"情境清单，按地理位置或工具聚合成简单 Checklist。"}
+{"input":"明天出差前要带身份证、充电器、电脑，还要打印行程单","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":6,"description":"出行准备清单，优先按物品和办理场景分组。"}
+{"input":"周末要去超市买菜、取干洗衣服、顺路给车加油","expected_intent_type":"context_checklist","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"周末跑腿清单，按顺路关系聚合。"}
+{"input":"晚上回家路上记得买猫粮、拿快递、去药店买感冒药","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"同一路线上的琐事，应形成轻量清单。"}
+{"input":"搬家前要确认水电网、整理证件、打包厨房用品和衣服","expected_intent_type":"context_checklist","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":8,"description":"搬家上下文清单，按区域或手续分组。"}
+{"input":"明天带孩子上学前要准备校服、水杯、作业本和体温表","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"家庭晨间清单，不需要复杂拆解。"}
+{"input":"去公司前要带门禁卡、耳机、合同原件，还要记得寄快递","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"通勤场景清单，按携带和顺路办理聚合。"}
+{"input":"月底前把房租、信用卡、水电费都处理一下","expected_intent_type":"context_checklist","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":5,"description":"账单处理清单，按支付工具或截止时间聚合。"}
+{"input":"我最近觉得工作很迷茫，不知道是不是应该辞职转行去做自媒体","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"探索决策型，不要强行生成转行计划，应生成信息收集和小实验。"}
+{"input":"我不确定要不要从上海搬去成都生活，想先想清楚","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"生活决策探索，应比较信息和低成本验证。"}
+{"input":"我在纠结要不要读研，担心时间成本太高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"教育决策，应先澄清担忧和收集真实信息。"}
+{"input":"我想做一个副业，但不知道电商、咨询还是写作哪个适合我","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"副业方向探索，应生成对比和最小测试。"}
+{"input":"我不知道要不要买车，怕花钱但通勤又很累","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"消费决策探索，应比较成本收益和替代方案。"}
+{"input":"我在考虑要不要离开现在的团队，感觉成长停滞","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"职业选择探索，应澄清核心问题而不是直接执行。"}
+{"input":"我想创业做 AI 教育产品，但不知道这个方向是否靠谱","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"创业方向探索，应做信息收集、访谈和小实验。"}
+{"input":"我纠结要不要和合伙人继续合作，最近沟通成本很高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"关系/合作决策，应先澄清事实、风险和可验证信号。"}

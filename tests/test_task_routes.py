@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.sql import Select
 
@@ -34,6 +35,7 @@ class FakeTaskRepository:
         self.list_calls: list[dict] = []
         self.create_calls: list[dict] = []
         self.update_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
 
     async def list_tasks_for_user(self, *, user_id, view_bucket=None):
         self.list_calls.append({"user_id": user_id, "view_bucket": view_bucket})
@@ -84,6 +86,14 @@ class FakeTaskRepository:
         task.client_node_id = f"manual-{uuid4().hex}"
         self.tasks[task.id] = task
         return task
+
+    async def delete_task_for_user(self, *, user_id, task_id):
+        self.delete_calls.append({"user_id": user_id, "task_id": task_id})
+        task = self.tasks.get(task_id)
+        if task is None or task.user_id != user_id:
+            return False
+        del self.tasks[task_id]
+        return True
 
 
 def test_get_tasks_filters_by_authenticated_user_and_view_bucket():
@@ -209,6 +219,72 @@ def test_patch_task_updates_only_authenticated_users_task():
     assert repository.tasks[own_task.id].title == "Draft intro"
     assert forbidden_response.status_code == 404
     assert repository.tasks[other_task.id].title == "Other tenant"
+
+
+def test_patch_task_allows_clearing_nullable_description():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        description="Old description",
+    )
+    repository.tasks[own_task.id] = own_task
+
+    response = client.patch(
+        f"/api/tasks/{own_task.id}",
+        json={"description": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["description"] is None
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": own_task.id,
+            "changes": {"description": None},
+        }
+    ]
+
+
+@pytest.mark.parametrize("field", ["title", "status", "view_bucket", "sort_order"])
+def test_patch_task_rejects_explicit_null_for_required_columns(field: str):
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(user_id=user.id, view_bucket="planned", title="Draft outline")
+    repository.tasks[own_task.id] = own_task
+
+    response = client.patch(
+        f"/api/tasks/{own_task.id}",
+        json={field: None},
+    )
+
+    assert response.status_code == 422
+    assert field in response.text
+    assert repository.update_calls == []
+
+
+def test_delete_task_hard_deletes_only_authenticated_users_task():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(user_id=user.id, view_bucket="planned", title="Draft outline")
+    other_task = _fake_task(user_id=uuid4(), view_bucket="planned", title="Other tenant")
+    repository.tasks[own_task.id] = own_task
+    repository.tasks[other_task.id] = other_task
+
+    response = client.delete(f"/api/tasks/{own_task.id}")
+    forbidden_response = client.delete(f"/api/tasks/{other_task.id}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert own_task.id not in repository.tasks
+    assert forbidden_response.status_code == 404
+    assert other_task.id in repository.tasks
+    assert repository.delete_calls == [
+        {"user_id": user.id, "task_id": own_task.id},
+        {"user_id": user.id, "task_id": other_task.id},
+    ]
 
 
 def _client_with_task_repository(repository: FakeTaskRepository):

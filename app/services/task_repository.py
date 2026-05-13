@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task import Task
@@ -119,6 +119,25 @@ class TaskRepository:
         await self.session.commit()
         await self.session.refresh(task)
         return task
+
+    async def delete_task_for_user(
+        self,
+        *,
+        user_id: UUID,
+        task_id: UUID,
+    ) -> bool:
+        try:
+            result = await self.session.execute(
+                delete(Task).where(
+                    Task.user_id == user_id,
+                    Task.id == task_id,
+                )
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return result.rowcount > 0
 
     async def _next_sort_order(
         self,

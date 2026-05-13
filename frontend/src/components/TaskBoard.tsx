@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Sparkles, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
 
@@ -51,7 +51,7 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket, updateTaskDetails } = useAppStore();
+  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   
@@ -61,8 +61,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   // Inline editing state
   const [isEditing, setIsEditing] = React.useState(false);
   const [editTitle, setEditTitle] = React.useState(node.title);
+  const [editDescription, setEditDescription] = React.useState(node.description || '');
   const [editMinutes, setEditMinutes] = React.useState(node.estimated_minutes?.toString() || '');
   const editTitleRef = React.useRef<HTMLInputElement>(null);
+  const editContainerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     setLocalCompleted(node.status === 'completed');
@@ -70,8 +72,9 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   React.useEffect(() => {
     setEditTitle(node.title);
+    setEditDescription(node.description || '');
     setEditMinutes(node.estimated_minutes?.toString() || '');
-  }, [node.title, node.estimated_minutes]);
+  }, [node.title, node.description, node.estimated_minutes]);
 
   React.useEffect(() => {
     return () => {
@@ -126,6 +129,15 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteTask(node.id);
+    } catch (err) {
+      // Error handled in store
+    }
+  };
+
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
@@ -139,8 +151,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       return;
     }
 
-    const updates: { title?: string; estimated_minutes?: number | null } = {};
+    const updates: { title?: string; description?: string | null; estimated_minutes?: number | null } = {};
     if (editTitle.trim() !== node.title) updates.title = editTitle.trim();
+    const nextDescription = editDescription.trim() || null;
+    if (nextDescription !== (node.description || null)) updates.description = nextDescription;
     
     const minutesVal = parseInt(editMinutes);
     if (!isNaN(minutesVal) && minutesVal !== node.estimated_minutes) {
@@ -157,19 +171,30 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       } catch (err) {
         // Revert on error
         setEditTitle(node.title);
+        setEditDescription(node.description || '');
         setEditMinutes(node.estimated_minutes?.toString() || '');
       }
     }
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       handleEditSubmit();
     } else if (e.key === 'Escape') {
       setIsEditing(false);
       setEditTitle(node.title);
+      setEditDescription(node.description || '');
       setEditMinutes(node.estimated_minutes?.toString() || '');
     }
+  };
+
+  const handleEditBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocusedElement = e.relatedTarget;
+    if (nextFocusedElement instanceof Node && editContainerRef.current?.contains(nextFocusedElement)) {
+      return;
+    }
+    handleEditSubmit();
   };
 
   if (isGroup) {
@@ -227,16 +252,27 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       </div>
       <div className="flex-1 pr-8">
         {isEditing ? (
-          <div className="flex flex-col gap-1 pointer-events-auto mt-[-2px]">
+          <div
+            ref={editContainerRef}
+            onBlur={handleEditBlur}
+            className="flex flex-col gap-1 pointer-events-auto mt-[-2px]"
+          >
             <input
               ref={editTitleRef}
               type="text"
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
               onKeyDown={handleEditKeyDown}
-              onBlur={handleEditSubmit}
               className="text-base font-medium bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full text-foreground/90 placeholder:text-muted-foreground/30"
               placeholder="任务标题..."
+            />
+            <textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              rows={2}
+              className="text-xs bg-muted/10 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/20 rounded-md px-2 py-1 w-full resize-none placeholder:text-muted-foreground/30"
+              placeholder="任务描述..."
             />
             <div className="flex items-center gap-1 mt-1">
               <input
@@ -244,7 +280,6 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
                 value={editMinutes}
                 onChange={(e) => setEditMinutes(e.target.value)}
                 onKeyDown={handleEditKeyDown}
-                onBlur={handleEditSubmit}
                 placeholder="耗时"
                 className="text-[10px] font-mono bg-muted/20 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/40 rounded-full px-2 py-0.5 w-16"
               />
@@ -299,6 +334,13 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
               <Sun size={16} />
             </button>
           )}
+          <button
+            onClick={handleDelete}
+            className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
+            title="删除任务"
+          >
+            <Trash2 size={16} />
+          </button>
         </div>
       )}
     </motion.div>
@@ -380,7 +422,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState } = useAppStore();
+  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -480,6 +522,14 @@ export const TaskBoard: React.FC = () => {
 
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
+  const showFogOfWar = useMemo(() => {
+    if (currentViewBucket !== 'planned') return false;
+    if (!boardTasks || boardTasks.length === 0) return false;
+    const actions = boardTasks.filter(t => t.node_type === 'action');
+    if (actions.length === 0) return false;
+    return actions.every(t => t.status === 'completed');
+  }, [boardTasks, currentViewBucket]);
+
   const handleNewPlan = () => {
     if (isGenerating) {
       setView('input');
@@ -488,6 +538,11 @@ export const TaskBoard: React.FC = () => {
       useAppStore.getState().setAppState('INITIAL');
       setTimeout(() => reset(), 500);
     }
+  };
+
+  const handleGenerateNextPhase = async () => {
+    if (isGenerating) return;
+    await generateNextPhasePlan();
   };
 
   return (
@@ -548,15 +603,16 @@ export const TaskBoard: React.FC = () => {
             
             <InlineTaskInput />
             
-            {currentViewBucket === 'planned' && !isEmpty && (
+            {showFogOfWar && (
               <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="mt-12 flex justify-center"
               >
                 <button 
-                  onClick={() => console.log('Coming soon in v1.3: Contextual Continuation')}
-                  className="group relative px-6 py-3 rounded-full overflow-hidden transition-all hover:scale-105 active:scale-95"
+                  onClick={handleGenerateNextPhase}
+                  disabled={isGenerating}
+                  className="group relative px-6 py-3 rounded-full overflow-hidden transition-all hover:scale-105 active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
                 >
                   <div className="absolute inset-0 bg-foreground/5 opacity-50 group-hover:opacity-100 transition-opacity" />
                   <motion.div 
@@ -567,7 +623,7 @@ export const TaskBoard: React.FC = () => {
                     className="absolute inset-0 rounded-full border border-purple-500/30" 
                   />
                   <span className="relative text-sm font-medium text-purple-500/80 group-hover:text-purple-400 transition-colors flex items-center gap-2">
-                    <span className="text-lg">✨</span> 当前阶段已完成，让 AI 生成下一阶段计划
+                    <Sparkles size={18} /> {isGenerating ? '正在生成下一阶段计划...' : '当前阶段已完成，让 AI 生成下一阶段计划'}
                   </span>
                 </button>
               </motion.div>

@@ -67,9 +67,11 @@ interface AppStore {
   confirmPlan: () => Promise<void>;
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
-  updateTaskDetails: (taskId: string, updates: { title?: string; estimated_minutes?: number | null }) => Promise<void>;
+  updateTaskDetails: (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => Promise<void>;
   createManualTask: (title: string) => Promise<void>;
   moveTaskToMyDay: (taskId: string) => Promise<void>;
+  generateNextPhasePlan: () => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -224,7 +226,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  updateTaskDetails: async (taskId: string, updates: { title?: string; estimated_minutes?: number | null }) => {
+  updateTaskDetails: async (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => {
     const { token, boardTasks } = get();
     if (!token) return;
 
@@ -343,6 +345,77 @@ export const useAppStore = create<AppStore>((set, get) => ({
       get().fetchTasks();
       throw err;
     }
+  },
+
+  deleteTask: async (taskId: string) => {
+    const { token, boardTasks } = get();
+    if (!token) return;
+
+    // Optimistic UI sync
+    const originalTasks = boardTasks ? [...boardTasks] : [];
+    set({
+      boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: 'DELETE',
+        headers
+      });
+      
+      // P1 Fix: Global Auth Recovery
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to delete task');
+      }
+    } catch (err) {
+      console.error("Delete task failed", err);
+      // Revert optimistic update on error
+      set({ boardTasks: originalTasks });
+      throw err;
+    }
+  },
+
+  generateNextPhasePlan: async () => {
+    const { boardTasks, currentViewBucket } = get();
+    const tasks = boardTasks || [];
+    const plannedTasks = tasks.filter((task) => task.view_bucket === currentViewBucket);
+    const completedCount = plannedTasks.filter((task) => task.status === 'completed').length;
+    const taskSnapshot = plannedTasks
+      .slice(0, 20)
+      .map((task, index) => {
+        const statusLabel = task.status === 'completed' ? '已完成' : '未完成';
+        const estimate = task.estimated_minutes != null ? `${task.estimated_minutes}分钟` : '未估时';
+        const description = task.description ? `：${task.description}` : '';
+        return `${index + 1}. [${statusLabel}] ${task.title}${description} (${estimate})`;
+      })
+      .join('\n');
+
+    const intentText = [
+      '请基于我当前 EasyPlan 原生任务看板中已经完成的 Phase 1，生成下一阶段 Phase 2 的计划。',
+      '保持 Fog of War Lite：只解锁下一阶段，不要排完整长期周期。',
+      `当前视图：${currentViewBucket}`,
+      `当前任务数量：${plannedTasks.length}，已完成：${completedCount}`,
+      taskSnapshot ? `当前任务快照：\n${taskSnapshot}` : '当前任务快照为空，请给出一个保守的下一阶段启动计划。',
+    ].join('\n');
+
+    set({
+      view: 'input',
+      appState: 'THINKING',
+      error: null,
+      reasoningLogs: [],
+      taskTree: null,
+      nodeStatuses: {},
+    });
+    await get().submitIntent(intentText);
   },
 
   submitIntent: async (intentText: string) => {

@@ -129,6 +129,7 @@ class ThreadSnapshot(BaseModel):
 
 TaskViewBucket = Literal["planned", "my_day", "backlog"]
 TaskStatus = Literal["draft", "active", "today", "completed", "archived"]
+TASK_UPDATE_NON_NULL_FIELDS = ("title", "status", "view_bucket", "sort_order")
 
 
 class TaskCreateRequest(BaseModel):
@@ -160,17 +161,52 @@ class TaskResponse(BaseModel):
 class TaskUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str | None = Field(default=None, min_length=1, max_length=160)
-    description: str | None = Field(default=None, max_length=1000)
-    status: TaskStatus | None = None
-    view_bucket: TaskViewBucket | None = None
-    estimated_minutes: int | None = Field(default=None, ge=1, le=43200)
-    sort_order: int | None = Field(default=None, ge=0)
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        description="Omit to keep unchanged. Explicit null is rejected.",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Omit to keep unchanged. Explicit null clears the description.",
+    )
+    status: TaskStatus | None = Field(
+        default=None,
+        description="Omit to keep unchanged. Explicit null is rejected.",
+    )
+    view_bucket: TaskViewBucket | None = Field(
+        default=None,
+        description="Omit to keep unchanged. Explicit null is rejected.",
+    )
+    estimated_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        le=43200,
+        description="Omit to keep unchanged. Explicit null clears the estimate.",
+    )
+    sort_order: int | None = Field(
+        default=None,
+        ge=0,
+        description="Omit to keep unchanged. Explicit null is rejected.",
+    )
 
     @model_validator(mode="after")
     def require_at_least_one_change(self) -> "TaskUpdateRequest":
-        if not self.model_dump(exclude_none=True):
+        if not self.model_fields_set:
             raise ValueError("At least one task field must be provided")
+        return self
+
+    @model_validator(mode="after")
+    def reject_null_for_required_columns(self) -> "TaskUpdateRequest":
+        null_fields = [
+            field
+            for field in TASK_UPDATE_NON_NULL_FIELDS
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if null_fields:
+            raise ValueError(f"{', '.join(null_fields)} cannot be null")
         return self
 
 
