@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.schemas import TaskTree
+from app.api.schemas import IntentProfile, TaskTree
 from app.services.llm_service import (
     DeepSeekPlannerClient,
     LLMStructuredOutputError,
@@ -117,6 +117,37 @@ def test_openai_planner_rejects_missing_structured_output():
         asyncio.run(planner.create_plan("Create a launch plan"))
 
 
+def test_openai_profiles_intent_with_structured_output_and_usage():
+    fake_openai = FakeOpenAIClient(
+        IntentProfile(
+            intent_type="short_term_delivery",
+            time_horizon="hours",
+            confidence_score=0.92,
+        ),
+        usage=SimpleNamespace(input_tokens=17, output_tokens=9, total_tokens=26),
+    )
+    planner = OpenAIPlannerClient(client=fake_openai, model="gpt-4o-2024-08-06")
+    usage_sink = ListUsageSink()
+
+    result = asyncio.run(
+        planner.profile_intent(
+            "Finish the business plan by 4pm",
+            usage_sink=usage_sink,
+        )
+    )
+
+    parse_call = fake_openai.responses.calls[0]
+    assert parse_call["text_format"] is IntentProfile
+    assert parse_call["model"] == "gpt-4o-2024-08-06"
+    assert result == {
+        "intent_type": "short_term_delivery",
+        "time_horizon": "hours",
+        "confidence_score": 0.92,
+    }
+    assert usage_sink.records[0].operation == "planner.profile_intent"
+    assert usage_sink.records[0].total_tokens == 26
+
+
 class FakeChatCompletions:
     def __init__(self, content: str):
         self.content = content
@@ -163,12 +194,44 @@ def test_deepseek_planner_uses_json_mode_and_pydantic_validation():
     assert usage_sink.records[0].output_tokens == 43
 
 
+def test_deepseek_planner_accepts_zero_estimate_for_group_container():
+    task_tree = _valid_task_tree()
+    task_tree["root"]["estimated_minutes"] = 0
+    fake_deepseek = FakeChatClient(json.dumps(task_tree))
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["root"]["estimated_minutes"] == 0
+    assert result["root"]["children"][0]["estimated_minutes"] == 2
+
+
 def test_deepseek_planner_rejects_json_that_does_not_match_task_tree():
     fake_deepseek = FakeChatClient(json.dumps({"root": {"title": "missing fields"}}))
     planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
 
     with pytest.raises(LLMStructuredOutputError):
         asyncio.run(planner.create_plan("Create a launch plan"))
+
+
+def test_deepseek_profiles_intent_with_json_mode():
+    fake_deepseek = FakeChatClient(
+        json.dumps(
+            {
+                "intent_type": "exploration_decision",
+                "time_horizon": "days",
+                "confidence_score": 0.77,
+            }
+        )
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.profile_intent("Should I change careers?"))
+
+    create_call = fake_deepseek.chat.completions.calls[0]
+    assert create_call["response_format"] == {"type": "json_object"}
+    assert "IntentProfile" in create_call["messages"][0]["content"]
+    assert result["intent_type"] == "exploration_decision"
 
 
 def test_xiaomi_mimo_planner_uses_json_mode_and_records_usage():

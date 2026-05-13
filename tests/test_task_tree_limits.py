@@ -55,3 +55,11 @@ def test_task_tree_schema_allows_long_estimates_for_langgraph_validator():
 
     assert parsed.root.estimated_minutes == 120
     assert parsed.root.children[0].estimated_minutes == 8
+
+
+def test_task_tree_schema_rejects_zero_estimate_for_action_nodes():
+    tree = valid_plan()
+    tree["root"]["children"][0]["estimated_minutes"] = 0
+
+    with pytest.raises(ValidationError, match="action estimated_minutes must be greater than or equal to 1"):
+        TaskTree.model_validate(tree)

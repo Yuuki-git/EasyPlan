@@ -1,10 +1,16 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.sql import Select
 
-from app.api.auth import AuthUser, get_current_user
+from app.api.auth import AuthService, AuthUser, get_auth_service, get_current_user
+from app.db.session import get_db
 from app.main import create_app
+from app.models.task import Task
+from app.models.thread import AgentThread
+from app.models.user import User
 
 
 @dataclass
@@ -29,6 +35,7 @@ class FakeTaskRepository:
         self.list_calls: list[dict] = []
         self.create_calls: list[dict] = []
         self.update_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
 
     async def list_tasks_for_user(self, *, user_id, view_bucket=None):
         self.list_calls.append({"user_id": user_id, "view_bucket": view_bucket})
@@ -79,6 +86,14 @@ class FakeTaskRepository:
         task.client_node_id = f"manual-{uuid4().hex}"
         self.tasks[task.id] = task
         return task
+
+    async def delete_task_for_user(self, *, user_id, task_id):
+        self.delete_calls.append({"user_id": user_id, "task_id": task_id})
+        task = self.tasks.get(task_id)
+        if task is None or task.user_id != user_id:
+            return False
+        del self.tasks[task_id]
+        return True
 
 
 def test_get_tasks_filters_by_authenticated_user_and_view_bucket():
@@ -141,6 +156,45 @@ def test_post_tasks_rejects_parent_task_from_another_tenant():
     assert response.json()["detail"] == "Parent task not found"
 
 
+def test_post_tasks_creates_standalone_task_after_real_auth_lookup_without_500():
+    auth_service = AuthService(jwt_secret="test-secret")
+    user = AuthUser(
+        id=uuid4(),
+        email="user@example.com",
+        password_hash="hash",
+    )
+    session = FakeRouteDbSession(
+        User(
+            id=user.id,
+            email=user.email,
+            password_hash=user.password_hash,
+            status=user.status,
+        )
+    )
+    app = create_app(enable_static=False)
+
+    async def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_auth_service] = lambda: auth_service
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/tasks",
+        headers={"Authorization": f"Bearer {auth_service.issue_access_token(user)}"},
+        json={"title": "Standalone task"},
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["title"] == "Standalone task"
+    assert payload["parent_task_id"] is None
+    assert payload["view_bucket"] == "my_day"
+    assert session.commit_count == 1
+    assert [type(item) for item in session.added] == [AgentThread, Task]
+
+
 def test_patch_task_updates_only_authenticated_users_task():
     repository = FakeTaskRepository()
     client, user = _client_with_task_repository(repository)
@@ -167,6 +221,72 @@ def test_patch_task_updates_only_authenticated_users_task():
     assert repository.tasks[other_task.id].title == "Other tenant"
 
 
+def test_patch_task_allows_clearing_nullable_description():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        description="Old description",
+    )
+    repository.tasks[own_task.id] = own_task
+
+    response = client.patch(
+        f"/api/tasks/{own_task.id}",
+        json={"description": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["description"] is None
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": own_task.id,
+            "changes": {"description": None},
+        }
+    ]
+
+
+@pytest.mark.parametrize("field", ["title", "status", "view_bucket", "sort_order"])
+def test_patch_task_rejects_explicit_null_for_required_columns(field: str):
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(user_id=user.id, view_bucket="planned", title="Draft outline")
+    repository.tasks[own_task.id] = own_task
+
+    response = client.patch(
+        f"/api/tasks/{own_task.id}",
+        json={field: None},
+    )
+
+    assert response.status_code == 422
+    assert field in response.text
+    assert repository.update_calls == []
+
+
+def test_delete_task_hard_deletes_only_authenticated_users_task():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    own_task = _fake_task(user_id=user.id, view_bucket="planned", title="Draft outline")
+    other_task = _fake_task(user_id=uuid4(), view_bucket="planned", title="Other tenant")
+    repository.tasks[own_task.id] = own_task
+    repository.tasks[other_task.id] = other_task
+
+    response = client.delete(f"/api/tasks/{own_task.id}")
+    forbidden_response = client.delete(f"/api/tasks/{other_task.id}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert own_task.id not in repository.tasks
+    assert forbidden_response.status_code == 404
+    assert other_task.id in repository.tasks
+    assert repository.delete_calls == [
+        {"user_id": user.id, "task_id": own_task.id},
+        {"user_id": user.id, "task_id": other_task.id},
+    ]
+
+
 def _client_with_task_repository(repository: FakeTaskRepository):
     from app.api.routes_tasks import get_task_repository
 
@@ -179,6 +299,75 @@ def _client_with_task_repository(repository: FakeTaskRepository):
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_task_repository] = lambda: repository
     return TestClient(app), user
+
+
+class FakeRouteDbSession:
+    def __init__(self, user: User) -> None:
+        self.user = user
+        self.added = []
+        self.refreshed = []
+        self.active_transaction = False
+        self.begin_count = 0
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def begin(self):
+        self.begin_count += 1
+        if self.active_transaction:
+            raise RuntimeError("A transaction is already begun on this Session.")
+        self.active_transaction = True
+        return FakeRouteTransaction(self)
+
+    def add(self, item):
+        if isinstance(item, (AgentThread, Task)) and item.id is None:
+            item.id = uuid4()
+        self.added.append(item)
+
+    async def execute(self, statement):
+        assert isinstance(statement, Select)
+        self.active_transaction = True
+        entity = statement.column_descriptions[0].get("entity")
+        if entity is User:
+            return FakeRouteScalarResult(self.user)
+        return FakeRouteScalarResult(0)
+
+    async def commit(self):
+        self.commit_count += 1
+        self.active_transaction = False
+
+    async def rollback(self):
+        self.rollback_count += 1
+        self.active_transaction = False
+
+    async def refresh(self, item):
+        if isinstance(item, Task) and item.id is None:
+            item.id = uuid4()
+        self.refreshed.append(item)
+
+
+class FakeRouteScalarResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+    def scalar_one(self):
+        return self.value
+
+
+class FakeRouteTransaction:
+    def __init__(self, session: FakeRouteDbSession) -> None:
+        self.session = session
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.session.active_transaction = False
+        if exc_type is None:
+            self.session.commit_count += 1
+        return False
 
 
 def _fake_task(

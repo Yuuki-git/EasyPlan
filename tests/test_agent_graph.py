@@ -7,7 +7,12 @@ from typing import Any
 from langgraph.types import Command
 
 from app.agents.graph import build_task_graph, create_graph_config, route_after_human_review
-from app.agents.nodes import PlannerClient, build_planner_prompt, task_tree_validator_node
+from app.agents.nodes import (
+    IntentProfilerClient,
+    PlannerClient,
+    build_planner_prompt,
+    task_tree_validator_node,
+)
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
@@ -19,6 +24,16 @@ class CapturingPlanner(PlannerClient):
     async def create_plan(self, prompt: str) -> dict[str, Any]:
         self.prompts.append(prompt)
         return self.plans.pop(0)
+
+
+class CapturingIntentProfiler(IntentProfilerClient):
+    def __init__(self, profile: dict[str, Any]) -> None:
+        self.profile = profile
+        self.inputs: list[str] = []
+
+    async def profile_intent(self, intent_text: str) -> dict[str, Any]:
+        self.inputs.append(intent_text)
+        return self.profile
 
 
 def valid_plan(title: str = "Open paper document") -> dict[str, Any]:
@@ -49,9 +64,89 @@ def valid_plan(title: str = "Open paper document") -> dict[str, Any]:
     }
 
 
-def invalid_plan() -> dict[str, Any]:
+def plan_with_slow_first_action() -> dict[str, Any]:
     plan = valid_plan("Write paper draft")
     plan["root"]["children"][0]["estimated_minutes"] = 8
+    return plan
+
+
+def short_term_plan_with_low_value_icebreaker() -> dict[str, Any]:
+    plan = valid_plan("打开 Word 准备开始")
+    plan["root"]["children"][0]["verb"] = "打开"
+    plan["root"]["children"][0]["estimated_minutes"] = 2
+    return plan
+
+
+def oversized_top_level_plan(count: int = 13) -> dict[str, Any]:
+    plan = valid_plan("Draft core module")
+    plan["root"]["children"] = [
+        {
+            "client_node_id": f"task-{index}",
+            "title": f"Draft section {index}",
+            "description": None,
+            "verb": "Draft",
+            "estimated_minutes": 15,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        }
+        for index in range(count)
+    ]
+    return plan
+
+
+def long_term_plan_that_covers_full_cycle() -> dict[str, Any]:
+    plan = valid_plan("Search N3 textbook")
+    plan["root"]["title"] = "完成全年日语 N3 备考计划"
+    plan["root"]["description"] = "覆盖未来一年每周复习、每月模考和完整考试周期。"
+    plan["root"]["children"][0]["title"] = "搜索 N3 备考教材"
+    plan["root"]["children"][0]["description"] = "在 72 小时启动阶段内完成低门槛破冰。"
+    return plan
+
+
+def top_level_with_too_many_children() -> dict[str, Any]:
+    plan = valid_plan("Draft core module")
+    plan["root"]["children"] = [
+        {
+            "client_node_id": "group-1",
+            "title": "Write proposal",
+            "description": None,
+            "verb": "Write",
+            "estimated_minutes": 60,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": f"child-{index}",
+                    "title": f"Draft subsection {index}",
+                    "description": None,
+                    "verb": "Draft",
+                    "estimated_minutes": 15,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+                for index in range(4)
+            ],
+        }
+    ]
+    return plan
+
+
+def context_checklist_without_groups() -> dict[str, Any]:
+    plan = valid_plan("Buy tomatoes")
+    plan["root"]["children"].append(
+        {
+            "client_node_id": "pay-bill",
+            "title": "Pay water bill",
+            "description": None,
+            "verb": "Pay",
+            "estimated_minutes": 5,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        }
+    )
     return plan
 
 
@@ -81,34 +176,132 @@ def plan_with_dependency_cycle() -> dict[str, Any]:
     return plan
 
 
-def test_planner_prompt_contains_two_minute_and_verb_rules():
-    prompt = build_planner_prompt("Write a paper", feedback="Start with summary")
+def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_two_minute_rule():
+    prompt = build_planner_prompt(
+        "Write a paper",
+        feedback="Start with summary",
+        intent_profile={"intent_type": "short_term_delivery"},
+    )
 
-    assert "两分钟法则" in prompt
-    assert "动词开头" in prompt
-    assert "< 5 分钟" in prompt
+    assert "整个任务树最多只能包含 12 个顶层节点" in prompt
+    assert "每个顶层节点最多只能包含 3 个子节点" in prompt
+    assert "最近 72 小时" in build_planner_prompt(
+        "明年考过日语 N3",
+        intent_profile={"intent_type": "long_term_growth"},
+    )
+    assert "时间盒法则" in prompt
+    assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
+    assert "必须遵守两分钟法则" not in prompt
+    assert "每个叶子 action 的 estimated_minutes 必须 < 5" not in prompt
     assert "Start with summary" in prompt
 
 
-def test_validator_routes_oversized_leaf_to_replan():
-    result = asyncio.run(task_tree_validator_node({"task_tree": invalid_plan(), "replan_attempts": 0}))
+def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():
+    prompt = build_planner_prompt("Write a paper")
+
+    assert "用户意图不够明确" in prompt
+    assert "short_term_delivery" not in prompt
+
+
+def test_validator_does_not_reject_large_action_estimate_globally():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_slow_first_action(),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
+
+
+def test_validator_rejects_short_term_low_value_first_action():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": short_term_plan_with_low_value_icebreaker(),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
 
     assert result["validation_status"] == "needs_replan"
-    assert "task-1" in result["validation_errors"][0]
+    assert "low-value icebreaker" in result["validation_errors"][0]
 
 
-def test_validator_allows_large_group_estimate_but_rejects_large_action_estimate():
+def test_validator_requires_long_term_first_action_to_be_low_barrier():
     plan = valid_plan("Open paper document")
     plan["root"]["estimated_minutes"] = 120
 
-    group_result = asyncio.run(task_tree_validator_node({"task_tree": plan, "replan_attempts": 0}))
-    action_plan = valid_plan("Write paper draft")
-    action_plan["root"]["children"][0]["estimated_minutes"] = 8
-    action_result = asyncio.run(task_tree_validator_node({"task_tree": action_plan, "replan_attempts": 0}))
+    valid_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan,
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+    action_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_slow_first_action(),
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
 
-    assert group_result["validation_status"] == "valid"
+    assert valid_result["validation_status"] == "valid"
     assert action_result["validation_status"] == "needs_replan"
-    assert "estimated_minutes must be < 5" in action_result["validation_errors"][0]
+    assert "low-barrier icebreaker" in action_result["validation_errors"][0]
+
+
+def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": long_term_plan_that_covers_full_cycle(),
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any("72-hour Phase 1" in error for error in result["validation_errors"])
+
+
+def test_validator_enforces_global_size_limits():
+    too_many_top = asyncio.run(
+        task_tree_validator_node({"task_tree": oversized_top_level_plan(), "replan_attempts": 0})
+    )
+    too_many_children = asyncio.run(
+        task_tree_validator_node({"task_tree": top_level_with_too_many_children(), "replan_attempts": 0})
+    )
+
+    assert too_many_top["validation_status"] == "needs_replan"
+    assert "top-level node count" in too_many_top["validation_errors"][0]
+    assert too_many_children["validation_status"] == "needs_replan"
+    assert "children count" in too_many_children["validation_errors"][0]
+
+
+def test_validator_rejects_context_checklist_without_grouping():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": context_checklist_without_groups(),
+                "intent_profile": {"intent_type": "context_checklist"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert "grouped" in result["validation_errors"][0]
 
 
 def test_validator_rejects_unknown_dependency_reference():
@@ -150,8 +343,44 @@ def test_graph_interrupts_for_human_review_and_supports_refine_resume():
     assert refined_chunks[-1]["__interrupt__"][0].value["task_tree"]["root"]["children"][0]["title"] == "List summary points"
 
 
+def test_graph_starts_with_intent_profiler_before_planner_without_prompt_injection():
+    planner = CapturingPlanner([valid_plan("Draft core module")])
+    profiler = CapturingIntentProfiler(
+        {
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.91,
+        }
+    )
+    graph = build_task_graph(
+        planner=planner,
+        intent_profiler=profiler,
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(user_id="user_1", thread_id="thread_profile")
+
+    chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": "user_1",
+                    "thread_id": "thread_profile",
+                    "intent_text": "Finish the business plan by 4pm",
+                },
+                config,
+            )
+        )
+    )
+
+    assert "intent_profiler" in chunks[0]
+    assert chunks[0]["intent_profiler"]["intent_profile"]["intent_type"] == "short_term_delivery"
+    assert profiler.inputs == ["Finish the business plan by 4pm"]
+    assert len(planner.prompts) == 1
+    assert "时间盒法则" in planner.prompts[0]
+
+
 def test_graph_auto_replans_when_validator_finds_large_leaf_task():
-    planner = CapturingPlanner([invalid_plan(), valid_plan("List paper title")])
+    planner = CapturingPlanner([plan_with_slow_first_action(), valid_plan("List paper title")])
     graph = build_task_graph(planner=planner, checkpointer=TenantAwareMemorySaver())
     config = create_graph_config(user_id="user_1", thread_id="thread_2")
 

@@ -35,3 +35,19 @@ def test_prune_state_summarizes_overlong_intent_text():
 
     assert len(pruned["intent_text"]) < 2100
     assert pruned["intent_text"].endswith("...[truncated]")
+
+
+def test_prune_state_preserves_intent_profile():
+    state: AgentState = {
+        "user_id": "user_1",
+        "thread_id": "thread_1",
+        "intent_profile": {
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.86,
+        },
+    }
+
+    pruned = prune_state(state)
+
+    assert pruned["intent_profile"] == state["intent_profile"]

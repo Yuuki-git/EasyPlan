@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task import Task
@@ -34,7 +34,7 @@ class TaskRepository:
         view_bucket: str,
         parent_task_id: UUID | None,
     ) -> Task | None:
-        async with self.session.begin():
+        try:
             parent_task: Task | None = None
             if parent_task_id is not None:
                 result = await self.session.execute(
@@ -45,6 +45,7 @@ class TaskRepository:
                 )
                 parent_task = result.scalar_one_or_none()
                 if parent_task is None:
+                    await self.session.rollback()
                     return None
 
             thread_id = parent_task.thread_id if parent_task is not None else f"manual_{uuid4().hex}"
@@ -89,6 +90,10 @@ class TaskRepository:
                 metadata_={"source": "manual"},
             )
             self.session.add(task)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
         await self.session.refresh(task)
         return task
@@ -114,6 +119,25 @@ class TaskRepository:
         await self.session.commit()
         await self.session.refresh(task)
         return task
+
+    async def delete_task_for_user(
+        self,
+        *,
+        user_id: UUID,
+        task_id: UUID,
+    ) -> bool:
+        try:
+            result = await self.session.execute(
+                delete(Task).where(
+                    Task.user_id == user_id,
+                    Task.id == task_id,
+                )
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return result.rowcount > 0
 
     async def _next_sort_order(
         self,

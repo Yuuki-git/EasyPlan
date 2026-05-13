@@ -626,6 +626,56 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Delete Task",
+        "operationId": "delete_task_api_tasks__task_id__delete",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -947,7 +997,7 @@
           "estimated_minutes": {
             "type": "integer",
             "maximum": 43200.0,
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Estimated Minutes"
           },
           "node_type": {
@@ -1120,7 +1170,8 @@
                 "type": "null"
               }
             ],
-            "title": "Title"
+            "title": "Title",
+            "description": "Omit to keep unchanged. Explicit null is rejected."
           },
           "description": {
             "anyOf": [
@@ -1132,7 +1183,8 @@
                 "type": "null"
               }
             ],
-            "title": "Description"
+            "title": "Description",
+            "description": "Omit to keep unchanged. Explicit null clears the description."
           },
           "status": {
             "anyOf": [
@@ -1150,7 +1202,8 @@
                 "type": "null"
               }
             ],
-            "title": "Status"
+            "title": "Status",
+            "description": "Omit to keep unchanged. Explicit null is rejected."
           },
           "view_bucket": {
             "anyOf": [
@@ -1166,7 +1219,8 @@
                 "type": "null"
               }
             ],
-            "title": "View Bucket"
+            "title": "View Bucket",
+            "description": "Omit to keep unchanged. Explicit null is rejected."
           },
           "estimated_minutes": {
             "anyOf": [
@@ -1179,7 +1233,8 @@
                 "type": "null"
               }
             ],
-            "title": "Estimated Minutes"
+            "title": "Estimated Minutes",
+            "description": "Omit to keep unchanged. Explicit null clears the estimate."
           },
           "sort_order": {
             "anyOf": [
@@ -1191,7 +1246,8 @@
                 "type": "null"
               }
             ],
-            "title": "Sort Order"
+            "title": "Sort Order",
+            "description": "Omit to keep unchanged. Explicit null is rejected."
           }
         },
         "additionalProperties": false,

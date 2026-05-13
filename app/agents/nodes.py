@@ -8,13 +8,102 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
-from app.api.schemas import TaskTree
+from app.api.schemas import IntentProfile, TaskTree
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 
 
 MAX_REPLAN_ATTEMPTS = 3
+MAX_TOP_LEVEL_NODES = 12
+MAX_CHILDREN_PER_TOP_LEVEL = 3
+LONG_TERM_MAX_DEPTH = 4
+LONG_TERM_SCOPE_KEYWORDS = (
+    "全年",
+    "一年",
+    "12个月",
+    "十二个月",
+    "半年",
+    "完整周期",
+    "完整计划",
+    "全部阶段",
+    "所有阶段",
+    "长期计划",
+    "每周",
+    "每月",
+)
+LOW_VALUE_ICEBREAKER_TERMS = (
+    "打开电脑",
+    "打开 word",
+    "打开Word",
+    "打开文档",
+    "打开文件",
+    "新建文档",
+    "新建文件",
+    "准备开始",
+    "准备写",
+    "想一想",
+    "坐下",
+    "整理桌面",
+)
+
+HARD_RULES_PROMPT = """硬性规则：
+1. 整个任务树最多只能包含 12 个顶层节点（Group/Action）。
+2. 每个顶层节点最多只能包含 3 个子节点。
+3. 绝对禁止排满整个周期。
+4. 对于长周期或宏大目标，只能输出【当前启动阶段 Phase 1】的行动地图。
+5. 禁止输出 Markdown、解释性段落或 schema 外字段。
+6. title 和 description 必须短而具体，避免长文本导致 JSON 截断。"""
+
+INTENT_STRATEGY_PROMPTS = {
+    "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
+第一个任务必须是极其简单的破冰动作，建议 <5 分钟，用来降低启动阻力。
+但后续任务可以是 25-60 分钟的深度工作。
+不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
+
+<反面教材>
+动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
+
+<正面教材>
+动作：「在淘宝搜索 N3 备考教材」，耗时：2 分钟。原因：低门槛破冰。
+动作：「完成一套词汇摸底测试」，耗时：45 分钟。原因：进入真实评估。""",
+    "short_term_delivery": """策略：这是短期交付任务。你需要使用「时间盒法则」。
+绝对禁止生成「打开电脑 / 新建文档 / 打开 Word / 准备开始」等低价值破冰动作。
+请直接按交付模块、逻辑顺序或时间块拆分。
+每个任务必须有明确产出。
+
+<反面教材>
+动作：「打开 Word 准备写 PPT」，耗时：2 分钟。问题：这是废话，不是有效任务。
+
+<正面教材>
+动作：「列出商业计划书的核心痛点大纲」，耗时：15 分钟。
+动作：「撰写商业模式章节」，耗时：45 分钟。""",
+    "context_checklist": """策略：这是情境清单型任务。
+无需深度拆解，也不需要破冰动作。
+请按地理位置、工具环境、顺路关系或时间场景聚合。
+目标是减少切换成本和遗漏，而不是生成复杂任务树。
+
+<正面教材>
+组：「下班路上」
+动作：「去丰巢拿快递」
+动作：「去超市买菜」
+
+组：「手机处理」
+动作：「缴电费」""",
+    "exploration_decision": """策略：这是探索决策型任务。
+不要直接生成死板执行清单，也不要假设用户已经做出决定。
+请生成信息收集、问题澄清、最小成本测试和决策节点。
+目标是降低不确定性，而不是强推执行。
+
+<正面教材>
+动作：「列出辞职做自媒体的 3 个核心担忧」，耗时：15 分钟。
+动作：「找一位自媒体从业者聊现状」，耗时：60 分钟。
+动作：「用一页纸比较继续上班和做自媒体的成本收益」，耗时：30 分钟。""",
+    "general": """策略：用户意图不够明确。
+请生成保守、短小、可执行的启动计划。
+不要输出过多任务。
+如果缺少关键信息，第一步可以是澄清任务边界。""",
+}
 
 
 class PlannerClient(Protocol):
@@ -24,6 +113,15 @@ class PlannerClient(Protocol):
         reasoning_sink: ReasoningSink | None = None,
     ) -> dict[str, Any]:
         """Create a TaskTree-shaped plan using an async LLM client."""
+
+
+class IntentProfilerClient(Protocol):
+    async def profile_intent(
+        self,
+        intent_text: str,
+        reasoning_sink: ReasoningSink | None = None,
+    ) -> dict[str, Any]:
+        """Classify the user's intent before planning."""
 
 
 class RuleBasedPlannerClient:
@@ -64,19 +162,98 @@ class RuleBasedPlannerClient:
         }
 
 
+class RuleBasedIntentProfilerClient:
+    async def profile_intent(
+        self,
+        intent_text: str,
+        reasoning_sink: ReasoningSink | None = None,
+    ) -> dict[str, Any]:
+        normalized = intent_text.lower()
+        if any(keyword in normalized for keyword in ("today", "tonight", "by ", "4pm", "deadline", "今天", "下午", "前必须")):
+            profile = {
+                "intent_type": "short_term_delivery",
+                "time_horizon": "hours",
+                "confidence_score": 0.72,
+            }
+        elif any(keyword in normalized for keyword in ("buy", "pick up", "顺便", "买", "快递", "缴", "交一下")):
+            profile = {
+                "intent_type": "context_checklist",
+                "time_horizon": "hours",
+                "confidence_score": 0.7,
+            }
+        elif any(keyword in normalized for keyword in ("should i", "whether", "迷茫", "辞职", "转行", "不知道")):
+            profile = {
+                "intent_type": "exploration_decision",
+                "time_horizon": "days",
+                "confidence_score": 0.68,
+            }
+        else:
+            profile = {
+                "intent_type": "long_term_growth",
+                "time_horizon": "weeks",
+                "confidence_score": 0.62,
+            }
+        await emit_reasoning(
+            reasoning_sink,
+            code="INTENT_PROFILED",
+            message="正在识别任务类型...",
+            node="intent_profiler_node",
+        )
+        return profile
+
+
+def intent_profiler_node_factory(intent_profiler: IntentProfilerClient):
+    async def intent_profiler_node(state: AgentState) -> AgentState:
+        reasoning_sink = ListReasoningSink()
+        raw_profile = await _call_intent_profiler(
+            intent_profiler,
+            state.get("intent_text", ""),
+            reasoning_sink,
+        )
+        intent_profile = IntentProfile.model_validate(raw_profile).model_dump(mode="json")
+        next_state: AgentState = {
+            **state,
+            "intent_profile": intent_profile,
+            "reasoning_events": [
+                *state.get("reasoning_events", []),
+                *reasoning_sink.events,
+                {
+                    "node": "intent_profiler_node",
+                    "code": "INTENT_PROFILE_READY",
+                    "message": "已识别任务类型，正在进入计划拆解...",
+                },
+            ],
+        }
+        return prune_state(next_state)
+
+    return intent_profiler_node
+
+
+async def _call_intent_profiler(
+    intent_profiler: IntentProfilerClient,
+    intent_text: str,
+    reasoning_sink: ReasoningSink,
+) -> dict[str, Any]:
+    parameters = inspect.signature(intent_profiler.profile_intent).parameters
+    if "reasoning_sink" in parameters:
+        return await intent_profiler.profile_intent(intent_text, reasoning_sink=reasoning_sink)
+    return await intent_profiler.profile_intent(intent_text)
+
+
 def build_planner_prompt(
     intent_text: str,
     *,
+    intent_profile: dict[str, Any] | None = None,
     feedback: str | None = None,
     current_task_tree_summary: str | None = None,
     validation_errors: list[str] | None = None,
 ) -> str:
+    intent_type = _intent_type_from_profile(intent_profile)
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
-        "必须遵守两分钟法则：优先把任务拆成约 2 分钟可启动的微行动。",
-        "硬性规则：每个叶子 action 的 estimated_minutes 必须 < 5 分钟。",
-        "硬性规则：每个叶子 action 的标题必须动词开头，且 verb 字段必须是具体动词。",
-        "输出必须是符合 TaskTree JSON Schema 的 JSON，不要输出 Markdown。",
+        HARD_RULES_PROMPT,
+        INTENT_STRATEGY_PROMPTS[intent_type],
+        "输出必须是符合 TaskTree JSON Schema 的 JSON。",
         f"用户意图：{intent_text}",
     ]
     if current_task_tree_summary:
@@ -92,6 +269,7 @@ def planner_node_factory(planner: PlannerClient):
     async def planner_node(state: AgentState) -> AgentState:
         prompt = build_planner_prompt(
             state.get("intent_text", ""),
+            intent_profile=state.get("intent_profile"),
             feedback=state.get("refinement_feedback"),
             current_task_tree_summary=_task_tree_summary(state.get("task_tree")),
             validation_errors=state.get("validation_errors"),
@@ -132,7 +310,10 @@ async def _call_planner(
 
 
 async def task_tree_validator_node(state: AgentState) -> AgentState:
-    errors = _validate_task_tree(state.get("task_tree"))
+    errors = _validate_task_tree(
+        state.get("task_tree"),
+        intent_profile=state.get("intent_profile"),
+    )
     if not errors:
         return {
             "task_tree": TaskTree.model_validate(state["task_tree"]).model_dump(mode="json"),
@@ -400,11 +581,7 @@ def flatten_task_tree_for_persistence(
     return tasks, dependencies
 
 
-def _validate_task_tree(task_tree: Any) -> list[str]:
-    raw_rule_errors = _collect_raw_rule_errors(task_tree)
-    if raw_rule_errors:
-        return raw_rule_errors
-
+def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None = None) -> list[str]:
     try:
         parsed = TaskTree.model_validate(task_tree)
     except ValidationError as exc:
@@ -415,27 +592,9 @@ def _validate_task_tree(task_tree: Any) -> list[str]:
     nodes_by_id: dict[str, dict[str, Any]] = {}
     _collect_rule_errors(parsed.root.model_dump(mode="json"), seen, nodes_by_id, errors)
     _collect_dependency_errors(nodes_by_id, errors)
+    _collect_global_size_errors(parsed, errors)
+    _collect_strategy_errors(parsed, _intent_type_from_profile(intent_profile), errors)
     return errors
-
-
-def _collect_raw_rule_errors(task_tree: Any) -> list[str]:
-    if not isinstance(task_tree, dict):
-        return []
-    root = task_tree.get("root")
-    if not isinstance(root, dict):
-        return []
-    errors: list[str] = []
-    _collect_raw_node_errors(root, errors)
-    return errors
-
-
-def _collect_raw_node_errors(node: dict[str, Any], errors: list[str]) -> None:
-    client_node_id = str(node.get("client_node_id") or "<unknown>")
-    if node.get("node_type") == "action" and node.get("estimated_minutes", 0) >= 5:
-        errors.append(f"{client_node_id}: estimated_minutes must be < 5")
-    for child in node.get("children", []):
-        if isinstance(child, dict):
-            _collect_raw_node_errors(child, errors)
 
 
 def _collect_rule_errors(
@@ -451,8 +610,6 @@ def _collect_rule_errors(
     nodes_by_id[client_node_id] = node
 
     if node["node_type"] == "action":
-        if node["estimated_minutes"] >= 5:
-            errors.append(f"{client_node_id}: estimated_minutes must be < 5")
         if not node.get("verb"):
             errors.append(f"{client_node_id}: verb is required")
 
@@ -489,6 +646,105 @@ def _collect_dependency_errors(nodes_by_id: dict[str, dict[str, Any]], errors: l
 
     for node_id in nodes_by_id:
         visit(node_id, [node_id])
+
+
+def _collect_global_size_errors(task_tree: TaskTree, errors: list[str]) -> None:
+    top_level_nodes = task_tree.root.children
+    if len(top_level_nodes) > MAX_TOP_LEVEL_NODES:
+        errors.append(
+            f"global_scope: top-level node count must be <= {MAX_TOP_LEVEL_NODES}"
+        )
+    for node in top_level_nodes:
+        if len(node.children) > MAX_CHILDREN_PER_TOP_LEVEL:
+            errors.append(
+                f"{node.client_node_id}: children count must be <= {MAX_CHILDREN_PER_TOP_LEVEL}"
+            )
+
+
+def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list[str]) -> None:
+    if intent_type == "short_term_delivery":
+        first_action = _first_action(task_tree)
+        if first_action is not None and _is_low_value_icebreaker(first_action):
+            errors.append(
+                f"{first_action.client_node_id}: short_term_delivery first task is a low-value icebreaker"
+            )
+        return
+
+    if intent_type == "long_term_growth":
+        first_action = _first_action(task_tree)
+        if first_action is None or first_action.estimated_minutes >= 5:
+            node_id = first_action.client_node_id if first_action is not None else "root"
+            errors.append(
+                f"{node_id}: long_term_growth first action must be a low-barrier icebreaker"
+            )
+        total_nodes = sum(1 for _ in _iter_task_nodes(task_tree.root))
+        max_depth = _task_tree_depth(task_tree.root)
+        if total_nodes > MAX_TOP_LEVEL_NODES + MAX_CHILDREN_PER_TOP_LEVEL:
+            errors.append("long_term_growth: scope is too broad for Phase 1")
+        if max_depth > LONG_TERM_MAX_DEPTH:
+            errors.append("long_term_growth: phase depth is too deep for Phase 1")
+        if _contains_long_term_full_cycle_language(task_tree):
+            errors.append(
+                "long_term_growth: plan must stay within 72-hour Phase 1 instead of covering the full long-term cycle"
+            )
+        return
+
+    if intent_type == "context_checklist":
+        max_depth = _task_tree_depth(task_tree.root)
+        if max_depth > 3:
+            errors.append("context_checklist: task tree is too deep for a checklist")
+        top_level_nodes = task_tree.root.children
+        if len(top_level_nodes) > 1 and not any(node.node_type == "group" for node in top_level_nodes):
+            errors.append("context_checklist: related actions should be grouped by context")
+
+
+def _intent_type_from_profile(intent_profile: dict[str, Any] | None) -> str:
+    if not isinstance(intent_profile, dict):
+        return "general"
+    intent_type = intent_profile.get("intent_type")
+    if isinstance(intent_type, str) and intent_type in INTENT_STRATEGY_PROMPTS:
+        return intent_type
+    return "general"
+
+
+def _first_action(task_tree: TaskTree) -> Any | None:
+    return next(
+        (node for node in _iter_task_nodes(task_tree.root) if node.node_type == "action"),
+        None,
+    )
+
+
+def _iter_task_nodes(node: Any):
+    yield node
+    for child in node.children:
+        yield from _iter_task_nodes(child)
+
+
+def _task_tree_depth(node: Any) -> int:
+    if not node.children:
+        return 1
+    return 1 + max(_task_tree_depth(child) for child in node.children)
+
+
+def _is_low_value_icebreaker(node: Any) -> bool:
+    text = " ".join(
+        value
+        for value in (node.title, node.description or "", node.verb)
+        if value
+    ).lower()
+    return any(term.lower() in text for term in LOW_VALUE_ICEBREAKER_TERMS)
+
+
+def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
+    text_parts = [task_tree.summary, *task_tree.assumptions]
+    for node in _iter_task_nodes(task_tree.root):
+        text_parts.extend(
+            value
+            for value in (node.title, node.description or "", node.verb)
+            if value
+        )
+    text = " ".join(text_parts)
+    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
 
 
 def _task_tree_summary(task_tree: dict[str, Any] | None) -> str | None:

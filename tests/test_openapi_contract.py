@@ -23,6 +23,7 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "post" in schema["paths"]["/api/tasks"]
     assert "/api/tasks/{task_id}" in schema["paths"]
     assert "patch" in schema["paths"]["/api/tasks/{task_id}"]
+    assert "delete" in schema["paths"]["/api/tasks/{task_id}"]
 
 
 def test_openapi_contract_is_native_task_board_only():
@@ -60,6 +61,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
     task_create_params = _parameter_names(schema["paths"]["/api/tasks"]["post"])
     task_patch_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["patch"])
+    task_delete_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["delete"])
 
     assert "Authorization" in intent_params
     assert "Authorization" in snapshot_params
@@ -68,6 +70,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     assert "Authorization" in tasks_params
     assert "Authorization" in task_create_params
     assert "Authorization" in task_patch_params
+    assert "Authorization" in task_delete_params
 
 
 def test_openapi_contract_exposes_native_task_board_schemas():

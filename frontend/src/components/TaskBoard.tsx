@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Sparkles, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
 
@@ -51,16 +51,30 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket } = useAppStore();
+  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Inline editing state
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editTitle, setEditTitle] = React.useState(node.title);
+  const [editDescription, setEditDescription] = React.useState(node.description || '');
+  const [editMinutes, setEditMinutes] = React.useState(node.estimated_minutes?.toString() || '');
+  const editTitleRef = React.useRef<HTMLInputElement>(null);
+  const editContainerRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     setLocalCompleted(node.status === 'completed');
   }, [node.status]);
+
+  React.useEffect(() => {
+    setEditTitle(node.title);
+    setEditDescription(node.description || '');
+    setEditMinutes(node.estimated_minutes?.toString() || '');
+  }, [node.title, node.description, node.estimated_minutes]);
 
   React.useEffect(() => {
     return () => {
@@ -70,9 +84,15 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     };
   }, []);
 
+  React.useEffect(() => {
+    if (isEditing && editTitleRef.current) {
+      editTitleRef.current.focus();
+    }
+  }, [isEditing]);
+
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isGroup) return;
+    if (isGroup || isEditing) return;
     
     // Prevent double clicking during ritual
     if (timeoutRef.current) return;
@@ -109,6 +129,74 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteTask(node.id);
+    } catch (err) {
+      // Error handled in store
+    }
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
+    setIsEditing(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editTitle.trim()) {
+      setIsEditing(false);
+      setEditTitle(node.title);
+      return;
+    }
+
+    const updates: { title?: string; description?: string | null; estimated_minutes?: number | null } = {};
+    if (editTitle.trim() !== node.title) updates.title = editTitle.trim();
+    const nextDescription = editDescription.trim() || null;
+    if (nextDescription !== (node.description || null)) updates.description = nextDescription;
+    
+    const minutesVal = parseInt(editMinutes);
+    if (!isNaN(minutesVal) && minutesVal !== node.estimated_minutes) {
+      updates.estimated_minutes = minutesVal;
+    } else if (editMinutes.trim() === '' && node.estimated_minutes != null) {
+      updates.estimated_minutes = null;
+    }
+
+    setIsEditing(false);
+
+    if (Object.keys(updates).length > 0) {
+      try {
+        await updateTaskDetails(node.id, updates);
+      } catch (err) {
+        // Revert on error
+        setEditTitle(node.title);
+        setEditDescription(node.description || '');
+        setEditMinutes(node.estimated_minutes?.toString() || '');
+      }
+    }
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleEditSubmit();
+    } else if (e.key === 'Escape') {
+      setIsEditing(false);
+      setEditTitle(node.title);
+      setEditDescription(node.description || '');
+      setEditMinutes(node.estimated_minutes?.toString() || '');
+    }
+  };
+
+  const handleEditBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocusedElement = e.relatedTarget;
+    if (nextFocusedElement instanceof Node && editContainerRef.current?.contains(nextFocusedElement)) {
+      return;
+    }
+    handleEditSubmit();
+  };
+
   if (isGroup) {
     return (
       <div className={clsx(node.title !== 'root_dummy' && "mb-8")}>
@@ -140,10 +228,11 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         localCompleted 
           ? "bg-muted/10 border-transparent" 
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
-        timeoutRef.current && "pointer-events-none",
+        (timeoutRef.current || isEditing) && "pointer-events-none cursor-default",
         depth > 0 && "ml-4"
       )}
       onClick={handleToggle}
+      onDoubleClick={handleDoubleClick}
     >
       <div className="mt-0.5 shrink-0">
         {localCompleted ? (
@@ -155,41 +244,104 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
             <CheckCircle2 size={18} className="text-green-500" />
           </motion.div>
         ) : (
-          <Circle size={18} className="text-muted-foreground/30 group-hover:text-foreground/50 transition-colors" />
+          <Circle size={18} className={clsx(
+            "text-muted-foreground/30 transition-colors",
+            !isEditing && "group-hover:text-foreground/50"
+          )} />
         )}
       </div>
       <div className="flex-1 pr-8">
-        <h4 className={clsx(
-          "text-base transition-colors",
-          localCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
-        )}>
-          {node.title}
-        </h4>
-        {node.description && (
-          <p className={clsx(
-            "text-xs mt-1 transition-colors",
-            localCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
-          )}>
-            {node.description}
-          </p>
-        )}
-        {!localCompleted && node.estimated_minutes != null && (
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/20 px-2 py-0.5 rounded-full">
-              {node.estimated_minutes} min
-            </span>
+        {isEditing ? (
+          <div
+            ref={editContainerRef}
+            onBlur={handleEditBlur}
+            className="flex flex-col gap-1 pointer-events-auto mt-[-2px]"
+          >
+            <input
+              ref={editTitleRef}
+              type="text"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              className="text-base font-medium bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full text-foreground/90 placeholder:text-muted-foreground/30"
+              placeholder="任务标题..."
+            />
+            <textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              rows={2}
+              className="text-xs bg-muted/10 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/20 rounded-md px-2 py-1 w-full resize-none placeholder:text-muted-foreground/30"
+              placeholder="任务描述..."
+            />
+            <div className="flex items-center gap-1 mt-1">
+              <input
+                type="number"
+                value={editMinutes}
+                onChange={(e) => setEditMinutes(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                placeholder="耗时"
+                className="text-[10px] font-mono bg-muted/20 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/40 rounded-full px-2 py-0.5 w-16"
+              />
+              <span className="text-[10px] text-muted-foreground/50">min</span>
+            </div>
           </div>
+        ) : (
+          <>
+            <h4 className={clsx(
+              "text-base transition-colors",
+              localCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
+            )}>
+              {node.title}
+            </h4>
+            {node.description && (
+              <p className={clsx(
+                "text-xs mt-1 transition-colors",
+                localCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
+              )}>
+                {node.description}
+              </p>
+            )}
+            {!localCompleted && node.estimated_minutes != null && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/20 px-2 py-0.5 rounded-full">
+                  {node.estimated_minutes} min
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
       
-      {currentViewBucket === 'planned' && !localCompleted && (
-        <button
-          onClick={handleMoveToMyDay}
-          className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md"
-          title="加入我的一天"
-        >
-          <Sun size={16} />
-        </button>
+      {!localCompleted && !isEditing && (
+        <div className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsEditing(true);
+            }}
+            className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md pointer-events-auto transition-colors"
+            title="编辑"
+          >
+            <Pencil size={16} />
+          </button>
+          {currentViewBucket === 'planned' && (
+            <button
+              onClick={handleMoveToMyDay}
+              className="p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto transition-colors"
+              title="加入我的一天"
+            >
+              <Sun size={16} />
+            </button>
+          )}
+          <button
+            onClick={handleDelete}
+            className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
+            title="删除任务"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
       )}
     </motion.div>
   );
@@ -270,7 +422,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState } = useAppStore();
+  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -370,6 +522,14 @@ export const TaskBoard: React.FC = () => {
 
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
+  const showFogOfWar = useMemo(() => {
+    if (currentViewBucket !== 'planned') return false;
+    if (!boardTasks || boardTasks.length === 0) return false;
+    const actions = boardTasks.filter(t => t.node_type === 'action');
+    if (actions.length === 0) return false;
+    return actions.every(t => t.status === 'completed');
+  }, [boardTasks, currentViewBucket]);
+
   const handleNewPlan = () => {
     if (isGenerating) {
       setView('input');
@@ -378,6 +538,11 @@ export const TaskBoard: React.FC = () => {
       useAppStore.getState().setAppState('INITIAL');
       setTimeout(() => reset(), 500);
     }
+  };
+
+  const handleGenerateNextPhase = async () => {
+    if (isGenerating) return;
+    await generateNextPhasePlan();
   };
 
   return (
@@ -437,6 +602,32 @@ export const TaskBoard: React.FC = () => {
             )}
             
             <InlineTaskInput />
+            
+            {showFogOfWar && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-12 flex justify-center"
+              >
+                <button 
+                  onClick={handleGenerateNextPhase}
+                  disabled={isGenerating}
+                  className="group relative px-6 py-3 rounded-full overflow-hidden transition-all hover:scale-105 active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
+                >
+                  <div className="absolute inset-0 bg-foreground/5 opacity-50 group-hover:opacity-100 transition-opacity" />
+                  <motion.div 
+                    animate={{ 
+                      boxShadow: ['0px 0px 0px 0px rgba(168, 85, 247, 0)', '0px 0px 20px 2px rgba(168, 85, 247, 0.3)', '0px 0px 0px 0px rgba(168, 85, 247, 0)'] 
+                    }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                    className="absolute inset-0 rounded-full border border-purple-500/30" 
+                  />
+                  <span className="relative text-sm font-medium text-purple-500/80 group-hover:text-purple-400 transition-colors flex items-center gap-2">
+                    <Sparkles size={18} /> {isGenerating ? '正在生成下一阶段计划...' : '当前阶段已完成，让 AI 生成下一阶段计划'}
+                  </span>
+                </button>
+              </motion.div>
+            )}
           </div>
         </main>
       </div>

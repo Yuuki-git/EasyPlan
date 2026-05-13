@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import AuthUser, get_current_user
@@ -59,8 +59,23 @@ async def update_task(
     task = await repository.update_task_for_user(
         user_id=current_user.id,
         task_id=task_id,
-        changes=payload.model_dump(exclude_none=True),
+        changes=payload.model_dump(exclude_unset=True),
     )
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: Annotated[UUID, Path()],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[TaskRepository, Depends(get_task_repository)],
+) -> Response:
+    deleted = await repository.delete_task_for_user(
+        user_id=current_user.id,
+        task_id=task_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

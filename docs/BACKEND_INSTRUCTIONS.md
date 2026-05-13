@@ -25,17 +25,19 @@ PM 文档中的后端重点：
 
 当前链路：
 
-1. `planner_node`
+1. `intent_profiler_node` (新增)
+   - 提取用户的 `intent_type` 和 `confidence_score`。
+
+2. `planner_node`
    - 异步调用 LLM。
    - 强制输出 `TaskTree`。
-   - prompt 必须包含：两分钟法则、动词开头、语言对齐、Scope Horizon。
-   - 不保存 prompt 和 raw response 到 checkpoint。
+   - 动态路由：根据 `intent_type` 注入专属 Few-Shot 样本。
+   - 严控规模：必须在 prompt 中约束最大节点数量。
 
-2. `task_tree_validator_node`
-   - 只在这里执行业务级微动作规则。
-   - action 节点 `estimated_minutes` 必须 `< 5`。
-   - 校验 ID 唯一、依赖存在、依赖无环。
-   - 发现 action 超时必须触发 `needs_replan`，不要让 Pydantic 提前杀死。
+3. `task_tree_validator_node`
+   - **重大变更**：废除 action 节点 `estimated_minutes < 5` 的暴毙式硬校验。
+   - 升级为“策略守门员”：校验大模型是否违反了当前 Intent Profile 的策略红线（如短期冲刺生成了低智破冰动作）。
+   - 保留：校验 ID 唯一、依赖存在、依赖无环。
 
 3. `human_review_node`
    - 必须调用 `interrupt()`。

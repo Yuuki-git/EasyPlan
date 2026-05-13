@@ -110,14 +110,13 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📅 Roadmap
 
-### 🔜 v1.2.0 (Native Ecosystem - *Current Focus*)
-- **Native Task Board**: Moving away from external sync to introduce a built-in, professional-grade task management panel.
-- **Deep Immersion**: Implementing auto-collapsing reasoning logs once the task tree is generated.
-- **Inline Editing**: Support for direct text and time modifications on the generated task tree.
-- **Scope Horizon**: For massive goals, AI will only plan the "activation phase" to prevent cognitive overload, strictly adhering to a 2-level hierarchy.
+### 🔜 v1.2.3 (Intent Profiling & Routing - *Current Focus*)
+- **Evaluation Driven**: Establish `planning_cases.jsonl` to automatically test LLM decomposition quality.
+- **Intent Profiling & Routing**: Introduce the `Intent → Profile → Strategy` pipeline. Dynamically switch Prompts based on time horizon and ambiguity.
+- **Ice-breaker Redefined**: Only long-term, high-friction goals require low-barrier ice-breakers. Short sprints strictly forbid low-value actions like "Open Software".
+- **Lightweight Strategy Validator**: Validator checks not only JSON validity but also strategy violations (e.g., forbidding long-term goals from planning out entire cycles).
 
 ---
 
 ## 📄 License
 Distributed under the **MIT License**.
- the **MIT License**.

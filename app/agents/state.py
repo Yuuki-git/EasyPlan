@@ -5,6 +5,7 @@ class AgentState(TypedDict, total=False):
     user_id: str
     thread_id: str
     intent_text: str
+    intent_profile: dict[str, Any]
     route: Literal["create_plan", "query_status"]
     reasoning_events: list[dict[str, Any]]
     task_tree: dict[str, Any]
