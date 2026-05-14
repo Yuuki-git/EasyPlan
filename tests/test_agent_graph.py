@@ -211,6 +211,15 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
 
     assert "整个任务树最多只能包含 12 个顶层节点" in prompt
     assert "每个顶层节点最多只能包含 3 个子节点" in prompt
+    assert prompt.index("规则优先级") < prompt.index("硬性规则")
+    assert "intent_type 对应策略高于普通任务拆解习惯" in prompt
+    assert "Scope Horizon 高于计划完整性" in prompt
+    assert "Strategy Compliance 高于任务数量" in prompt
+    assert "JSON Schema 合法性高于表达丰富度" in prompt
+    assert "当前阶段可执行性高于长期完整性" in prompt
+    assert "Scope Horizon 规则" in prompt
+    assert "不得生成完整周期计划、每日打卡表、周计划、月计划或备考全程表" in prompt
+    assert "默认 assumptions 为 []" in prompt
     assert "最近 72 小时" in build_planner_prompt(
         "明年考过日语 N3",
         intent_profile={"intent_type": "long_term_growth"},
@@ -223,11 +232,42 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
         "不知道要不要转行产品经理",
         intent_profile={"intent_type": "exploration_decision"},
     )
+    context_prompt = build_planner_prompt(
+        "下班后取快递买菜交电费",
+        intent_profile={"intent_type": "context_checklist"},
+    )
     assert "roadmap 只能是阶段标题和目的" in long_term_prompt
     assert "第1周/第2周/第3个月" in long_term_prompt
     assert "错误：为 N3 制定 3 个月每日学习计划" in long_term_prompt
+    assert "long_term_growth 禁止" in long_term_prompt
+    assert "完整备考周期计划" in long_term_prompt
+    assert "第一项就是高压力深度任务" in long_term_prompt
+    assert "超出 Phase 1 的具体行动" in long_term_prompt
+    assert "root.children 中第一个 action 的 estimated_minutes 必须 <= 5" in long_term_prompt
+    assert "安装环境" in long_term_prompt
+    assert "训练计划" in long_term_prompt
+    assert "summary 写成“Phase 1 启动计划”" in long_term_prompt
+    assert "assumptions 必须是 []" in long_term_prompt
+    assert "不要输出 roadmap" in long_term_prompt
+    assert "short_term_delivery 禁止" in prompt
+    assert "想一想" in prompt
+    assert "搜集资料但没有明确产出" in prompt
+    assert "context_checklist 禁止" in context_prompt
+    assert "深度父子任务树" in context_prompt
+    assert "每个琐事再拆成多个子任务" in context_prompt
+    assert "2 个以上零散事项" in context_prompt
+    assert "root.children 必须使用 group 节点" in context_prompt
     assert "不要假设用户已经决定" in exploration_prompt
     assert "错误：直接制定 6 个月转行产品经理学习计划" in exploration_prompt
+    assert "exploration_decision 禁止" in exploration_prompt
+    assert "假设用户已经做出最终决定" in exploration_prompt
+    assert "生成打卡式任务" in exploration_prompt
+    assert "跳过信息收集和低成本验证" in exploration_prompt
+    assert "不要在 summary、assumptions、title、description 或 verb 中写" in exploration_prompt
+    assert "把用户原词改写为“方向A/选项A/当前选择”" in exploration_prompt
+    assert "root.children 最多 5 个顶层任务" in exploration_prompt
+    assert "summary 写成“探索澄清计划”" in exploration_prompt
+    assert "assumptions 必须是 []" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
     assert "必须遵守两分钟法则" not in prompt
@@ -268,7 +308,12 @@ def test_validator_rejects_short_term_low_value_first_action():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert "low-value icebreaker" in result["validation_errors"][0]
+    error = result["validation_errors"][0]
+    assert "错误代码: LOW_VALUE_ICEBREAKER_IN_SPRINT" in error
+    assert "intent_type: short_term_delivery" in error
+    assert "failed_rule: short_term_delivery 禁止项" in error
+    assert "违规任务/组:" in error
+    assert "删除低价值破冰" in error
 
 
 def test_validator_requires_long_term_first_action_to_be_low_barrier():
@@ -308,7 +353,11 @@ def test_validator_requires_long_term_first_action_to_be_low_barrier():
     assert valid_result["validation_status"] == "valid"
     assert five_minute_result["validation_status"] == "valid"
     assert action_result["validation_status"] == "needs_replan"
-    assert "low-barrier icebreaker" in action_result["validation_errors"][0]
+    error = action_result["validation_errors"][0]
+    assert "错误代码: MISSING_LOW_BARRIER_ICEBREAKER" in error
+    assert "intent_type: long_term_growth" in error
+    assert "failed_rule: 破冰法则" in error
+    assert "第一步改成必须 <= 5 分钟" in error
 
 
 def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h():
@@ -323,7 +372,10 @@ def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h(
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("72-hour Phase 1" in error for error in result["validation_errors"])
+    assert any("错误代码: HORIZON_OVER_EXPANDED" in error for error in result["validation_errors"])
+    assert any("intent_type: long_term_growth" in error for error in result["validation_errors"])
+    assert any("failed_rule: Scope Horizon" in error for error in result["validation_errors"])
+    assert any("只保留当前启动阶段 Phase 1" in error for error in result["validation_errors"])
 
 
 def test_validator_rejects_long_term_weekly_schedule_tasks():
@@ -338,7 +390,8 @@ def test_validator_rejects_long_term_weekly_schedule_tasks():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("第1周" in error or "24-72" in error for error in result["validation_errors"])
+    assert any("错误代码: HORIZON_OVER_EXPANDED" in error for error in result["validation_errors"])
+    assert any("24-72" in error for error in result["validation_errors"])
 
 
 def test_validator_rejects_exploration_plan_that_assumes_execution_decision():
@@ -353,7 +406,9 @@ def test_validator_rejects_exploration_plan_that_assumes_execution_decision():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("exploration_decision" in error for error in result["validation_errors"])
+    assert any("错误代码: EXPLORATION_PREMATURE_EXECUTION" in error for error in result["validation_errors"])
+    assert any("intent_type: exploration_decision" in error for error in result["validation_errors"])
+    assert any("低成本验证" in error for error in result["validation_errors"])
 
 
 def test_validator_enforces_global_size_limits():
@@ -382,7 +437,9 @@ def test_validator_rejects_context_checklist_without_grouping():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert "grouped" in result["validation_errors"][0]
+    assert "错误代码: CHECKLIST_NOT_GROUPED" in result["validation_errors"][0]
+    assert "intent_type: context_checklist" in result["validation_errors"][0]
+    assert "按位置、工具、顺路关系或时间场景聚合" in result["validation_errors"][0]
 
 
 def test_validator_rejects_unknown_dependency_reference():

@@ -415,6 +415,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const intentText = [
       '请基于我当前 EasyPlan 原生任务看板中已经完成的 Phase 1，生成下一阶段 Phase 2 的计划。',
       '保持 Fog of War Lite：只解锁下一阶段，不要排完整长期周期。',
+      '请保持原始意图类型，不要重新解释为短期交付或情境清单；本次只是为同一目标解锁下一阶段。',
       `当前视图：${currentViewBucket}`,
       `当前任务数量：${plannedTasks.length}，已完成：${completedCount}`,
       taskSnapshot ? `当前任务快照：\n${taskSnapshot}` : '当前任务快照为空，请给出一个保守的下一阶段启动计划。',
