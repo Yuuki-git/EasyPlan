@@ -104,6 +104,32 @@ def long_term_plan_that_covers_full_cycle() -> dict[str, Any]:
     return plan
 
 
+def long_term_plan_with_weekly_schedule_task() -> dict[str, Any]:
+    plan = valid_plan("Search N3 textbook")
+    plan["root"]["children"].append(
+        {
+            "client_node_id": "week-1",
+            "title": "第1周完成 N3 词汇语法基础",
+            "description": "每天坚持背单词并完成周计划。",
+            "verb": "完成",
+            "estimated_minutes": 120,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        }
+    )
+    return plan
+
+
+def exploration_plan_that_assumes_execution_decision() -> dict[str, Any]:
+    plan = valid_plan("制定 6 个月转行产品经理学习计划")
+    plan["root"]["title"] = "执行转行产品经理计划"
+    plan["root"]["children"][0]["title"] = "报名产品经理系统课程"
+    plan["root"]["children"][0]["description"] = "直接开始长期学习计划。"
+    plan["root"]["children"][0]["estimated_minutes"] = 60
+    return plan
+
+
 def top_level_with_too_many_children() -> dict[str, Any]:
     plan = valid_plan("Draft core module")
     plan["root"]["children"] = [
@@ -189,6 +215,19 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
         "明年考过日语 N3",
         intent_profile={"intent_type": "long_term_growth"},
     )
+    long_term_prompt = build_planner_prompt(
+        "明年考过日语 N3",
+        intent_profile={"intent_type": "long_term_growth"},
+    )
+    exploration_prompt = build_planner_prompt(
+        "不知道要不要转行产品经理",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+    assert "roadmap 只能是阶段标题和目的" in long_term_prompt
+    assert "第1周/第2周/第3个月" in long_term_prompt
+    assert "错误：为 N3 制定 3 个月每日学习计划" in long_term_prompt
+    assert "不要假设用户已经决定" in exploration_prompt
+    assert "错误：直接制定 6 个月转行产品经理学习计划" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
     assert "必须遵守两分钟法则" not in prompt
@@ -273,6 +312,36 @@ def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h(
 
     assert result["validation_status"] == "needs_replan"
     assert any("72-hour Phase 1" in error for error in result["validation_errors"])
+
+
+def test_validator_rejects_long_term_weekly_schedule_tasks():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": long_term_plan_with_weekly_schedule_task(),
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any("第1周" in error or "24-72" in error for error in result["validation_errors"])
+
+
+def test_validator_rejects_exploration_plan_that_assumes_execution_decision():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": exploration_plan_that_assumes_execution_decision(),
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any("exploration_decision" in error for error in result["validation_errors"])
 
 
 def test_validator_enforces_global_size_limits():

@@ -1,9 +1,14 @@
-# EasyPlan 🪐 - **Intent-Driven** Task Orchestration Tool (v1.2.1)
+# EasyPlan 🪐 - Intent-Driven AI Planning System (v1.2.3)
 
-> **Detailed plan is all you need. Efficiency is everything.**  
-> **"Don't let grand visions become a burden. Let technology carry the weight of planning."**
+> **Current:** v1.2.3 Intent Profiling & Dynamic Routing  
+> **Status:** Core pipeline implemented, eval expansion in progress
 
-EasyPlan is a minimalist task management tool built on the philosophy of **Intentional Productivity**. More than a simple to-do list, it's an intelligent Agent companion that understands your goals and decomposes them into "2-minute" micro-actions to lower the barrier to start.
+**EasyPlan is an intent-driven AI planning system. It identifies the user's goal type first, then selects the appropriate decomposition strategy, translating fuzzy intents into actionable, adjustable, and sustainable task maps.** More than a simple to-do list, it's an intelligent Agent companion that understands behavioral psychology.
+
+```text
+[Architecture Flow]
+Intent Capture → Intent Profile → Strategy Router → Planner → Validator → Task Board ⇌ Refine / Fog Unlock
+```
 
 [中文版本](./README.md) | [Quick Start](#-quick-start) | [Architecture](#-architecture)
 
@@ -16,14 +21,21 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Maintain Human Agency**: We stick to "Human-in-the-Loop (HITL)" design. AI handles the tedious planning; you retain ultimate control.
 - **Seamless Closed-Loop**：Say goodbye to clunky external syncing. A built-in "My Day" and "Planned" task board ensures your data is private, lighting-fast, and distraction-free.
 
-## ✨ Features (v1.2.2)
+## ✨ Features (v1.2.3)
 
 - **Spotlight Capture**: A single dynamic input box for fuzzy natural language goal entry.
-- **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, enforcing the "2-minute rule" and "verb-driven" actions.
-- **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans instantly.
-- **Fluid Motion UI**: "Balanced Minimalism" interface where the task tree grows organically as you plan.
-- **Native Task Engine**: Stripping away heavy external dependencies to introduce a built-in task board, creating a seamless "Plan -> Decompose -> Execute" closed-loop experience.
+- **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, dynamically selecting ice-breaker, time-boxing, context aggregation, or exploration strategies based on the intent profile.
+- **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans the diff instantly.
+- **Fluid Motion UI**: "Balanced Minimalism" interface with a parchment theme, where the task tree grows organically as you plan.
+- **Native Task Engine**: A built-in task board supporting inline editing and cross-view transfers, creating a seamless "Plan -> Decompose -> Execute" experience.
 - **Enterprise-Grade Security**: Multi-tenant isolation and strict JWT-based authentication.
+
+## 📊 Planning Eval
+EasyPlan adopts an **Eval-Driven** approach for LLM tuning.
+- **Core Cases**: 32 Core Cases
+- **Intent Classification Accuracy**: 87.50%
+- **Strategy Compliance Rate**: 59.38% (Tuning in progress)
+- **JSON Parse Success Rate**: 100.00%
 
 ## 🛠️ Architecture
 

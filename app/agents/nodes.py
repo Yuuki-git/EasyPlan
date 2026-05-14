@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import inspect
+import re
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -32,6 +33,47 @@ LONG_TERM_SCOPE_KEYWORDS = (
     "每周",
     "每月",
 )
+LONG_TERM_HORIZON_PATTERNS = (
+    r"第[一二三四五六七八九十\d]+周",
+    r"第[一二三四五六七八九十\d]+个月",
+    r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
+    r"(每天|每日|每周|每月).{0,12}(坚持|学习|训练|复习|背|练)",
+    r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
+)
+LONG_TERM_CURRICULUM_TERMS = (
+    "基础",
+    "训练",
+    "模拟",
+    "复盘",
+    "强化",
+    "冲刺",
+    "课程",
+    "长期",
+)
+EXPLORATION_EXECUTION_PATTERNS = (
+    r"[三四五六七八九十\d]+\s*个月.{0,8}(转行|创业|学习|执行).{0,8}计划",
+    r"(直接|立即).{0,6}(辞职|转行|创业|报名|投递|执行)",
+    r"(转行|创业|长期学习).{0,8}(执行计划|学习计划|路线图)",
+)
+EXPLORATION_DISCOVERY_TERMS = (
+    "澄清",
+    "写下",
+    "列出",
+    "收集",
+    "调研",
+    "访谈",
+    "聊",
+    "找",
+    "JD",
+    "岗位",
+    "比较",
+    "成本收益",
+    "小实验",
+    "验证",
+    "担忧",
+    "原因",
+    "决策",
+)
 LOW_VALUE_ICEBREAKER_TERMS = (
     "打开电脑",
     "打开 word",
@@ -60,13 +102,32 @@ INTENT_STRATEGY_PROMPTS = {
 第一个任务必须是极其简单的破冰动作，建议 <5 分钟，用来降低启动阻力。
 但后续任务可以是 25-60 分钟的深度工作。
 不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
+可以给 3-5 个高层阶段作为 roadmap；roadmap 只能是阶段标题和目的，不允许 estimated_minutes，不允许具体日期，不允许子任务。
+如果需要输出 roadmap，只能放在 assumptions 里；TaskTree.root.children 只能放当前 Phase 1 tasks。
+Phase 1 建议覆盖未来 24-72 小时。
+禁止排满整个备考期、训练期、写作期或长期周期。
+禁止生成“第1周/第2周/第3个月”这种长期排期任务。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
+错误：为 N3 制定 3 个月每日学习计划。
+原因：排满全周期，造成认知负担，违反 Scope Horizon。
 
 <正面教材>
 动作：「在淘宝搜索 N3 备考教材」，耗时：2 分钟。原因：低门槛破冰。
-动作：「完成一套词汇摸底测试」，耗时：45 分钟。原因：进入真实评估。""",
+动作：「完成一套词汇摸底测试」，耗时：45 分钟。原因：进入真实评估。
+正确：
+roadmap:
+1. 摸底与资料准备
+2. 词汇语法基础
+3. 听力阅读训练
+4. 真题模拟
+5. 考前复盘
+
+当前 Phase 1 tasks:
+1. 搜索并保存一套 N3 真题，5 分钟
+2. 完成 20 道词汇摸底题，20 分钟
+3. 记录 10 个不会的词，10 分钟""",
     "short_term_delivery": """策略：这是短期交付任务。你需要使用「时间盒法则」。
 绝对禁止生成「打开电脑 / 新建文档 / 打开 Word / 准备开始」等低价值破冰动作。
 请直接按交付模块、逻辑顺序或时间块拆分。
@@ -92,13 +153,29 @@ INTENT_STRATEGY_PROMPTS = {
 动作：「缴电费」""",
     "exploration_decision": """策略：这是探索决策型任务。
 不要直接生成死板执行清单，也不要假设用户已经做出决定。
+不要假设用户已经决定。
 请生成信息收集、问题澄清、最小成本测试和决策节点。
 目标是降低不确定性，而不是强推执行。
+不要生成长期执行计划。
+当前阶段只生成信息收集、问题澄清、小实验和决策节点。
+禁止直接生成完整转行计划、创业计划、长期学习计划。
 
 <正面教材>
 动作：「列出辞职做自媒体的 3 个核心担忧」，耗时：15 分钟。
 动作：「找一位自媒体从业者聊现状」，耗时：60 分钟。
-动作：「用一页纸比较继续上班和做自媒体的成本收益」，耗时：30 分钟。""",
+动作：「用一页纸比较继续上班和做自媒体的成本收益」，耗时：30 分钟。
+
+<反面教材>
+错误：直接制定 6 个月转行产品经理学习计划。
+原因：用户尚未完成决策，不应该强行执行化。
+
+<正面教材>
+正确：
+1. 写下转行产品经理的 3 个原因，10 分钟
+2. 找 3 个产品经理 JD，20 分钟
+3. 标出这些 JD 的共同要求，15 分钟
+4. 约一位从业者聊 20 分钟，60 分钟
+5. 用一页纸比较转行与不转行的成本收益，30 分钟""",
     "general": """策略：用户意图不够明确。
 请生成保守、短小、可执行的启动计划。
 不要输出过多任务。
@@ -261,7 +338,10 @@ def build_planner_prompt(
     if feedback:
         parts.append(f"用户自然语言反馈：{feedback}")
     if validation_errors:
-        parts.append("上次校验失败，请继续拆解以下问题：" + "; ".join(validation_errors))
+        parts.append(
+            "验证失败，请继续拆解并按以下具体原因修正，不要重复输出同类错误："
+            + "; ".join(validation_errors)
+        )
     return "\n".join(parts)
 
 
@@ -675,27 +755,50 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
         if first_action is None or first_action.estimated_minutes >= 5:
             node_id = first_action.client_node_id if first_action is not None else "root"
             errors.append(
-                f"{node_id}: long_term_growth first action must be a low-barrier icebreaker"
+                f"验证失败：{node_id}: long_term_growth first action must be a low-barrier icebreaker。请把第一步改成 5 分钟以内、具体、低阻力的启动动作。"
             )
         total_nodes = sum(1 for _ in _iter_task_nodes(task_tree.root))
         max_depth = _task_tree_depth(task_tree.root)
         if total_nodes > MAX_TOP_LEVEL_NODES + MAX_CHILDREN_PER_TOP_LEVEL:
-            errors.append("long_term_growth: scope is too broad for Phase 1")
+            errors.append("验证失败：long_term_growth scope is too broad for Phase 1。请只保留高层 roadmap，并只展开当前 Phase 1 的 24-72 小时行动。")
         if max_depth > LONG_TERM_MAX_DEPTH:
-            errors.append("long_term_growth: phase depth is too deep for Phase 1")
+            errors.append("验证失败：long_term_growth phase depth is too deep for Phase 1。请减少深层嵌套，只输出启动阶段行动。")
         if _contains_long_term_full_cycle_language(task_tree):
             errors.append(
-                "long_term_growth: plan must stay within 72-hour Phase 1 instead of covering the full long-term cycle"
+                "验证失败：long_term_growth plan must stay within 72-hour Phase 1 instead of covering the full long-term cycle。请不要排满完整备考期、训练期或长期周期。"
+            )
+        if _contains_long_term_schedule_language(task_tree):
+            errors.append(
+                "验证失败：long_term_growth 出现第1周/第2周/第3个月/每天坚持等长期排期。请只展开当前 Phase 1 的 24-72 小时行动。"
+            )
+        if _top_level_looks_like_long_term_curriculum(task_tree):
+            errors.append(
+                "验证失败：long_term_growth 顶层任务像完整课程大纲。请把 roadmap 放入 assumptions，只在 tasks 中保留 Phase 1 行动。"
+            )
+        if _contains_overlong_long_term_action(task_tree):
+            errors.append(
+                "验证失败：long_term_growth tasks 中存在超过当前启动阶段的长期任务。请拆成 24-72 小时内可完成的行动。"
+            )
+        return
+
+    if intent_type == "exploration_decision":
+        if _contains_exploration_execution_language(task_tree):
+            errors.append(
+                "验证失败：exploration_decision 不应直接生成长期执行计划。请改为问题澄清、信息收集、小实验和决策节点。"
+            )
+        if not _contains_exploration_discovery_language(task_tree):
+            errors.append(
+                "验证失败：exploration_decision 缺少信息收集或决策节点。请加入澄清问题、调研、访谈、小实验或成本收益比较。"
             )
         return
 
     if intent_type == "context_checklist":
         max_depth = _task_tree_depth(task_tree.root)
         if max_depth > 3:
-            errors.append("context_checklist: task tree is too deep for a checklist")
+            errors.append("验证失败：context_checklist task tree is too deep for a checklist。请不要生成多层复杂任务树。")
         top_level_nodes = task_tree.root.children
         if len(top_level_nodes) > 1 and not any(node.node_type == "group" for node in top_level_nodes):
-            errors.append("context_checklist: related actions should be grouped by context")
+            errors.append("验证失败：context_checklist related actions should be grouped by context。请按地点、工具、时间或顺路关系聚合。")
 
 
 def _intent_type_from_profile(intent_profile: dict[str, Any] | None) -> str:
@@ -736,6 +839,42 @@ def _is_low_value_icebreaker(node: Any) -> bool:
 
 
 def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
+    text = _task_tree_text(task_tree)
+    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
+
+
+def _contains_long_term_schedule_language(task_tree: TaskTree) -> bool:
+    text = _task_tree_text(task_tree)
+    return any(re.search(pattern, text) for pattern in LONG_TERM_HORIZON_PATTERNS)
+
+
+def _top_level_looks_like_long_term_curriculum(task_tree: TaskTree) -> bool:
+    stage_like_nodes = [
+        node
+        for node in task_tree.root.children
+        if any(term in f"{node.title} {node.description or ''}" for term in LONG_TERM_CURRICULUM_TERMS)
+    ]
+    return len(stage_like_nodes) >= 3
+
+
+def _contains_overlong_long_term_action(task_tree: TaskTree) -> bool:
+    return any(
+        node.node_type == "action" and node.estimated_minutes > 120
+        for node in _iter_task_nodes(task_tree.root)
+    )
+
+
+def _contains_exploration_execution_language(task_tree: TaskTree) -> bool:
+    text = _task_tree_text(task_tree)
+    return any(re.search(pattern, text) for pattern in EXPLORATION_EXECUTION_PATTERNS)
+
+
+def _contains_exploration_discovery_language(task_tree: TaskTree) -> bool:
+    text = _task_tree_text(task_tree)
+    return any(term in text for term in EXPLORATION_DISCOVERY_TERMS)
+
+
+def _task_tree_text(task_tree: TaskTree) -> str:
     text_parts = [task_tree.summary, *task_tree.assumptions]
     for node in _iter_task_nodes(task_tree.root):
         text_parts.extend(
@@ -743,8 +882,7 @@ def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
             for value in (node.title, node.description or "", node.verb)
             if value
         )
-    text = " ".join(text_parts)
-    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
+    return " ".join(text_parts)
 
 
 def _task_tree_summary(task_tree: dict[str, Any] | None) -> str | None:

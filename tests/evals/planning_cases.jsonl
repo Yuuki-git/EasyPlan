@@ -22,11 +22,11 @@
 {"input":"明天带孩子上学前要准备校服、水杯、作业本和体温表","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"家庭晨间清单，不需要复杂拆解。"}
 {"input":"去公司前要带门禁卡、耳机、合同原件，还要记得寄快递","expected_intent_type":"context_checklist","expected_horizon":"hours","must_have_icebreaker":false,"max_nodes":5,"description":"通勤场景清单，按携带和顺路办理聚合。"}
 {"input":"月底前把房租、信用卡、水电费都处理一下","expected_intent_type":"context_checklist","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":5,"description":"账单处理清单，按支付工具或截止时间聚合。"}
-{"input":"我最近觉得工作很迷茫，不知道是不是应该辞职转行去做自媒体","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"探索决策型，不要强行生成转行计划，应生成信息收集和小实验。"}
-{"input":"我不确定要不要从上海搬去成都生活，想先想清楚","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"生活决策探索，应比较信息和低成本验证。"}
-{"input":"我在纠结要不要读研，担心时间成本太高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"教育决策，应先澄清担忧和收集真实信息。"}
-{"input":"我想做一个副业，但不知道电商、咨询还是写作哪个适合我","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"副业方向探索，应生成对比和最小测试。"}
-{"input":"我不知道要不要买车，怕花钱但通勤又很累","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"消费决策探索，应比较成本收益和替代方案。"}
-{"input":"我在考虑要不要离开现在的团队，感觉成长停滞","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"职业选择探索，应澄清核心问题而不是直接执行。"}
-{"input":"我想创业做 AI 教育产品，但不知道这个方向是否靠谱","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"创业方向探索，应做信息收集、访谈和小实验。"}
-{"input":"我纠结要不要和合伙人继续合作，最近沟通成本很高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":true,"max_nodes":6,"description":"关系/合作决策，应先澄清事实、风险和可验证信号。"}
+{"input":"我最近觉得工作很迷茫，不知道是不是应该辞职转行去做自媒体","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"探索决策型，不要强行生成转行计划，应生成信息收集和小实验。"}
+{"input":"我不确定要不要从上海搬去成都生活，想先想清楚","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"生活决策探索，应比较信息和低成本验证。"}
+{"input":"我在纠结要不要读研，担心时间成本太高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"教育决策，应先澄清担忧和收集真实信息。"}
+{"input":"我想做一个副业，但不知道电商、咨询还是写作哪个适合我","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"副业方向探索，应生成对比和最小测试。"}
+{"input":"我不知道要不要买车，怕花钱但通勤又很累","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"消费决策探索，应比较成本收益和替代方案。"}
+{"input":"我在考虑要不要离开现在的团队，感觉成长停滞","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"职业选择探索，应澄清核心问题而不是直接执行。"}
+{"input":"我想创业做 AI 教育产品，但不知道这个方向是否靠谱","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"创业方向探索，应做信息收集、访谈和小实验。"}
+{"input":"我纠结要不要和合伙人继续合作，最近沟通成本很高","expected_intent_type":"exploration_decision","expected_horizon":"days","must_have_icebreaker":false,"max_nodes":6,"description":"关系/合作决策，应先澄清事实、风险和可验证信号。"}
