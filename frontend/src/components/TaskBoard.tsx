@@ -97,7 +97,7 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
+  const { updateTaskStatus, toggleTaskInMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   
@@ -166,10 +166,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     }
   };
 
-  const handleMoveToMyDay = async (e: React.MouseEvent) => {
+  const handleToggleMyDay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await moveTaskToMyDay(node.id);
+      await toggleTaskInMyDay(node.id, !!node.is_in_my_day);
     } catch (err) {
       // Error handled in store
     }
@@ -373,7 +373,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           </button>
           {currentViewBucket === 'planned' && (
             <button
-              onClick={handleMoveToMyDay}
+              onClick={handleToggleMyDay}
               className="p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto transition-colors"
               title="加入我的一天"
             >
@@ -491,6 +491,7 @@ export const TaskBoard: React.FC = () => {
         view_bucket: 'my_day',
         estimated_minutes: null,
         sort_order: 0,
+        is_in_my_day: false,
         children: boardTasks.sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
       };
       return root;
@@ -526,6 +527,7 @@ export const TaskBoard: React.FC = () => {
         view_bucket: 'planned',
         estimated_minutes: null,
         sort_order: 0,
+        is_in_my_day: false,
         children: rootChildren
       };
       return root;

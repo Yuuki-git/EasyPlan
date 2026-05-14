@@ -43,6 +43,7 @@ async def create_task(
         description=payload.description,
         view_bucket=payload.view_bucket,
         parent_task_id=payload.parent_task_id,
+        is_in_my_day=payload.is_in_my_day,
     )
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent task not found")

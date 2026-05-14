@@ -129,7 +129,7 @@ class ThreadSnapshot(BaseModel):
 
 TaskViewBucket = Literal["planned", "my_day", "backlog"]
 TaskStatus = Literal["draft", "active", "today", "completed", "archived"]
-TASK_UPDATE_NON_NULL_FIELDS = ("title", "status", "view_bucket", "sort_order")
+TASK_UPDATE_NON_NULL_FIELDS = ("title", "status", "view_bucket", "is_in_my_day", "sort_order")
 
 
 class TaskCreateRequest(BaseModel):
@@ -138,6 +138,7 @@ class TaskCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
     view_bucket: TaskViewBucket = "my_day"
+    is_in_my_day: bool = False
     parent_task_id: UUID | None = None
 
 
@@ -154,6 +155,7 @@ class TaskResponse(BaseModel):
     node_type: Literal["group", "action"]
     status: str
     view_bucket: str
+    is_in_my_day: bool
     estimated_minutes: int | None
     sort_order: int
 
@@ -177,6 +179,10 @@ class TaskUpdateRequest(BaseModel):
         description="Omit to keep unchanged. Explicit null is rejected.",
     )
     view_bucket: TaskViewBucket | None = Field(
+        default=None,
+        description="Omit to keep unchanged. Explicit null is rejected.",
+    )
+    is_in_my_day: bool | None = Field(
         default=None,
         description="Omit to keep unchanged. Explicit null is rejected.",
     )

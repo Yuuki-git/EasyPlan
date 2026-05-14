@@ -21,6 +21,7 @@ def test_create_task_for_user_commits_manual_thread_and_task_together():
             title="Buy notebooks",
             description=None,
             view_bucket="my_day",
+            is_in_my_day=True,
             parent_task_id=None,
         )
     )
@@ -29,6 +30,7 @@ def test_create_task_for_user_commits_manual_thread_and_task_together():
     assert session.commit_count == 1
     assert session.rollback_count == 0
     assert [type(item) for item in session.added] == [AgentThread, Task]
+    assert task.is_in_my_day is True
     assert task in session.refreshed
 
 
@@ -43,6 +45,7 @@ def test_create_task_for_user_rolls_back_manual_thread_when_task_add_fails():
                 title="Buy notebooks",
                 description=None,
                 view_bucket="my_day",
+                is_in_my_day=False,
                 parent_task_id=None,
             )
         )
@@ -50,6 +53,40 @@ def test_create_task_for_user_rolls_back_manual_thread_when_task_add_fails():
     assert session.begin_count == 0
     assert session.commit_count == 0
     assert session.rollback_count == 1
+
+
+def test_list_tasks_for_user_maps_my_day_to_virtual_flag():
+    session = FakeTaskSession()
+    repository = TaskRepository(session)
+    user_id = uuid4()
+
+    asyncio.run(
+        repository.list_tasks_for_user(
+            user_id=user_id,
+            view_bucket="my_day",
+        )
+    )
+
+    sql = str(session.select_statements[-1])
+    assert "tasks.is_in_my_day IS true" in sql
+    assert "tasks.view_bucket =" not in sql
+
+
+def test_list_tasks_for_user_keeps_planned_as_physical_bucket():
+    session = FakeTaskSession()
+    repository = TaskRepository(session)
+    user_id = uuid4()
+
+    asyncio.run(
+        repository.list_tasks_for_user(
+            user_id=user_id,
+            view_bucket="planned",
+        )
+    )
+
+    sql = str(session.select_statements[-1])
+    assert "tasks.view_bucket" in sql
+    assert "planned" in session.select_statements[-1].compile().params.values()
 
 
 def test_delete_task_for_user_uses_user_scoped_hard_delete():
@@ -96,6 +133,7 @@ class FakeTaskSession:
         self.delete_rowcount = delete_rowcount
         self.added = []
         self.delete_statements = []
+        self.select_statements = []
         self.refreshed = []
         self.begin_count = 0
         self.commit_count = 0
@@ -116,6 +154,7 @@ class FakeTaskSession:
             self.delete_statements.append(statement)
             return FakeDeleteResult(self.delete_rowcount)
         assert isinstance(statement, Select)
+        self.select_statements.append(statement)
         return FakeScalarResult(0)
 
     async def commit(self):
@@ -137,6 +176,14 @@ class FakeScalarResult:
 
     def scalar_one(self):
         return self.value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        if isinstance(self.value, list):
+            return self.value
+        return []
 
 
 class FakeDeleteResult:

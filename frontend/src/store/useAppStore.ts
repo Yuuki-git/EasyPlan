@@ -71,7 +71,7 @@ interface AppStore {
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
   updateTaskDetails: (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => Promise<void>;
   createManualTask: (title: string) => Promise<void>;
-  moveTaskToMyDay: (taskId: string) => Promise<void>;
+  toggleTaskInMyDay: (taskId: string, currentState: boolean) => Promise<void>;
   generateNextPhasePlan: () => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
 }
@@ -315,14 +315,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  moveTaskToMyDay: async (taskId: string) => {
-    const { token, boardTasks } = get();
+  toggleTaskInMyDay: async (taskId: string, currentState: boolean) => {
+    const { token, boardTasks, currentViewBucket } = get();
     if (!token) return;
 
-    // Optimistically remove from current planned view immediately for visual smoothness
-    set({
-      boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
-    });
+    const nextState = !currentState;
+    const originalTasks = boardTasks ? [...boardTasks] : [];
+
+    if (currentViewBucket === 'my_day' && !nextState) {
+      set({
+        boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
+      });
+    } else {
+      set({
+        boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, is_in_my_day: nextState } : t)
+      });
+    }
 
     try {
       const headers: Record<string, string> = {
@@ -332,21 +340,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ view_bucket: 'my_day' })
+        body: JSON.stringify({ is_in_my_day: nextState })
       });
       
-      // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
         set({ showAuthModal: true });
+        set({ boardTasks: originalTasks });
         return;
       }
 
-      if (!response.ok) throw new Error('Failed to move task to my day');
+      if (!response.ok) throw new Error('Failed to toggle task in my day');
     } catch (err) {
-      console.error("Move task to my day failed", err);
-      // Revert if failed by refetching
-      get().fetchTasks();
+      console.error("Toggle task in my day failed", err);
+      set({ boardTasks: originalTasks });
       throw err;
     }
   },

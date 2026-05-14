@@ -107,6 +107,7 @@ export interface TaskResponse {
   view_bucket: string;
   estimated_minutes: number | null;
   sort_order: number;
+  is_in_my_day: boolean;
 }
 
 export interface TaskUpdateRequest {
@@ -116,6 +117,7 @@ export interface TaskUpdateRequest {
   view_bucket?: 'planned' | 'my_day' | 'backlog' | null;
   estimated_minutes?: number | null;
   sort_order?: number | null;
+  is_in_my_day?: boolean;
 }
 
 export interface ValidationError {
