@@ -39,6 +39,7 @@ interface AppStore {
   theme: ThemeType;
   view: 'input' | 'board';
   currentViewBucket: 'planned' | 'my_day';
+  selectedProjectId: string | null;
   boardTasks: TaskResponse[] | null;
   boardError: string | null;
 
@@ -53,6 +54,7 @@ interface AppStore {
   setTheme: (theme: ThemeType) => void;
   setView: (view: 'input' | 'board') => void;
   setCurrentViewBucket: (bucket: 'planned' | 'my_day') => void;
+  setSelectedProjectId: (projectId: string | null) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -91,6 +93,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: 'input',
   currentViewBucket: 'planned', // Default to planned after transition
+  selectedProjectId: null,
   boardTasks: null,
   boardError: null,
 
@@ -99,7 +102,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setAppState: (appState) => {
     set({ appState });
     if (appState === 'SUCCESS' && get().view === 'board') {
-      set({ currentViewBucket: 'planned' });
+      set({ currentViewBucket: 'planned', selectedProjectId: null });
       get().fetchTasks('planned');
     }
   },
@@ -123,7 +126,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => {
     set({ view });
     if (view === 'board') {
-      set({ currentViewBucket: 'planned' });
+      set({ currentViewBucket: 'planned', selectedProjectId: null });
       get().fetchTasks('planned');
     }
   },
@@ -131,6 +134,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ currentViewBucket: bucket });
     get().fetchTasks(bucket);
   },
+  setSelectedProjectId: (projectId) => set({ selectedProjectId: projectId }),
   
   generateSyncId: () => set({ syncRequestId: generateUUID() }),
   
