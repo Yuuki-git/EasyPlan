@@ -99,7 +99,7 @@ HARD_RULES_PROMPT = """硬性规则：
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
-第一个任务必须是极其简单的破冰动作，建议 <5 分钟，用来降低启动阻力。
+第一个任务必须是极其简单的破冰动作，建议 <=5 分钟，用来降低启动阻力。
 但后续任务可以是 25-60 分钟的深度工作。
 不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
 可以给 3-5 个高层阶段作为 roadmap；roadmap 只能是阶段标题和目的，不允许 estimated_minutes，不允许具体日期，不允许子任务。
@@ -752,10 +752,10 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
 
     if intent_type == "long_term_growth":
         first_action = _first_action(task_tree)
-        if first_action is None or first_action.estimated_minutes >= 5:
+        if first_action is None or first_action.estimated_minutes > 5:
             node_id = first_action.client_node_id if first_action is not None else "root"
             errors.append(
-                f"验证失败：{node_id}: long_term_growth first action must be a low-barrier icebreaker。请把第一步改成 5 分钟以内、具体、低阻力的启动动作。"
+                f"验证失败：{node_id}: long_term_growth first action must be a low-barrier icebreaker。请把第一步改成必须 <= 5 分钟、具体、低阻力的启动动作。"
             )
         total_nodes = sum(1 for _ in _iter_task_nodes(task_tree.root))
         max_depth = _task_tree_depth(task_tree.root)

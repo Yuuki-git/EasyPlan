@@ -274,11 +274,22 @@ def test_validator_rejects_short_term_low_value_first_action():
 def test_validator_requires_long_term_first_action_to_be_low_barrier():
     plan = valid_plan("Open paper document")
     plan["root"]["estimated_minutes"] = 120
+    five_minute_plan = valid_plan("Search N3 textbook")
+    five_minute_plan["root"]["children"][0]["estimated_minutes"] = 5
 
     valid_result = asyncio.run(
         task_tree_validator_node(
             {
                 "task_tree": plan,
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+    five_minute_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": five_minute_plan,
                 "intent_profile": {"intent_type": "long_term_growth"},
                 "replan_attempts": 0,
             }
@@ -295,6 +306,7 @@ def test_validator_requires_long_term_first_action_to_be_low_barrier():
     )
 
     assert valid_result["validation_status"] == "valid"
+    assert five_minute_result["validation_status"] == "valid"
     assert action_result["validation_status"] == "needs_replan"
     assert "low-barrier icebreaker" in action_result["validation_errors"][0]
 

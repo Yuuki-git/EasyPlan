@@ -33,7 +33,7 @@ const App: React.FC = () => {
   return (
     <>
       <AuthModal />
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
         {view === 'input' ? (
           <motion.main 
             key="input-view"

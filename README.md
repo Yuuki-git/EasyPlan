@@ -33,8 +33,9 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 ## 📊 评测基准 (Planning Eval)
 EasyPlan 采用**评测集驱动 (Eval Driven)** 的方式进行大模型调优。
 - **Core Cases**: 32 条核心用例
-- **Intent Classification Accuracy**: 87.50%
-- **Strategy Compliance Rate**: 59.38% (持续调优中)
+- **Intent Classification Accuracy**: 100.00%
+- **Strategy Compliance Rate**: 84.38%
+- **Horizon Accuracy**: 84.38%
 - **JSON Parse Success Rate**: 100.00%
 
 ## 🛠️ 技术架构

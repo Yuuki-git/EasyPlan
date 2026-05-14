@@ -137,8 +137,19 @@ def test_openai_profiles_intent_with_structured_output_and_usage():
     )
 
     parse_call = fake_openai.responses.calls[0]
+    profile_prompt = parse_call["input"][0]["content"]
     assert parse_call["text_format"] is IntentProfile
     assert parse_call["model"] == "gpt-4o-2024-08-06"
+    assert "context_checklist" in profile_prompt
+    assert "跑腿杂事" in profile_prompt
+    assert "买菜" in profile_prompt
+    assert "拿快递" in profile_prompt
+    assert "缴费" in profile_prompt
+    assert "short_term_delivery" in profile_prompt
+    assert "连续坐在电脑前" in profile_prompt
+    assert "写代码" in profile_prompt
+    assert "做 PPT" in profile_prompt
+    assert "赶报告" in profile_prompt
     assert result == {
         "intent_type": "short_term_delivery",
         "time_horizon": "hours",

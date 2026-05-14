@@ -33,8 +33,9 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 ## 📊 Planning Eval
 EasyPlan adopts an **Eval-Driven** approach for LLM tuning.
 - **Core Cases**: 32 Core Cases
-- **Intent Classification Accuracy**: 87.50%
-- **Strategy Compliance Rate**: 59.38% (Tuning in progress)
+- **Intent Classification Accuracy**: 100.00%
+- **Strategy Compliance Rate**: 84.38%
+- **Horizon Accuracy**: 84.38%
 - **JSON Parse Success Rate**: 100.00%
 
 ## 🛠️ Architecture

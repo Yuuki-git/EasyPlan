@@ -34,7 +34,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
         </div>
         
         <div className="space-y-1 mb-6">
-          <button 
+          <button
             onClick={() => {
               setCurrentViewBucket('my_day');
             }}
@@ -44,9 +44,9 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
             )}
           >
             <Sun size={16} className={currentViewBucket === 'my_day' ? "text-amber-500" : ""} />
-            <span>我的一天 (My Day)</span>
+            <span>我的一天</span>
           </button>
-          <button 
+          <button
             onClick={() => {
               setCurrentViewBucket('planned');
               setSelectedProjectId(null); // All planned
@@ -57,9 +57,8 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
             )}
           >
             <Calendar size={16} className={currentViewBucket === 'planned' && selectedProjectId === null ? "text-blue-500" : ""} />
-            <span>全部计划 (All Planned)</span>
-          </button>
-        </div>
+            <span>全部计划</span>
+          </button>        </div>
 
         {projects.length > 0 && (
           <>
@@ -621,7 +620,7 @@ export const TaskBoard: React.FC = () => {
               onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
-              {isGenerating ? '返回当前意图' : '新计划'}
+              {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
             </button>
           </div>
         </header>
@@ -636,13 +635,12 @@ export const TaskBoard: React.FC = () => {
                     : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
                 </p>
                 {currentViewBucket === 'planned' && (
-                  <button 
+                  <button
                     onClick={handleNewPlan}
                     className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
                   >
-                    {isGenerating ? '返回当前意图' : '新建意图'}
-                  </button>
-                )}
+                    {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
+                  </button>                )}
               </div>
             ) : (
               <BoardTaskNode node={displayTree} />
@@ -681,4 +679,6 @@ export const TaskBoard: React.FC = () => {
     </motion.div>
   );
 };
+
+
 
