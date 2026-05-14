@@ -41,6 +41,7 @@
 #### 📍 v1.2.2: 交互重塑 —— 情绪价值与安全护城河 (Completed)
 *   **文案与视觉升华**：彻底废弃“看板”这一企业级词汇，转向更私人的表达（“我的手帐”）。
 *   **无痕心流与跨视图流转**：引入了极简的 `InlineTaskInput`，并在计划中视图加入了 `☀️ 加入我的一天` 的乐观更新 (Optimistic UI) 转移能力。
+*   **原生任务清理 (Task Deletion)**：新增 `DELETE /api/tasks/{id}` 接口及极简的悬浮垃圾桶 `Trash2` 按钮，配合乐观删除与 Framer Motion 退场动画，补齐看板的最终闭环。
 *   **情绪空状态 (Emotional Empty States)**：在不同视图清空后，展示带有温度的文案（如“今天辛苦了，去喝杯茶吧”），提供正向情绪反馈。
 *   **划除的仪式感 (The Completion Ritual)**：任务勾选后触发 Framer Motion 弹簧动画，停留 2 秒后再伴随渐变滑出，延缓多巴胺释放。
 *   **深水区排雷 (Security & DB Integrity)**：建立全局 401 鉴权熔断网防范 Token 过期；在 `task_repository.py` 严格引入 DDD 事务隔离 (`session.begin()`) 杜绝高并发脏写；使用 `isMounted` 并发锁和退场延时清理解决单页应用连接池泄漏与 Framer Motion 死锁。

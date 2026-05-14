@@ -97,7 +97,7 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus, toggleTaskInMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
+  const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   
@@ -296,7 +296,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           )} />
         )}
       </div>
-      <div className="flex-1 pr-8">
+      <div className="flex-1 pr-24">
         {isEditing ? (
           <div
             ref={editContainerRef}
@@ -359,8 +359,21 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         )}
       </div>
       
+      <button
+        onClick={handleToggleMyDay}
+        className={clsx(
+          "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
+          node.is_in_my_day
+            ? "text-amber-500 bg-amber-500/10 opacity-100"
+            : "text-muted-foreground/40 opacity-0 group-hover:opacity-100 hover:text-amber-500 hover:bg-amber-500/10"
+        )}
+        title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
+      >
+        <Sun size={16} />
+      </button>
+
       {!localCompleted && !isEditing && (
-        <div className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+        <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -371,15 +384,6 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           >
             <Pencil size={16} />
           </button>
-          {currentViewBucket === 'planned' && (
-            <button
-              onClick={handleToggleMyDay}
-              className="p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto transition-colors"
-              title="加入我的一天"
-            >
-              <Sun size={16} />
-            </button>
-          )}
           <button
             onClick={handleDelete}
             className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
@@ -468,7 +472,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
+  const { currentViewBucket, selectedProjectId, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -492,7 +496,7 @@ export const TaskBoard: React.FC = () => {
         estimated_minutes: null,
         sort_order: 0,
         is_in_my_day: false,
-        children: boardTasks.sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
+        children: [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
       };
       return root;
     } else {
@@ -505,12 +509,14 @@ export const TaskBoard: React.FC = () => {
 
       const rootChildren: TreeNode[] = [];
 
-      boardTasks.sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
+      [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
         const node = taskMap.get(t.id)!;
         if (t.parent_task_id && taskMap.has(t.parent_task_id)) {
           taskMap.get(t.parent_task_id)!.children!.push(node);
         } else {
-          rootChildren.push(node);
+          if (!selectedProjectId || node.thread_id === selectedProjectId) {
+            rootChildren.push(node);
+          }
         }
       });
 
@@ -532,7 +538,12 @@ export const TaskBoard: React.FC = () => {
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket]);
+  }, [boardTasks, currentViewBucket, selectedProjectId]);
+
+  const boardActions = currentViewBucket === 'planned' && boardTasks
+    ? boardTasks.filter(t => t.node_type === 'action')
+    : [];
+  const showFogOfWar = boardActions.length > 0 && boardActions.every(t => t.status === 'completed');
 
   if (boardError) {
     return (
@@ -569,14 +580,6 @@ export const TaskBoard: React.FC = () => {
   }
 
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
-
-  const showFogOfWar = useMemo(() => {
-    if (currentViewBucket !== 'planned') return false;
-    if (!boardTasks || boardTasks.length === 0) return false;
-    const actions = boardTasks.filter(t => t.node_type === 'action');
-    if (actions.length === 0) return false;
-    return actions.every(t => t.status === 'completed');
-  }, [boardTasks, currentViewBucket]);
 
   const handleNewPlan = () => {
     if (isGenerating) {

@@ -279,6 +279,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   createManualTask: async (title: string) => {
     const { token, currentViewBucket, boardTasks } = get();
     if (!token) return;
+    const shouldAddToMyDay = currentViewBucket === 'my_day';
 
     try {
       const headers: Record<string, string> = {
@@ -290,7 +291,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers,
         body: JSON.stringify({
           title,
-          view_bucket: currentViewBucket
+          view_bucket: shouldAddToMyDay ? 'planned' : currentViewBucket,
+          is_in_my_day: shouldAddToMyDay
         })
       });
       
