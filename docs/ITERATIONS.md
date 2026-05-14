@@ -46,7 +46,7 @@
 *   **划除的仪式感 (The Completion Ritual)**：任务勾选后触发 Framer Motion 弹簧动画，停留 2 秒后再伴随渐变滑出，延缓多巴胺释放。
 *   **深水区排雷 (Security & DB Integrity)**：建立全局 401 鉴权熔断网防范 Token 过期；在 `task_repository.py` 严格引入 DDD 事务隔离 (`session.begin()`) 杜绝高并发脏写；使用 `isMounted` 并发锁和退场延时清理解决单页应用连接池泄漏与 Framer Motion 死锁。
 
-#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing) (Completed)
+#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing) (Completed / Stable)
 **总纲 (Minimum Closed Loop)**：`Intent Profiling → Strategy Routing → Few-shot Selection → JSON Size Control → Basic Eval`。
 
 **🧠 核心 AI 能力升级 (Core AI Capabilities)**：

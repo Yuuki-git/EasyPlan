@@ -30,13 +30,14 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Native Task Engine**: A built-in task board supporting inline editing and cross-view transfers, creating a seamless "Plan -> Decompose -> Execute" experience.
 - **Enterprise-Grade Security**: Multi-tenant isolation and strict JWT-based authentication.
 
-## 📊 Planning Eval
+## 📊 Planning Eval (Xiaomi Mimo API)
 EasyPlan adopts an **Eval-Driven** approach for LLM tuning.
 - **Core Cases**: 32 Core Cases
 - **Intent Classification Accuracy**: 100.00%
-- **Strategy Compliance Rate**: 84.38%
-- **Horizon Accuracy**: 84.38%
 - **JSON Parse Success Rate**: 100.00%
+- **Strategy Compliance Rate**: 93.75%
+- **Horizon Accuracy**: 96.875%
+- **Overall Pass Rate**: 93.75%
 
 ## 🛠️ Architecture
 
