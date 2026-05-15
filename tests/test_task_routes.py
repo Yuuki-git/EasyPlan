@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID, uuid4
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +29,7 @@ class FakeTask:
     is_in_my_day: bool
     estimated_minutes: int | None
     sort_order: int
+    metadata_: dict[str, Any] = field(default_factory=dict)
 
 
 class FakeTaskRepository:
@@ -145,6 +147,47 @@ def test_get_my_day_tasks_uses_virtual_mapping_in_response():
     assert response.json()[0]["view_bucket"] == "planned"
     assert response.json()[0]["is_in_my_day"] is True
     assert repository.list_calls == [{"user_id": user.id, "view_bucket": "my_day"}]
+
+
+def test_get_tasks_returns_action_quality_fields_from_metadata_without_mutating_metadata():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        metadata_={
+            "source": "planner",
+            "done_criteria": "Outline includes problem, solution, and next step.",
+            "start_hint": "Reuse the meeting notes.",
+            "fallback_action": "Write just the three section titles.",
+        },
+    )
+    repository.tasks[task.id] = task
+
+    response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["done_criteria"] == "Outline includes problem, solution, and next step."
+    assert payload["start_hint"] == "Reuse the meeting notes."
+    assert payload["fallback_action"] == "Write just the three section titles."
+    assert repository.tasks[task.id].metadata_["source"] == "planner"
+
+
+def test_get_tasks_returns_null_action_quality_fields_for_legacy_metadata():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(user_id=user.id, view_bucket="planned", title="Legacy task", metadata_={"source": "manual"})
+    repository.tasks[task.id] = task
+
+    response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["done_criteria"] is None
+    assert payload["start_hint"] is None
+    assert payload["fallback_action"] is None
 
 
 def test_get_tasks_returns_empty_array_for_authenticated_user_with_no_tasks():
@@ -444,6 +487,7 @@ def _fake_task(
     parent_task_id: UUID | None = None,
     description: str | None = None,
     is_in_my_day: bool = False,
+    metadata_: dict[str, Any] | None = None,
 ) -> FakeTask:
     return FakeTask(
         id=uuid4(),
@@ -459,4 +503,5 @@ def _fake_task(
         is_in_my_day=is_in_my_day,
         estimated_minutes=2,
         sort_order=0,
+        metadata_=metadata_ or {},
     )

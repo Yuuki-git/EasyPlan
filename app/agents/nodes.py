@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
-from app.api.schemas import IntentProfile, TaskTree
+from app.api.schemas import ACTION_QUALITY_FIELDS, IntentProfile, TaskTree
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
@@ -706,7 +706,7 @@ def flatten_task_tree_for_persistence(
                 sort_order=sort_order,
                 ai_generated=True,
                 user_edited=False,
-                metadata_={},
+                metadata_=_action_quality_metadata(node),
             )
         )
         for dependency in node.depends_on:
@@ -725,6 +725,15 @@ def flatten_task_tree_for_persistence(
         for task_id, depends_on_task_id in dependency_pairs
     ]
     return tasks, dependencies
+
+
+def _action_quality_metadata(node: Any, base_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = dict(base_metadata or {})
+    for field in ACTION_QUALITY_FIELDS:
+        value = getattr(node, field, None)
+        if value is not None:
+            metadata[field] = value
+    return metadata
 
 
 def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None = None) -> list[str]:

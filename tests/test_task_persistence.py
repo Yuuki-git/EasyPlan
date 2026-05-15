@@ -73,6 +73,32 @@ def test_flatten_task_tree_preserves_client_node_parent_mapping_and_planned_buck
     assert dependencies[0].depends_on_task_id == by_client_id["outline"].id
 
 
+def test_flatten_task_tree_persists_action_quality_fields_to_metadata():
+    tree = valid_tree_with_hierarchy_and_dependency()
+    tree["root"]["children"][0].update(
+        {
+            "done_criteria": "Outline has three sections.",
+            "start_hint": "Start from the existing notes.",
+            "fallback_action": "Write only the section headings.",
+        }
+    )
+
+    tasks, _dependencies = flatten_task_tree_for_persistence(
+        tree,
+        user_id=USER_ID,
+        thread_id="thread-1",
+    )
+
+    outline = {task.client_node_id: task for task in tasks}["outline"]
+    review = {task.client_node_id: task for task in tasks}["review"]
+    assert outline.metadata_ == {
+        "done_criteria": "Outline has three sections.",
+        "start_hint": "Start from the existing notes.",
+        "fallback_action": "Write only the section headings.",
+    }
+    assert review.metadata_ == {}
+
+
 def test_persist_internal_tasks_node_inserts_tasks_dependencies_and_marks_thread_succeeded(monkeypatch):
     session = FakePersistSession()
 

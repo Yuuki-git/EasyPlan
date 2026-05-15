@@ -63,3 +63,35 @@ def test_task_tree_schema_rejects_zero_estimate_for_action_nodes():
 
     with pytest.raises(ValidationError, match="action estimated_minutes must be greater than or equal to 1"):
         TaskTree.model_validate(tree)
+
+
+def test_task_tree_schema_accepts_legacy_nodes_without_action_quality_fields():
+    tree = valid_plan()
+
+    parsed = TaskTree.model_validate(tree)
+
+    first_action = parsed.root.children[0]
+    assert first_action.done_criteria is None
+    assert first_action.start_hint is None
+    assert first_action.fallback_action is None
+
+
+def test_task_tree_schema_accepts_action_quality_fields_without_new_planning_layers():
+    tree = valid_plan()
+    tree["root"]["children"][0].update(
+        {
+            "done_criteria": "A draft file exists with three bullet points.",
+            "start_hint": "Open the existing notes file first.",
+            "fallback_action": "Write one rough bullet if the full draft feels too large.",
+        }
+    )
+
+    parsed = TaskTree.model_validate(tree)
+    first_action = parsed.root.children[0]
+
+    assert first_action.done_criteria == "A draft file exists with three bullet points."
+    assert first_action.start_hint == "Open the existing notes file first."
+    assert first_action.fallback_action == "Write one rough bullet if the full draft feels too large."
+    assert "roadmap" not in TaskTree.model_fields
+    assert "current_phase" not in TaskTree.model_fields
+    assert "next_action" not in TaskTree.model_fields
