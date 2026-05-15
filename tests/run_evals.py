@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.agents.nodes import build_planner_prompt  # noqa: E402
 from app.api.schemas import TaskNode, TaskTree  # noqa: E402
+from app.services.action_quality import summarize_action_quality  # noqa: E402
 from app.services.llm_service import (  # noqa: E402
     ListReasoningSink,
     ListUsageSink,
@@ -124,6 +125,15 @@ class EvalResult:
     runtime_error: str | None = None
     reasoning_event_count: int = 0
     usage_record_count: int = 0
+    action_quality_action_count: int = 0
+    action_quality_pass_count: int = 0
+    action_quality_score_total: int = 0
+    action_quality_done_criteria_count: int = 0
+    action_quality_abstract_violation_count: int = 0
+    action_quality_pass_rate: float | None = None
+    average_actionability_score: float | None = None
+    done_criteria_coverage: float | None = None
+    abstract_task_violation_rate: float | None = None
 
     @property
     def passed(self) -> bool:
@@ -325,6 +335,7 @@ def evaluate_plan(
     )
     top_level_preview = preview_top_level_tasks(task_tree)
     first_action_snapshot = snapshot_first_action(task_tree)
+    action_quality = summarize_action_quality(task_tree)
 
     return EvalResult(
         input=case.input,
@@ -348,6 +359,15 @@ def evaluate_plan(
         horizon_errors=horizon_errors,
         top_level_preview=top_level_preview,
         first_action_snapshot=first_action_snapshot,
+        action_quality_action_count=action_quality.action_count,
+        action_quality_pass_count=action_quality.pass_count,
+        action_quality_score_total=action_quality.score_total,
+        action_quality_done_criteria_count=action_quality.done_criteria_count,
+        action_quality_abstract_violation_count=action_quality.abstract_violation_count,
+        action_quality_pass_rate=action_quality.action_quality_pass_rate,
+        average_actionability_score=action_quality.average_actionability_score,
+        done_criteria_coverage=action_quality.done_criteria_coverage,
+        abstract_task_violation_rate=action_quality.abstract_task_violation_rate,
     )
 
 
@@ -412,7 +432,7 @@ def snapshot_first_action(task_tree: TaskTree) -> dict[str, Any] | None:
     return {
         "title": first_action.title,
         "estimated_minutes": first_action.estimated_minutes,
-        "done_criteria": None,
+        "done_criteria": first_action.done_criteria,
     }
 
 
@@ -565,7 +585,33 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
             if result.short_term_delivery_without_low_value_icebreaker is True
         ),
         "short_term_delivery_cases": len(short_term_results),
+        "action_quality_pass_rate": _rate(
+            sum(result.action_quality_pass_count for result in results),
+            sum(result.action_quality_action_count for result in results),
+        ),
+        "average_actionability_score": _rate(
+            sum(result.action_quality_score_total for result in results),
+            sum(result.action_quality_action_count for result in results),
+        ),
+        "done_criteria_coverage": _rate(
+            sum(result.action_quality_done_criteria_count for result in results),
+            sum(result.action_quality_action_count for result in results),
+        ),
+        "abstract_task_violation_rate": _rate(
+            sum(result.action_quality_abstract_violation_count for result in results),
+            sum(result.action_quality_action_count for result in results),
+        ),
+        "action_quality_targets": {
+            "action_quality_pass_rate": 0.85,
+            "average_actionability_score": 80,
+            "done_criteria_coverage": 0.90,
+            "abstract_task_violation_rate": 0.05,
+        },
     }
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator else 0.0
 
 
 def print_report(results: list[EvalResult]) -> None:

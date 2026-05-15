@@ -257,7 +257,13 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "每个琐事再拆成多个子任务" in context_prompt
     assert "2 个以上零散事项" in context_prompt
     assert "root.children 必须使用 group 节点" in context_prompt
+    assert "优先使用 Group" in context_prompt
+    assert "不要直接输出多个散乱顶层 Action" in context_prompt
+    assert "root.children 顶层必须全部是 group 节点" in context_prompt
+    assert "即使只有一个场景，也建立一个 group" in context_prompt
     assert "不要假设用户已经决定" in exploration_prompt
+    assert "澄清问题、信息收集、低成本验证、决策依据" in exploration_prompt
+    assert "禁止直接生成长期执行计划或连续投入型任务" in exploration_prompt
     assert "错误：直接制定 6 个月转行产品经理学习计划" in exploration_prompt
     assert "exploration_decision 禁止" in exploration_prompt
     assert "假设用户已经做出最终决定" in exploration_prompt
@@ -273,6 +279,45 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "必须遵守两分钟法则" not in prompt
     assert "每个叶子 action 的 estimated_minutes 必须 < 5" not in prompt
     assert "Start with summary" in prompt
+
+
+def test_planner_prompt_includes_action_quality_field_guidance():
+    prompt = build_planner_prompt(
+        "写一份周报",
+        intent_profile={"intent_type": "short_term_delivery"},
+    )
+    long_term_prompt = build_planner_prompt(
+        "明年考过日语 N3",
+        intent_profile={"intent_type": "long_term_growth"},
+    )
+    exploration_prompt = build_planner_prompt(
+        "不知道要不要转行产品经理",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "done_criteria" in prompt
+    assert "start_hint" in prompt
+    assert "fallback_action" in prompt
+    assert "对所有 Action，尽量生成 done_criteria" in prompt
+    assert "done_criteria 必须具体说明做到什么程度算完成" in prompt
+    assert "start_hint 必须是用户可以立刻执行的第一步" in prompt
+    assert "fallback_action 必须是更小、更低门槛的替代动作" in prompt
+    assert "estimated_minutes >= 20" in prompt
+    assert "字段值必须是一句短句" in prompt
+    assert "不要包含英文双引号" in prompt
+
+    assert "done_criteria: “完成任务”" in prompt
+    assert "start_hint: “开始做”" in prompt
+    assert "fallback_action: “少做一点”" in prompt
+    assert "done_criteria: “学习完成”" in prompt
+    assert "start_hint: “准备好材料”" in prompt
+    assert "保存 1 个可打开的 N3 真题链接" in prompt
+    assert "打开浏览器搜索“N3 真题 PDF”" in prompt
+    assert "如果没有精力做 20 题，就先做前 5 题" in prompt
+
+    assert "首个破冰 Action 必须生成 start_hint" in long_term_prompt
+    assert "即使用户当前已经能做较长动作，也必须先安排 <=5 分钟破冰" in long_term_prompt
+    assert "信息收集、小实验、决策节点任务建议生成 start_hint" in exploration_prompt
 
 
 def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():

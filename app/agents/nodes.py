@@ -112,6 +112,26 @@ HARD_RULES_PROMPT = """硬性规则：
 5. title 和 description 必须短而具体，避免长文本导致 JSON 截断。
 6. assumptions 必须是字符串数组；默认 assumptions 为 []；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
 
+ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
+1. 对所有 Action，尽量生成 done_criteria；done_criteria 必须具体说明做到什么程度算完成。
+2. start_hint 必须是用户可以立刻执行的第一步。
+3. fallback_action 必须是更小、更低门槛的替代动作。
+4. 对 estimated_minutes >= 20 的 Action，建议生成 fallback_action。
+5. 不要为了补字段扩大任务树规模，不要新增 roadmap/current_phase/next_action 等 schema 外字段。
+6. 字段值必须是一句短句，建议 <=30 汉字；不要包含英文双引号、换行、列表或多句解释。
+
+无效字段内容禁止：
+- done_criteria: “完成任务”
+- start_hint: “开始做”
+- fallback_action: “少做一点”
+- done_criteria: “学习完成”
+- start_hint: “准备好材料”
+
+有效字段示例：
+- done_criteria: “保存 1 个可打开的 N3 真题链接”
+- start_hint: “打开浏览器搜索“N3 真题 PDF””
+- fallback_action: “如果没有精力做 20 题，就先做前 5 题”"""
+
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
 第一个任务必须是极其简单的破冰动作，建议 <=5 分钟，用来降低启动阻力。
@@ -134,6 +154,8 @@ long_term_growth 禁止：
 long_term_growth 必须：
 - root.children 中第一个 action 的 estimated_minutes 必须 <= 5。
 - 第一个 action 只能是低阻力启动动作，例如搜索一篇资料、保存一个样例、写下一个问题、选定一个最小素材。
+- 即使用户当前已经能做较长动作，也必须先安排 <=5 分钟破冰；实际跑步、训练、写作、练习放在第二步以后。
+- 首个破冰 Action 必须生成 start_hint，且 start_hint 必须是打开页面、搜索关键词、写下一个问题等立刻可做的第一步。
 - 第一个 action 不得是安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划。
 - Phase 1 任务标题中不要写“训练计划”“学习计划”“备考计划”“长期路线”“课程大纲”。
 - summary 写成“Phase 1 启动计划”，不要回显完整长期目标。
@@ -191,6 +213,9 @@ context_checklist 禁止：
 
 context_checklist 必须：
 - 如果有 2 个以上零散事项，root.children 必须使用 group 节点。
+- 当清单中有 2 个以上事项，且可按地点、工具、顺路关系或时间场景聚合时，优先使用 Group，不要直接输出多个散乱顶层 Action。
+- root.children 顶层必须全部是 group 节点，不允许把多个事项作为顶层 action 平铺。
+- 即使只有一个场景，也建立一个 group，例如“出门前”“通勤路上”“手机处理”“缴费处理”。
 - group 按位置、工具、顺路关系、出门前/路上/到家后等场景命名。
 - 每个 group 下面放 1-3 个 action；不要把所有零散事项平铺成多个顶层 action。
 
@@ -208,11 +233,15 @@ context_checklist 必须：
 目标是降低不确定性，而不是强推执行。
 不要生成长期执行计划。
 当前阶段只生成信息收集、问题澄清、小实验和决策节点。
+任务必须围绕澄清问题、信息收集、低成本验证、决策依据。
 禁止直接生成完整转行计划、创业计划、长期学习计划。
+禁止直接生成长期执行计划或连续投入型任务。
+信息收集、小实验、决策节点任务建议生成 start_hint。
 
 exploration_decision 禁止：
 - 假设用户已经做出最终决定
 - 直接生成长期执行计划
+- 连续投入型任务
 - 生成打卡式任务
 - 跳过信息收集和低成本验证
 
@@ -393,6 +422,7 @@ def build_planner_prompt(
         "你是 EasyPlan 的任务拆解 Agent。",
         RULE_PRIORITY_PROMPT,
         HARD_RULES_PROMPT,
+        ACTION_QUALITY_PROMPT,
         INTENT_STRATEGY_PROMPTS[intent_type],
         "输出必须是符合 TaskTree JSON Schema 的 JSON。",
         f"用户意图：{intent_text}",
