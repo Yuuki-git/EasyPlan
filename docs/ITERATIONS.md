@@ -72,8 +72,20 @@
 7. `planning_cases.jsonl` 初版不少于 32 条测试数据。
 8. 自动评测脚本跑通，且策略采纳正确率达到 85% 以上。
 
-#### 📍 v1.2.4: 动作质量与兜底 (Action Quality & Fallback)
-*   **Action Quality Validator**：加入 `actionability_score`、`done_criteria`、`start_hint`、`fallback_action`，解决“任务太空泛、用户不知道怎么开始”的问题。
+#### 📍 v1.2.4: Action Quality & Fallback（任务质量与失败兜底）
+v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为“任务可执行的行动系统”。在 v1.2.3 已完成意图路由和策略校验的基础上，重点解决生成任务过于空泛、缺少完成标准、用户不知道如何开始，以及模型失败时无法兜底的问题。
+
+**核心能力**：
+*   **Action Quality Validator**：新增任务质量校验器，拦截“学习语法 / 研究一下”等低可执行性任务，强制要求明确动词与合理耗时。
+*   **Actionability Score**：为每个 Action 生成内部可执行性评分，用于 Validator 裁决与 Replan。
+*   **完成标准 (done_criteria)**：关键任务必须说明做到什么程度算完成。
+*   **开始提示 (start_hint)**：为高阻力任务提供最小启动提示（如“打开浏览器搜索PDF”）。
+*   **降级动作 (fallback_action)**：当用户做不动时提供更小版本（如“做不动20题就做5题”）。
+*   **本地 Fallback Planner**：当 LLM 超时或彻底熔断时，启用本地静态规则生成基础启动计划，确保系统 100% 永不宕机。
+
+**验收标准**：
+*   保持 v1.2.3 指标不降的前提下，新增：`Action Quality Pass Rate >= 85%`，`Done Criteria Coverage >= 90%`，`Fallback Planner Success Rate = 100%`。
+*   **非目标**：本版本坚决不碰前端三层规划 UI、Task Copilot 和 Refine Diff。
 
 #### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning)
 *   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。

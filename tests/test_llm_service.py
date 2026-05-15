@@ -13,6 +13,7 @@ from app.services.llm_service import (
     OpenAIPlannerClient,
     XiaomiMiMoPlannerClient,
     create_planner_client,
+    _clean_json_response_text,
 )
 
 
@@ -160,20 +161,21 @@ def test_openai_profiles_intent_with_structured_output_and_usage():
 
 
 class FakeChatCompletions:
-    def __init__(self, content: str):
-        self.content = content
+    def __init__(self, content: str | list[str]):
+        self.contents = list(content) if isinstance(content, list) else [content]
         self.calls: list[dict] = []
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
+        index = min(len(self.calls) - 1, len(self.contents) - 1)
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self.contents[index]))],
             usage=SimpleNamespace(prompt_tokens=31, completion_tokens=43, total_tokens=74),
         )
 
 
 class FakeChatClient:
-    def __init__(self, content: str):
+    def __init__(self, content: str | list[str]):
         self.chat = SimpleNamespace(completions=FakeChatCompletions(content))
 
 
@@ -215,6 +217,59 @@ def test_deepseek_planner_accepts_zero_estimate_for_group_container():
 
     assert result["root"]["estimated_minutes"] == 0
     assert result["root"]["children"][0]["estimated_minutes"] == 2
+
+
+def test_json_cleanup_preserves_normal_json():
+    raw = json.dumps(_valid_task_tree(), ensure_ascii=False)
+
+    assert _clean_json_response_text(raw) == raw
+
+
+def test_xiaomi_mimo_planner_cleans_code_fence_json():
+    fenced_json = f"```json\n{json.dumps(_valid_task_tree(), ensure_ascii=False)}\n```"
+    fake_mimo = FakeChatClient(fenced_json)
+    planner = XiaomiMiMoPlannerClient(client=fake_mimo, model="mimo-v2-flash")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["root"]["children"][0]["client_node_id"] == "task-1"
+    assert len(fake_mimo.chat.completions.calls) == 1
+
+
+def test_xiaomi_mimo_planner_removes_invalid_control_characters_before_json_parse():
+    task_tree = _valid_task_tree()
+    raw = json.dumps(task_tree, ensure_ascii=False)
+    content = raw.replace("Open notes", "Open \x0bnotes")
+    fake_mimo = FakeChatClient(content)
+    planner = XiaomiMiMoPlannerClient(client=fake_mimo, model="mimo-v2-flash")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["root"]["children"][0]["title"] == "Open notes"
+    assert len(fake_mimo.chat.completions.calls) == 1
+
+
+def test_xiaomi_mimo_planner_retries_json_repair_without_replanning():
+    broken = json.dumps(_valid_task_tree(), ensure_ascii=False).replace(
+        '"summary": "Start with notes",',
+        '"summary": "Start with notes"\n',
+    )
+    repaired = json.dumps(_valid_task_tree(), ensure_ascii=False)
+    fake_mimo = FakeChatClient([broken, repaired])
+    planner = XiaomiMiMoPlannerClient(client=fake_mimo, model="mimo-v2-flash")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["summary"] == "Start with notes"
+    assert len(fake_mimo.chat.completions.calls) == 2
+    repair_call = fake_mimo.chat.completions.calls[1]
+    assert repair_call["temperature"] == 0.0
+    assert repair_call["response_format"] == {"type": "json_object"}
+    repair_prompt = "\n".join(message["content"] for message in repair_call["messages"])
+    assert "Fix only JSON syntax" in repair_prompt
+    assert "Do not replan" in repair_prompt
+    assert "Expecting ',' delimiter" in repair_prompt
+    assert broken in repair_prompt
 
 
 def test_deepseek_planner_rejects_json_that_does_not_match_task_tree():
