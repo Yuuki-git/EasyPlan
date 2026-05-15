@@ -12,6 +12,7 @@ from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
 from app.api.schemas import ACTION_QUALITY_FIELDS, IntentProfile, TaskTree
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.action_quality import score_action_node
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 
 
@@ -19,6 +20,11 @@ MAX_REPLAN_ATTEMPTS = 3
 MAX_TOP_LEVEL_NODES = 12
 MAX_CHILDREN_PER_TOP_LEVEL = 3
 LONG_TERM_MAX_DEPTH = 4
+ACTION_QUALITY_MIN_RUNTIME_SCORE = 70
+LONG_ACTION_DONE_CRITERIA_MINUTES = 20
+INVALID_DONE_CRITERIA_VALUES = ("完成任务", "学习完成", "完成即可")
+INVALID_START_HINT_VALUES = ("开始做", "准备开始")
+INVALID_FALLBACK_ACTION_VALUES = ("少做一点", "降低难度")
 LONG_TERM_SCOPE_KEYWORDS = (
     "全年",
     "一年",
@@ -433,7 +439,8 @@ def build_planner_prompt(
         parts.append(f"用户自然语言反馈：{feedback}")
     if validation_errors:
         parts.append(
-            "验证失败，请继续拆解并按以下具体原因修正，不要重复输出同类错误："
+            "验证失败，请继续拆解并按以下具体原因修正；只修复验证指出的低质量任务，保持原 intent_type 和策略不变，"
+            "不要重写整棵任务树，不要新增 roadmap/current_phase/next_action，不要重复输出同类错误："
             + "; ".join(validation_errors)
         )
     return "\n".join(parts)
@@ -779,6 +786,7 @@ def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None
     _collect_dependency_errors(nodes_by_id, errors)
     _collect_global_size_errors(parsed, errors)
     _collect_strategy_errors(parsed, _intent_type_from_profile(intent_profile), errors)
+    _collect_action_quality_errors(parsed, _intent_type_from_profile(intent_profile), errors)
     return errors
 
 
@@ -995,6 +1003,129 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
                     fix_suggestion="按位置、工具、顺路关系或时间场景聚合；不要把每个琐事再拆成多个子任务。",
                 )
             )
+
+
+def _collect_action_quality_errors(task_tree: TaskTree, intent_type: str, errors: list[str]) -> None:
+    for node in _iter_task_nodes(task_tree.root):
+        if node.node_type != "action":
+            continue
+
+        quality = score_action_node(node)
+        quality_issues = list(quality.reasons)
+        has_low_quality_score = quality.score < ACTION_QUALITY_MIN_RUNTIME_SCORE
+
+        if has_low_quality_score:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_LOW_SCORE",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=quality_issues,
+                    offender=node,
+                    problem="Action 可执行性分数过低，任务标题或完成标准过于空泛。",
+                    fix_suggestion=(
+                        "只修复该低质量任务：改成明确动词 + 明确对象 + 具体产出，补充可检查的 done_criteria。"
+                    ),
+                )
+            )
+            continue
+
+        if quality.has_abstract_violation:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_ABSTRACT_TASK",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=quality_issues or ["abstract_task_violation"],
+                    offender=node,
+                    problem="Action 标题明显空泛，抽象词不能单独作为任务核心。",
+                    fix_suggestion="只修复该低质量任务：把抽象动作改成具体对象、具体输出和可验证完成标准。",
+                )
+            )
+
+        invalid_field_issues = _invalid_action_quality_field_issues(node)
+        if invalid_field_issues:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_INVALID_FIELD",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=invalid_field_issues,
+                    offender=node,
+                    problem="Action Quality 字段使用了无效占位内容。",
+                    fix_suggestion=(
+                        "只修复该低质量任务：给出具体完成标准、可立即执行的第一步和更小替代动作。"
+                    ),
+                )
+            )
+
+        if (
+            not quality.has_done_criteria
+            and isinstance(node.estimated_minutes, int)
+            and node.estimated_minutes >= LONG_ACTION_DONE_CRITERIA_MINUTES
+        ):
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_MISSING_DONE_CRITERIA",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=["missing_done_criteria"],
+                    offender=node,
+                    problem="预计时间较长的 Action 缺少 done_criteria，用户难以判断做到什么程度算完成。",
+                    fix_suggestion="只修复该低质量任务：补充一句可检查的完成标准，不要拆大整棵任务树。",
+                )
+            )
+
+
+def _invalid_action_quality_field_issues(node: Any) -> list[str]:
+    issues: list[str] = []
+    if _has_invalid_quality_value(getattr(node, "done_criteria", None), INVALID_DONE_CRITERIA_VALUES):
+        issues.append("invalid_done_criteria")
+    if _has_invalid_quality_value(getattr(node, "start_hint", None), INVALID_START_HINT_VALUES):
+        issues.append("invalid_start_hint")
+    if _has_invalid_quality_value(getattr(node, "fallback_action", None), INVALID_FALLBACK_ACTION_VALUES):
+        issues.append("invalid_fallback_action")
+    return issues
+
+
+def _has_invalid_quality_value(value: Any, invalid_values: tuple[str, ...]) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().strip("。.!！ ")
+    if normalized in invalid_values:
+        return True
+    return any(invalid_value in normalized and len(normalized) <= len(invalid_value) + 4 for invalid_value in invalid_values)
+
+
+def _format_action_quality_feedback(
+    *,
+    error_code: str,
+    intent_type: str,
+    task_title: str,
+    actionability_score: int,
+    quality_issues: list[str],
+    offender: Any,
+    problem: str,
+    fix_suggestion: str,
+) -> str:
+    return "\n".join(
+        [
+            f"错误代码: {error_code}",
+            f"intent_type: {intent_type}",
+            "failed_rule: Action Quality",
+            f"任务标题: {task_title}",
+            f"actionability_score: {actionability_score}",
+            f"quality_issues: {', '.join(quality_issues) if quality_issues else 'unknown'}",
+            f"问题: {problem}",
+            f"违规任务/组: {_node_summary(offender)}",
+            f"修复建议: {fix_suggestion}",
+            "修复约束: 保持原 intent_type 和策略不变；只修复该低质量任务；不要重写整棵任务树；不要新增 roadmap/current_phase/next_action。",
+        ]
+    )
 
 
 def _format_validator_feedback(

@@ -176,6 +176,26 @@ def context_checklist_without_groups() -> dict[str, Any]:
     return plan
 
 
+def plan_with_action_quality_issue(
+    *,
+    title: str,
+    verb: str,
+    estimated_minutes: int = 25,
+    done_criteria: str | None = None,
+    start_hint: str | None = None,
+    fallback_action: str | None = None,
+) -> dict[str, Any]:
+    plan = valid_plan(title)
+    action = plan["root"]["children"][0]
+    action["title"] = title
+    action["verb"] = verb
+    action["estimated_minutes"] = estimated_minutes
+    action["done_criteria"] = done_criteria
+    action["start_hint"] = start_hint
+    action["fallback_action"] = fallback_action
+    return plan
+
+
 def plan_with_unknown_dependency() -> dict[str, Any]:
     plan = valid_plan("Open paper document")
     plan["root"]["children"][0]["depends_on"] = ["missing-node"]
@@ -485,6 +505,139 @@ def test_validator_rejects_context_checklist_without_grouping():
     assert "错误代码: CHECKLIST_NOT_GROUPED" in result["validation_errors"][0]
     assert "intent_type: context_checklist" in result["validation_errors"][0]
     assert "按位置、工具、顺路关系或时间场景聚合" in result["validation_errors"][0]
+
+
+def test_validator_rejects_low_actionability_score_with_structured_feedback():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="学习语法",
+                    verb="学习",
+                    estimated_minutes=25,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    error = result["validation_errors"][0]
+    assert "错误代码: ACTION_QUALITY_LOW_SCORE" in error
+    assert "任务标题: 学习语法" in error
+    assert "actionability_score:" in error
+    assert "quality_issues:" in error
+    assert "abstract_task_violation" in error
+    assert "missing_done_criteria" in error
+    assert "只修复该低质量任务" in error
+    assert "不要重写整棵任务树" in error
+
+
+def test_validator_rejects_abstract_action_even_with_done_criteria():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="准备资料",
+                    verb="准备",
+                    estimated_minutes=15,
+                    done_criteria="保存 1 个可打开的资料链接。",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any("错误代码: ACTION_QUALITY_LOW_SCORE" in error for error in result["validation_errors"])
+    assert any("abstract_task_violation" in error for error in result["validation_errors"])
+
+
+def test_validator_rejects_invalid_action_quality_field_values():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="列出周报核心进展",
+                    verb="列出",
+                    estimated_minutes=30,
+                    done_criteria="完成任务",
+                    start_hint="开始做",
+                    fallback_action="少做一点",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    joined_errors = "\n".join(result["validation_errors"])
+    assert "错误代码: ACTION_QUALITY_INVALID_FIELD" in joined_errors
+    assert "invalid_done_criteria" in joined_errors
+    assert "invalid_start_hint" in joined_errors
+    assert "invalid_fallback_action" in joined_errors
+    assert "给出具体完成标准、可立即执行的第一步和更小替代动作" in joined_errors
+
+
+def test_validator_rejects_missing_done_criteria_for_long_action_only():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="撰写商业计划书核心痛点大纲",
+                    verb="撰写",
+                    estimated_minutes=30,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+    tiny_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="保存会议室门牌照片",
+                    verb="保存",
+                    estimated_minutes=2,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "context_checklist"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert "错误代码: ACTION_QUALITY_MISSING_DONE_CRITERIA" in result["validation_errors"][0]
+    assert "预计时间较长" in result["validation_errors"][0]
+    assert tiny_result["validation_status"] == "valid"
+
+
+def test_validator_accepts_high_quality_action_with_action_quality_fields():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="列出周报的 3 项核心进展",
+                    verb="列出",
+                    estimated_minutes=25,
+                    done_criteria="写出 3 项进展，每项包含结果和影响。",
+                    start_hint="打开本周任务记录。",
+                    fallback_action="如果没时间写 3 项，就先写最重要的 1 项。",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
 
 
 def test_validator_rejects_unknown_dependency_reference():
