@@ -94,7 +94,7 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     assert {"title", "description", "view_bucket", "is_in_my_day", "parent_task_id"}.issubset(
         task_create["properties"]
     )
-    assert task_create["properties"]["view_bucket"]["default"] == "my_day"
+    assert task_create["properties"]["view_bucket"]["default"] == "planned"
     assert task_create["properties"]["is_in_my_day"]["default"] is False
     assert "view_bucket" in task_update["properties"]
     assert "is_in_my_day" in task_update["properties"]

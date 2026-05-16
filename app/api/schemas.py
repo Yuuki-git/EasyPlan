@@ -141,7 +141,7 @@ class TaskCreateRequest(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
-    view_bucket: TaskViewBucket = "my_day"
+    view_bucket: TaskViewBucket = "planned"
     is_in_my_day: bool = False
     parent_task_id: UUID | None = None
 

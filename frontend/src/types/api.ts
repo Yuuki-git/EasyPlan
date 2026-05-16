@@ -57,9 +57,9 @@ export interface TaskNode {
   node_type: 'group' | 'action';
   depends_on?: string[];
   children?: TaskNode[];
-  done_criteria?: string;
-  start_hint?: string;
-  fallback_action?: string;
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
 }
 
 export interface TaskTree {
@@ -111,9 +111,9 @@ export interface TaskResponse {
   estimated_minutes: number | null;
   sort_order: number;
   is_in_my_day: boolean;
-  done_criteria?: string;
-  start_hint?: string;
-  fallback_action?: string;
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
 }
 
 export interface TaskUpdateRequest {

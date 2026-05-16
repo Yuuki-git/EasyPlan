@@ -37,6 +37,10 @@ class TaskRepository:
         parent_task_id: UUID | None,
         is_in_my_day: bool = False,
     ) -> Task | None:
+        view_bucket, is_in_my_day = _normalize_create_bucket(
+            view_bucket=view_bucket,
+            is_in_my_day=is_in_my_day,
+        )
         try:
             parent_task: Task | None = None
             if parent_task_id is not None:
@@ -160,3 +164,9 @@ class TaskRepository:
             query = query.where(Task.parent_task_id == parent_task_id)
         result = await self.session.execute(query)
         return int(result.scalar_one())
+
+
+def _normalize_create_bucket(*, view_bucket: str, is_in_my_day: bool) -> tuple[str, bool]:
+    if view_bucket == "my_day":
+        return "planned", True
+    return view_bucket, is_in_my_day

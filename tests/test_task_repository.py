@@ -30,6 +30,7 @@ def test_create_task_for_user_commits_manual_thread_and_task_together():
     assert session.commit_count == 1
     assert session.rollback_count == 0
     assert [type(item) for item in session.added] == [AgentThread, Task]
+    assert task.view_bucket == "planned"
     assert task.is_in_my_day is True
     assert task in session.refreshed
 

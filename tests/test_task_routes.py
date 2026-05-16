@@ -212,14 +212,16 @@ def test_post_tasks_creates_manual_task_for_authenticated_user_with_default_buck
     assert payload["user_id"] == str(user.id)
     assert payload["title"] == "Buy notebooks"
     assert payload["description"] is None
-    assert payload["view_bucket"] == "my_day"
+    assert payload["view_bucket"] == "planned"
     assert payload["is_in_my_day"] is False
     assert payload["node_type"] == "action"
     assert payload["status"] == "active"
     assert payload["parent_task_id"] is None
     assert repository.create_calls[0]["user_id"] == user.id
-    assert repository.create_calls[0]["view_bucket"] == "my_day"
+    assert repository.create_calls[0]["view_bucket"] == "planned"
     assert repository.create_calls[0]["is_in_my_day"] is False
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+    assert [task["title"] for task in planned_response.json()] == ["Buy notebooks"]
 
 
 def test_post_tasks_can_mark_task_as_in_my_day_without_physical_bucket_move():
@@ -245,6 +247,37 @@ def test_post_tasks_can_mark_task_as_in_my_day_without_physical_bucket_move():
             "parent_task_id": None,
         }
     ]
+
+
+def test_post_tasks_normalizes_explicit_my_day_to_virtual_mapping():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.post(
+        "/api/tasks",
+        json={"title": "Call accountant", "view_bucket": "my_day"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["view_bucket"] == "planned"
+    assert payload["is_in_my_day"] is True
+    assert repository.create_calls == [
+        {
+            "user_id": user.id,
+            "title": "Call accountant",
+            "description": None,
+            "view_bucket": "planned",
+            "is_in_my_day": True,
+            "parent_task_id": None,
+        }
+    ]
+    my_day_response = client.get("/api/tasks?view_bucket=my_day")
+    assert [task["title"] for task in my_day_response.json()] == ["Call accountant"]
+    assert all(
+        not (task.view_bucket == "my_day" and task.is_in_my_day is False)
+        for task in repository.tasks.values()
+    )
 
 
 def test_post_tasks_rejects_parent_task_from_another_tenant():
@@ -296,7 +329,7 @@ def test_post_tasks_creates_standalone_task_after_real_auth_lookup_without_500()
     payload = response.json()
     assert payload["title"] == "Standalone task"
     assert payload["parent_task_id"] is None
-    assert payload["view_bucket"] == "my_day"
+    assert payload["view_bucket"] == "planned"
     assert payload["is_in_my_day"] is False
     assert session.commit_count == 1
     assert [type(item) for item in session.added] == [AgentThread, Task]

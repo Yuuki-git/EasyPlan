@@ -72,7 +72,7 @@
 7. `planning_cases.jsonl` 初版不少于 32 条测试数据。
 8. 自动评测脚本跑通，且策略采纳正确率达到 85% 以上。
 
-#### 📍 v1.2.4: Action Quality & Fallback（任务质量与失败兜底） (Completed / Stable)
+#### 📍 v1.2.4: Action Quality & Fallback（任务质量与失败兜底） (Completed / RC.1)
 v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为“任务可执行的行动系统”。在 v1.2.3 已完成意图路由和策略校验的基础上，重点解决生成任务过于空泛、缺少完成标准、用户不知道如何开始，以及模型失败时无法兜底的问题。
 
 **核心能力**：
@@ -84,8 +84,12 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **本地 Fallback Planner**：当 LLM 超时或彻底熔断时，启用本地静态规则生成基础启动计划，确保系统 100% 永不宕机。
 
 **验收标准**：
-*   保持 v1.2.3 指标不降的前提下，新增：`Action Quality Pass Rate >= 85%`，`Done Criteria Coverage >= 90%`，`Fallback Planner Success Rate = 100%`。
+*   ✅ 保持 v1.2.3 指标不降的前提下，新增：`Action Quality Pass Rate >= 85%`，`Done Criteria Coverage >= 90%`，`Fallback Planner Success Rate = 100%`。（注：DeepSeek 跑分已达 100% 大满贯）。
 *   **非目标**：本版本坚决不碰前端三层规划 UI、Task Copilot 和 Refine Diff。
+
+#### 🩹 v1.2.4.1: Provider Robustness Patch (Backlog)
+*   **Schema Enum Drift Repair**：将 `pydantic.ValidationError` 纳入 JSON Repair 重试链路，防范小模型幻觉枚举值（如输出 `node_type="leader"`）。
+*   **Checklist 强制聚合**：在 Validator 中对 `context_checklist` 加入强校验，任务数 >=2 时必须存在 `group` 节点。
 
 #### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning)
 *   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。

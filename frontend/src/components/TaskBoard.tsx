@@ -357,14 +357,17 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
             )}
             {node.done_criteria && (
               <div className={clsx(
-                "text-xs mt-2 transition-colors font-medium",
+                "text-xs mt-2 transition-colors font-medium break-words",
                 localCompleted ? "text-muted-foreground/30 line-through" : "text-foreground/70"
               )}>
                 完成标准：{node.done_criteria}
               </div>
             )}
             {(node.start_hint || node.fallback_action) && (
-              <details className="mt-3 text-xs group/details outline-none">
+              <details 
+                className="mt-3 text-xs group/details outline-none"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <summary className={clsx(
                   "cursor-pointer select-none transition-colors outline-none",
                   localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/70 hover:text-foreground/90"
@@ -372,7 +375,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
                   执行提示
                 </summary>
                 <div className={clsx(
-                  "mt-2 pl-3 border-l border-muted/30 space-y-1.5",
+                  "mt-2 pl-3 border-l border-muted/30 space-y-1.5 break-words",
                   localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/80"
                 )}>
                   {node.start_hint && <div><span className="font-medium text-foreground/70">如何开始：</span>{node.start_hint}</div>}
@@ -565,10 +568,19 @@ export const TaskBoard: React.FC = () => {
     }
   }, [boardTasks, currentViewBucket, selectedProjectId]);
 
-  const boardActions = currentViewBucket === 'planned' && boardTasks
-    ? boardTasks.filter(t => t.node_type === 'action')
-    : [];
-  const showFogOfWar = boardActions.length > 0 && boardActions.every(t => t.status === 'completed');
+  const showFogOfWar = useMemo(() => {
+    if (currentViewBucket !== 'planned' || !boardTasks) return false;
+    
+    const relevantTasks = selectedProjectId 
+      ? boardTasks.filter(t => t.thread_id === selectedProjectId)
+      : boardTasks;
+      
+    const actions = relevantTasks.filter(t => t.node_type === 'action');
+    
+    if (actions.length === 0) return false;
+    
+    return actions.every(t => t.status === 'completed');
+  }, [boardTasks, currentViewBucket, selectedProjectId]);
 
   if (boardError) {
     return (
