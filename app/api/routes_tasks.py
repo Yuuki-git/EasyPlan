@@ -37,12 +37,17 @@ async def create_task(
     current_user: Annotated[AuthUser, Depends(get_current_user)],
     repository: Annotated[TaskRepository, Depends(get_task_repository)],
 ) -> TaskResponse:
+    view_bucket, is_in_my_day = _normalize_create_bucket(
+        view_bucket=payload.view_bucket,
+        is_in_my_day=payload.is_in_my_day,
+    )
     task = await repository.create_task_for_user(
         user_id=current_user.id,
         title=payload.title,
         description=payload.description,
-        view_bucket=payload.view_bucket,
+        view_bucket=view_bucket,
         parent_task_id=payload.parent_task_id,
+        is_in_my_day=is_in_my_day,
     )
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent task not found")
@@ -79,3 +84,9 @@ async def delete_task(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _normalize_create_bucket(*, view_bucket: TaskViewBucket, is_in_my_day: bool) -> tuple[str, bool]:
+    if view_bucket == "my_day":
+        return "planned", True
+    return view_bucket, is_in_my_day

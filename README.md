@@ -30,12 +30,14 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 - **原生任务闭环**：内置对标专业 Todo 应用的手帐面板，支持双击行内编辑与跨视图流转，打造“规划 -> 拆解 -> 执行”的沉浸式体验。
 - **企业级安全基座**：多租户数据隔离与基于 JWT 的严格鉴权。
 
-## 📊 评测基准 (Planning Eval)
+## 📊 评测基准 (Planning Eval - Xiaomi Mimo API)
 EasyPlan 采用**评测集驱动 (Eval Driven)** 的方式进行大模型调优。
 - **Core Cases**: 32 条核心用例
-- **Intent Classification Accuracy**: 87.50%
-- **Strategy Compliance Rate**: 59.38% (持续调优中)
+- **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
+- **Strategy Compliance Rate**: 93.75%
+- **Horizon Accuracy**: 96.875%
+- **Overall Pass Rate**: 93.75%
 
 ## 🛠️ 技术架构
 

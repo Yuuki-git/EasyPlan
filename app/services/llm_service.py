@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from pydantic import ValidationError
 
@@ -25,6 +25,7 @@ USER_VISIBLE_REASONING_MESSAGES = {
     "LLM_USAGE_RECORDED": "计划生成完毕，请查阅。",
 }
 logger = logging.getLogger(__name__)
+JSON_REPAIR_MAX_ATTEMPTS = 2
 
 
 class LLMStructuredOutputError(RuntimeError):
@@ -284,11 +285,19 @@ class DeepSeekPlannerClient:
         if not content:
             raise LLMStructuredOutputError("DeepSeek response did not include JSON content")
 
-        try:
-            parsed_json = json.loads(content)
-            task_tree = TaskTree.model_validate(parsed_json)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise LLMStructuredOutputError(str(exc)) from exc
+        task_tree = await _parse_task_tree_json_content(
+            content,
+            provider_name="DeepSeek",
+            repair_json=lambda invalid_content, error, cleaned_content: _repair_json_with_chat_completion(
+                self._deepseek_client,
+                model=self.model,
+                provider_name="DeepSeek",
+                invalid_content=invalid_content,
+                error=error,
+                cleaned_content=cleaned_content,
+                max_tokens=int(os.getenv("EASYPLAN_DEEPSEEK_MAX_TOKENS", "4096")),
+            ),
+        )
 
         await emit_reasoning(
             reasoning_sink,
@@ -398,11 +407,19 @@ class XiaomiMiMoPlannerClient:
         if not content:
             raise LLMStructuredOutputError("Xiaomi MiMo response did not include JSON content")
 
-        try:
-            parsed_json = json.loads(content)
-            task_tree = TaskTree.model_validate(parsed_json)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise LLMStructuredOutputError(str(exc)) from exc
+        task_tree = await _parse_task_tree_json_content(
+            content,
+            provider_name="Xiaomi MiMo",
+            repair_json=lambda invalid_content, error, cleaned_content: _repair_json_with_chat_completion(
+                self._mimo_client,
+                model=self.model,
+                provider_name="Xiaomi MiMo",
+                invalid_content=invalid_content,
+                error=error,
+                cleaned_content=cleaned_content,
+                max_tokens=int(os.getenv("EASYPLAN_XIAOMI_MIMO_MAX_TOKENS", "4096")),
+            ),
+        )
 
         await emit_reasoning(
             reasoning_sink,
@@ -517,6 +534,172 @@ def _first_message_content(response: Any) -> str | None:
     return getattr(message, "content", None)
 
 
+def _clean_json_response_text(content: str) -> str:
+    text = _strip_code_fence(content.strip())
+    text = _extract_outer_json_object(text)
+    return "".join(
+        char
+        for char in text
+        if char in "\t\n\r" or ord(char) >= 0x20
+    )
+
+
+def _strip_code_fence(content: str) -> str:
+    if not content.startswith("```"):
+        return content
+    lines = content.splitlines()
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _extract_outer_json_object(content: str) -> str:
+    start = content.find("{")
+    if start == -1:
+        return content.strip()
+
+    in_string = False
+    escaped = False
+    depth = 0
+    for index in range(start, len(content)):
+        char = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start : index + 1].strip()
+
+    end = content.rfind("}")
+    if end > start:
+        return content[start : end + 1].strip()
+    return content[start:].strip()
+
+
+async def _parse_task_tree_json_content(
+    content: str,
+    *,
+    provider_name: str,
+    repair_json: Callable[[str, json.JSONDecodeError, str], Awaitable[str]] | None = None,
+    max_repair_attempts: int = JSON_REPAIR_MAX_ATTEMPTS,
+) -> TaskTree:
+    current_content = content
+    for attempt in range(max_repair_attempts + 1):
+        cleaned_content = _clean_json_response_text(current_content)
+        try:
+            parsed_json = json.loads(cleaned_content)
+        except json.JSONDecodeError as exc:
+            _log_json_decode_error(provider_name, exc, cleaned_content)
+            if repair_json is None or attempt >= max_repair_attempts:
+                raise LLMStructuredOutputError(_json_decode_error_message(exc, cleaned_content)) from exc
+            current_content = await repair_json(current_content, exc, cleaned_content)
+            continue
+
+        try:
+            return TaskTree.model_validate(parsed_json)
+        except ValidationError as exc:
+            raise LLMStructuredOutputError(str(exc)) from exc
+
+    raise LLMStructuredOutputError(f"{provider_name} response did not include valid TaskTree JSON")
+
+
+async def _repair_json_with_chat_completion(
+    chat_client: Any,
+    *,
+    model: str,
+    provider_name: str,
+    invalid_content: str,
+    error: json.JSONDecodeError,
+    cleaned_content: str,
+    max_tokens: int,
+) -> str:
+    response = await chat_client.chat.completions.create(
+        model=model,
+        messages=_json_repair_messages(
+            provider_name=provider_name,
+            invalid_content=invalid_content,
+            error=error,
+            cleaned_content=cleaned_content,
+        ),
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    repaired_content = _first_message_content(response)
+    if not repaired_content:
+        raise LLMStructuredOutputError(f"{provider_name} JSON repair did not include JSON content")
+    return repaired_content
+
+
+def _json_repair_messages(
+    *,
+    provider_name: str,
+    invalid_content: str,
+    error: json.JSONDecodeError,
+    cleaned_content: str,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"You repair JSON returned by {provider_name}. Fix only JSON syntax. "
+                "Do not replan, rewrite, translate, add, remove, reorder, or reinterpret any task content. "
+                "Return one valid JSON object only, with no markdown or commentary."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "The previous response could not be parsed as JSON.\n"
+                f"JSON parse error: {error.msg}\n"
+                f"Error position: {error.pos}\n"
+                f"Nearby 300-character excerpt:\n{_json_error_excerpt(cleaned_content, error.pos)}\n\n"
+                "Original output to repair, preserving all business field semantics:\n"
+                f"{invalid_content}"
+            ),
+        },
+    ]
+
+
+def _log_json_decode_error(provider_name: str, error: json.JSONDecodeError, cleaned_content: str) -> None:
+    logger.warning(
+        "llm_json_decode_failed",
+        extra={
+            "provider": provider_name,
+            "error_message": error.msg,
+            "error_position": error.pos,
+            "error_excerpt": _json_error_excerpt(cleaned_content, error.pos),
+        },
+    )
+
+
+def _json_decode_error_message(error: json.JSONDecodeError, cleaned_content: str) -> str:
+    return (
+        f"{error.msg}: line {error.lineno} column {error.colno} (char {error.pos}); "
+        f"nearby={_json_error_excerpt(cleaned_content, error.pos)!r}"
+    )
+
+
+def _json_error_excerpt(content: str, position: int, size: int = 300) -> str:
+    radius = size // 2
+    start = max(position - radius, 0)
+    end = min(position + radius, len(content))
+    return content[start:end]
+
+
 def _deepseek_system_prompt() -> str:
     return _json_mode_system_prompt("DeepSeek")
 
@@ -541,6 +724,12 @@ def _intent_profile_system_prompt(provider_name: str) -> str:
         "IntentProfile schema exactly. intent_type must be one of long_term_growth, "
         "short_term_delivery, context_checklist, exploration_decision. time_horizon must be "
         "one of minutes, hours, days, weeks, months. confidence_score must be between 0 and 1. "
+        "Classification boundary: context_checklist means situational checklist chores that do "
+        "not require deep focus and are highly dependent on location, errands, or small tools, "
+        "such as 买菜, 拿快递, 缴费, and other 跑腿杂事. short_term_delivery means a focused "
+        "delivery sprint requiring 连续坐在电脑前 or 书桌前, with deep cognitive output work, "
+        "such as 写代码, 做 PPT, 赶报告. Keep this boundary strict when choosing between "
+        "context_checklist and short_term_delivery. "
         "Do not include markdown, commentary, hidden reasoning, or extra keys. "
         f"IntentProfile JSON Schema: {schema} "
         f"{LANGUAGE_MATCH_INSTRUCTION}"

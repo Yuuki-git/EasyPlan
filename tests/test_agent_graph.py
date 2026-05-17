@@ -176,6 +176,26 @@ def context_checklist_without_groups() -> dict[str, Any]:
     return plan
 
 
+def plan_with_action_quality_issue(
+    *,
+    title: str,
+    verb: str,
+    estimated_minutes: int = 25,
+    done_criteria: str | None = None,
+    start_hint: str | None = None,
+    fallback_action: str | None = None,
+) -> dict[str, Any]:
+    plan = valid_plan(title)
+    action = plan["root"]["children"][0]
+    action["title"] = title
+    action["verb"] = verb
+    action["estimated_minutes"] = estimated_minutes
+    action["done_criteria"] = done_criteria
+    action["start_hint"] = start_hint
+    action["fallback_action"] = fallback_action
+    return plan
+
+
 def plan_with_unknown_dependency() -> dict[str, Any]:
     plan = valid_plan("Open paper document")
     plan["root"]["children"][0]["depends_on"] = ["missing-node"]
@@ -211,6 +231,15 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
 
     assert "整个任务树最多只能包含 12 个顶层节点" in prompt
     assert "每个顶层节点最多只能包含 3 个子节点" in prompt
+    assert prompt.index("规则优先级") < prompt.index("硬性规则")
+    assert "intent_type 对应策略高于普通任务拆解习惯" in prompt
+    assert "Scope Horizon 高于计划完整性" in prompt
+    assert "Strategy Compliance 高于任务数量" in prompt
+    assert "JSON Schema 合法性高于表达丰富度" in prompt
+    assert "当前阶段可执行性高于长期完整性" in prompt
+    assert "Scope Horizon 规则" in prompt
+    assert "不得生成完整周期计划、每日打卡表、周计划、月计划或备考全程表" in prompt
+    assert "默认 assumptions 为 []" in prompt
     assert "最近 72 小时" in build_planner_prompt(
         "明年考过日语 N3",
         intent_profile={"intent_type": "long_term_growth"},
@@ -223,16 +252,92 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
         "不知道要不要转行产品经理",
         intent_profile={"intent_type": "exploration_decision"},
     )
+    context_prompt = build_planner_prompt(
+        "下班后取快递买菜交电费",
+        intent_profile={"intent_type": "context_checklist"},
+    )
     assert "roadmap 只能是阶段标题和目的" in long_term_prompt
     assert "第1周/第2周/第3个月" in long_term_prompt
     assert "错误：为 N3 制定 3 个月每日学习计划" in long_term_prompt
+    assert "long_term_growth 禁止" in long_term_prompt
+    assert "完整备考周期计划" in long_term_prompt
+    assert "第一项就是高压力深度任务" in long_term_prompt
+    assert "超出 Phase 1 的具体行动" in long_term_prompt
+    assert "root.children 中第一个 action 的 estimated_minutes 必须 <= 5" in long_term_prompt
+    assert "安装环境" in long_term_prompt
+    assert "训练计划" in long_term_prompt
+    assert "summary 写成“Phase 1 启动计划”" in long_term_prompt
+    assert "assumptions 必须是 []" in long_term_prompt
+    assert "不要输出 roadmap" in long_term_prompt
+    assert "short_term_delivery 禁止" in prompt
+    assert "想一想" in prompt
+    assert "搜集资料但没有明确产出" in prompt
+    assert "context_checklist 禁止" in context_prompt
+    assert "深度父子任务树" in context_prompt
+    assert "每个琐事再拆成多个子任务" in context_prompt
+    assert "2 个以上零散事项" in context_prompt
+    assert "root.children 必须使用 group 节点" in context_prompt
+    assert "优先使用 Group" in context_prompt
+    assert "不要直接输出多个散乱顶层 Action" in context_prompt
+    assert "root.children 顶层必须全部是 group 节点" in context_prompt
+    assert "即使只有一个场景，也建立一个 group" in context_prompt
     assert "不要假设用户已经决定" in exploration_prompt
+    assert "澄清问题、信息收集、低成本验证、决策依据" in exploration_prompt
+    assert "禁止直接生成长期执行计划或连续投入型任务" in exploration_prompt
     assert "错误：直接制定 6 个月转行产品经理学习计划" in exploration_prompt
+    assert "exploration_decision 禁止" in exploration_prompt
+    assert "假设用户已经做出最终决定" in exploration_prompt
+    assert "生成打卡式任务" in exploration_prompt
+    assert "跳过信息收集和低成本验证" in exploration_prompt
+    assert "不要在 summary、assumptions、title、description 或 verb 中写" in exploration_prompt
+    assert "把用户原词改写为“方向A/选项A/当前选择”" in exploration_prompt
+    assert "root.children 最多 5 个顶层任务" in exploration_prompt
+    assert "summary 写成“探索澄清计划”" in exploration_prompt
+    assert "assumptions 必须是 []" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
     assert "必须遵守两分钟法则" not in prompt
     assert "每个叶子 action 的 estimated_minutes 必须 < 5" not in prompt
     assert "Start with summary" in prompt
+
+
+def test_planner_prompt_includes_action_quality_field_guidance():
+    prompt = build_planner_prompt(
+        "写一份周报",
+        intent_profile={"intent_type": "short_term_delivery"},
+    )
+    long_term_prompt = build_planner_prompt(
+        "明年考过日语 N3",
+        intent_profile={"intent_type": "long_term_growth"},
+    )
+    exploration_prompt = build_planner_prompt(
+        "不知道要不要转行产品经理",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "done_criteria" in prompt
+    assert "start_hint" in prompt
+    assert "fallback_action" in prompt
+    assert "对所有 Action，尽量生成 done_criteria" in prompt
+    assert "done_criteria 必须具体说明做到什么程度算完成" in prompt
+    assert "start_hint 必须是用户可以立刻执行的第一步" in prompt
+    assert "fallback_action 必须是更小、更低门槛的替代动作" in prompt
+    assert "estimated_minutes >= 20" in prompt
+    assert "字段值必须是一句短句" in prompt
+    assert "不要包含英文双引号" in prompt
+
+    assert "done_criteria: “完成任务”" in prompt
+    assert "start_hint: “开始做”" in prompt
+    assert "fallback_action: “少做一点”" in prompt
+    assert "done_criteria: “学习完成”" in prompt
+    assert "start_hint: “准备好材料”" in prompt
+    assert "保存 1 个可打开的 N3 真题链接" in prompt
+    assert "打开浏览器搜索“N3 真题 PDF”" in prompt
+    assert "如果没有精力做 20 题，就先做前 5 题" in prompt
+
+    assert "首个破冰 Action 必须生成 start_hint" in long_term_prompt
+    assert "即使用户当前已经能做较长动作，也必须先安排 <=5 分钟破冰" in long_term_prompt
+    assert "信息收集、小实验、决策节点任务建议生成 start_hint" in exploration_prompt
 
 
 def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():
@@ -268,17 +373,33 @@ def test_validator_rejects_short_term_low_value_first_action():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert "low-value icebreaker" in result["validation_errors"][0]
+    error = result["validation_errors"][0]
+    assert "错误代码: LOW_VALUE_ICEBREAKER_IN_SPRINT" in error
+    assert "intent_type: short_term_delivery" in error
+    assert "failed_rule: short_term_delivery 禁止项" in error
+    assert "违规任务/组:" in error
+    assert "删除低价值破冰" in error
 
 
 def test_validator_requires_long_term_first_action_to_be_low_barrier():
     plan = valid_plan("Open paper document")
     plan["root"]["estimated_minutes"] = 120
+    five_minute_plan = valid_plan("Search N3 textbook")
+    five_minute_plan["root"]["children"][0]["estimated_minutes"] = 5
 
     valid_result = asyncio.run(
         task_tree_validator_node(
             {
                 "task_tree": plan,
+                "intent_profile": {"intent_type": "long_term_growth"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+    five_minute_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": five_minute_plan,
                 "intent_profile": {"intent_type": "long_term_growth"},
                 "replan_attempts": 0,
             }
@@ -295,8 +416,13 @@ def test_validator_requires_long_term_first_action_to_be_low_barrier():
     )
 
     assert valid_result["validation_status"] == "valid"
+    assert five_minute_result["validation_status"] == "valid"
     assert action_result["validation_status"] == "needs_replan"
-    assert "low-barrier icebreaker" in action_result["validation_errors"][0]
+    error = action_result["validation_errors"][0]
+    assert "错误代码: MISSING_LOW_BARRIER_ICEBREAKER" in error
+    assert "intent_type: long_term_growth" in error
+    assert "failed_rule: 破冰法则" in error
+    assert "第一步改成必须 <= 5 分钟" in error
 
 
 def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h():
@@ -311,7 +437,10 @@ def test_validator_rejects_long_term_plan_that_covers_full_cycle_instead_of_72h(
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("72-hour Phase 1" in error for error in result["validation_errors"])
+    assert any("错误代码: HORIZON_OVER_EXPANDED" in error for error in result["validation_errors"])
+    assert any("intent_type: long_term_growth" in error for error in result["validation_errors"])
+    assert any("failed_rule: Scope Horizon" in error for error in result["validation_errors"])
+    assert any("只保留当前启动阶段 Phase 1" in error for error in result["validation_errors"])
 
 
 def test_validator_rejects_long_term_weekly_schedule_tasks():
@@ -326,7 +455,8 @@ def test_validator_rejects_long_term_weekly_schedule_tasks():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("第1周" in error or "24-72" in error for error in result["validation_errors"])
+    assert any("错误代码: HORIZON_OVER_EXPANDED" in error for error in result["validation_errors"])
+    assert any("24-72" in error for error in result["validation_errors"])
 
 
 def test_validator_rejects_exploration_plan_that_assumes_execution_decision():
@@ -341,7 +471,9 @@ def test_validator_rejects_exploration_plan_that_assumes_execution_decision():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert any("exploration_decision" in error for error in result["validation_errors"])
+    assert any("错误代码: EXPLORATION_PREMATURE_EXECUTION" in error for error in result["validation_errors"])
+    assert any("intent_type: exploration_decision" in error for error in result["validation_errors"])
+    assert any("低成本验证" in error for error in result["validation_errors"])
 
 
 def test_validator_enforces_global_size_limits():
@@ -370,7 +502,142 @@ def test_validator_rejects_context_checklist_without_grouping():
     )
 
     assert result["validation_status"] == "needs_replan"
-    assert "grouped" in result["validation_errors"][0]
+    assert "错误代码: CHECKLIST_NOT_GROUPED" in result["validation_errors"][0]
+    assert "intent_type: context_checklist" in result["validation_errors"][0]
+    assert "按位置、工具、顺路关系或时间场景聚合" in result["validation_errors"][0]
+
+
+def test_validator_rejects_low_actionability_score_with_structured_feedback():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="学习语法",
+                    verb="学习",
+                    estimated_minutes=25,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    error = result["validation_errors"][0]
+    assert "错误代码: ACTION_QUALITY_LOW_SCORE" in error
+    assert "任务标题: 学习语法" in error
+    assert "actionability_score:" in error
+    assert "quality_issues:" in error
+    assert "abstract_task_violation" in error
+    assert "missing_done_criteria" in error
+    assert "只修复该低质量任务" in error
+    assert "不要重写整棵任务树" in error
+
+
+def test_validator_rejects_abstract_action_even_with_done_criteria():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="准备资料",
+                    verb="准备",
+                    estimated_minutes=15,
+                    done_criteria="保存 1 个可打开的资料链接。",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any("错误代码: ACTION_QUALITY_LOW_SCORE" in error for error in result["validation_errors"])
+    assert any("abstract_task_violation" in error for error in result["validation_errors"])
+
+
+def test_validator_rejects_invalid_action_quality_field_values():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="列出周报核心进展",
+                    verb="列出",
+                    estimated_minutes=30,
+                    done_criteria="完成任务",
+                    start_hint="开始做",
+                    fallback_action="少做一点",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    joined_errors = "\n".join(result["validation_errors"])
+    assert "错误代码: ACTION_QUALITY_INVALID_FIELD" in joined_errors
+    assert "invalid_done_criteria" in joined_errors
+    assert "invalid_start_hint" in joined_errors
+    assert "invalid_fallback_action" in joined_errors
+    assert "给出具体完成标准、可立即执行的第一步和更小替代动作" in joined_errors
+
+
+def test_validator_rejects_missing_done_criteria_for_long_action_only():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="撰写商业计划书核心痛点大纲",
+                    verb="撰写",
+                    estimated_minutes=30,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+    tiny_result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="保存会议室门牌照片",
+                    verb="保存",
+                    estimated_minutes=2,
+                    done_criteria=None,
+                ),
+                "intent_profile": {"intent_type": "context_checklist"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert "错误代码: ACTION_QUALITY_MISSING_DONE_CRITERIA" in result["validation_errors"][0]
+    assert "预计时间较长" in result["validation_errors"][0]
+    assert tiny_result["validation_status"] == "valid"
+
+
+def test_validator_accepts_high_quality_action_with_action_quality_fields():
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan_with_action_quality_issue(
+                    title="列出周报的 3 项核心进展",
+                    verb="列出",
+                    estimated_minutes=25,
+                    done_criteria="写出 3 项进展，每项包含结果和影响。",
+                    start_hint="打开本周任务记录。",
+                    fallback_action="如果没时间写 3 项，就先写最重要的 1 项。",
+                ),
+                "intent_profile": {"intent_type": "short_term_delivery"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
 
 
 def test_validator_rejects_unknown_dependency_reference():

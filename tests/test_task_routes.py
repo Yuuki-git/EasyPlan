@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID, uuid4
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +26,10 @@ class FakeTask:
     node_type: str
     status: str
     view_bucket: str
+    is_in_my_day: bool
     estimated_minutes: int | None
     sort_order: int
+    metadata_: dict[str, Any] = field(default_factory=dict)
 
 
 class FakeTaskRepository:
@@ -42,7 +45,12 @@ class FakeTaskRepository:
         return [
             task
             for task in self.tasks.values()
-            if task.user_id == user_id and (view_bucket is None or task.view_bucket == view_bucket)
+            if task.user_id == user_id
+            and (
+                view_bucket is None
+                or (view_bucket == "my_day" and task.is_in_my_day)
+                or (view_bucket != "my_day" and task.view_bucket == view_bucket)
+            )
         ]
 
     async def update_task_for_user(self, *, user_id, task_id, changes):
@@ -62,6 +70,7 @@ class FakeTaskRepository:
         description,
         view_bucket,
         parent_task_id,
+        is_in_my_day=False,
     ):
         self.create_calls.append(
             {
@@ -69,6 +78,7 @@ class FakeTaskRepository:
                 "title": title,
                 "description": description,
                 "view_bucket": view_bucket,
+                "is_in_my_day": is_in_my_day,
                 "parent_task_id": parent_task_id,
             }
         )
@@ -79,6 +89,7 @@ class FakeTaskRepository:
         task = _fake_task(
             user_id=user_id,
             view_bucket=view_bucket,
+            is_in_my_day=is_in_my_day,
             title=title,
             parent_task_id=parent_task_id,
             description=description,
@@ -111,6 +122,74 @@ def test_get_tasks_filters_by_authenticated_user_and_view_bucket():
     assert repository.list_calls == [{"user_id": user.id, "view_bucket": "planned"}]
 
 
+def test_get_my_day_tasks_uses_virtual_mapping_in_response():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    my_day_task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Today mapped task",
+        is_in_my_day=True,
+    )
+    planned_only_task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Later task",
+        is_in_my_day=False,
+    )
+    repository.tasks[my_day_task.id] = my_day_task
+    repository.tasks[planned_only_task.id] = planned_only_task
+
+    response = client.get("/api/tasks?view_bucket=my_day")
+
+    assert response.status_code == 200
+    assert response.json()[0]["title"] == "Today mapped task"
+    assert response.json()[0]["view_bucket"] == "planned"
+    assert response.json()[0]["is_in_my_day"] is True
+    assert repository.list_calls == [{"user_id": user.id, "view_bucket": "my_day"}]
+
+
+def test_get_tasks_returns_action_quality_fields_from_metadata_without_mutating_metadata():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        metadata_={
+            "source": "planner",
+            "done_criteria": "Outline includes problem, solution, and next step.",
+            "start_hint": "Reuse the meeting notes.",
+            "fallback_action": "Write just the three section titles.",
+        },
+    )
+    repository.tasks[task.id] = task
+
+    response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["done_criteria"] == "Outline includes problem, solution, and next step."
+    assert payload["start_hint"] == "Reuse the meeting notes."
+    assert payload["fallback_action"] == "Write just the three section titles."
+    assert repository.tasks[task.id].metadata_["source"] == "planner"
+
+
+def test_get_tasks_returns_null_action_quality_fields_for_legacy_metadata():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(user_id=user.id, view_bucket="planned", title="Legacy task", metadata_={"source": "manual"})
+    repository.tasks[task.id] = task
+
+    response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["done_criteria"] is None
+    assert payload["start_hint"] is None
+    assert payload["fallback_action"] is None
+
+
 def test_get_tasks_returns_empty_array_for_authenticated_user_with_no_tasks():
     repository = FakeTaskRepository()
     client, user = _client_with_task_repository(repository)
@@ -133,12 +212,72 @@ def test_post_tasks_creates_manual_task_for_authenticated_user_with_default_buck
     assert payload["user_id"] == str(user.id)
     assert payload["title"] == "Buy notebooks"
     assert payload["description"] is None
-    assert payload["view_bucket"] == "my_day"
+    assert payload["view_bucket"] == "planned"
+    assert payload["is_in_my_day"] is False
     assert payload["node_type"] == "action"
     assert payload["status"] == "active"
     assert payload["parent_task_id"] is None
     assert repository.create_calls[0]["user_id"] == user.id
-    assert repository.create_calls[0]["view_bucket"] == "my_day"
+    assert repository.create_calls[0]["view_bucket"] == "planned"
+    assert repository.create_calls[0]["is_in_my_day"] is False
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+    assert [task["title"] for task in planned_response.json()] == ["Buy notebooks"]
+
+
+def test_post_tasks_can_mark_task_as_in_my_day_without_physical_bucket_move():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.post(
+        "/api/tasks",
+        json={"title": "Review launch notes", "view_bucket": "planned", "is_in_my_day": True},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["view_bucket"] == "planned"
+    assert payload["is_in_my_day"] is True
+    assert repository.create_calls == [
+        {
+            "user_id": user.id,
+            "title": "Review launch notes",
+            "description": None,
+            "view_bucket": "planned",
+            "is_in_my_day": True,
+            "parent_task_id": None,
+        }
+    ]
+
+
+def test_post_tasks_normalizes_explicit_my_day_to_virtual_mapping():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.post(
+        "/api/tasks",
+        json={"title": "Call accountant", "view_bucket": "my_day"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["view_bucket"] == "planned"
+    assert payload["is_in_my_day"] is True
+    assert repository.create_calls == [
+        {
+            "user_id": user.id,
+            "title": "Call accountant",
+            "description": None,
+            "view_bucket": "planned",
+            "is_in_my_day": True,
+            "parent_task_id": None,
+        }
+    ]
+    my_day_response = client.get("/api/tasks?view_bucket=my_day")
+    assert [task["title"] for task in my_day_response.json()] == ["Call accountant"]
+    assert all(
+        not (task.view_bucket == "my_day" and task.is_in_my_day is False)
+        for task in repository.tasks.values()
+    )
 
 
 def test_post_tasks_rejects_parent_task_from_another_tenant():
@@ -190,7 +329,8 @@ def test_post_tasks_creates_standalone_task_after_real_auth_lookup_without_500()
     payload = response.json()
     assert payload["title"] == "Standalone task"
     assert payload["parent_task_id"] is None
-    assert payload["view_bucket"] == "my_day"
+    assert payload["view_bucket"] == "planned"
+    assert payload["is_in_my_day"] is False
     assert session.commit_count == 1
     assert [type(item) for item in session.added] == [AgentThread, Task]
 
@@ -205,7 +345,7 @@ def test_patch_task_updates_only_authenticated_users_task():
 
     response = client.patch(
         f"/api/tasks/{own_task.id}",
-        json={"title": "Draft intro", "view_bucket": "my_day", "estimated_minutes": 4},
+        json={"title": "Draft intro", "view_bucket": "planned", "is_in_my_day": True, "estimated_minutes": 4},
     )
     forbidden_response = client.patch(
         f"/api/tasks/{other_task.id}",
@@ -214,9 +354,11 @@ def test_patch_task_updates_only_authenticated_users_task():
 
     assert response.status_code == 200
     assert response.json()["title"] == "Draft intro"
-    assert response.json()["view_bucket"] == "my_day"
+    assert response.json()["view_bucket"] == "planned"
+    assert response.json()["is_in_my_day"] is True
     assert response.json()["estimated_minutes"] == 4
     assert repository.tasks[own_task.id].title == "Draft intro"
+    assert repository.tasks[own_task.id].is_in_my_day is True
     assert forbidden_response.status_code == 404
     assert repository.tasks[other_task.id].title == "Other tenant"
 
@@ -248,7 +390,7 @@ def test_patch_task_allows_clearing_nullable_description():
     ]
 
 
-@pytest.mark.parametrize("field", ["title", "status", "view_bucket", "sort_order"])
+@pytest.mark.parametrize("field", ["title", "status", "view_bucket", "sort_order", "is_in_my_day"])
 def test_patch_task_rejects_explicit_null_for_required_columns(field: str):
     repository = FakeTaskRepository()
     client, user = _client_with_task_repository(repository)
@@ -377,6 +519,8 @@ def _fake_task(
     title: str,
     parent_task_id: UUID | None = None,
     description: str | None = None,
+    is_in_my_day: bool = False,
+    metadata_: dict[str, Any] | None = None,
 ) -> FakeTask:
     return FakeTask(
         id=uuid4(),
@@ -389,6 +533,8 @@ def _fake_task(
         node_type="action",
         status="active",
         view_bucket=view_bucket,
+        is_in_my_day=is_in_my_day,
         estimated_minutes=2,
         sort_order=0,
+        metadata_=metadata_ or {},
     )

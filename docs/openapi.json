@@ -942,7 +942,12 @@
               "backlog"
             ],
             "title": "View Bucket",
-            "default": "my_day"
+            "default": "planned"
+          },
+          "is_in_my_day": {
+            "type": "boolean",
+            "title": "Is In My Day",
+            "default": false
           },
           "parent_task_id": {
             "anyOf": [
@@ -1022,6 +1027,42 @@
             "type": "array",
             "maxItems": 20,
             "title": "Children"
+          },
+          "done_criteria": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done Criteria"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Action"
           }
         },
         "additionalProperties": false,
@@ -1098,6 +1139,10 @@
             "type": "string",
             "title": "View Bucket"
           },
+          "is_in_my_day": {
+            "type": "boolean",
+            "title": "Is In My Day"
+          },
           "estimated_minutes": {
             "anyOf": [
               {
@@ -1112,6 +1157,39 @@
           "sort_order": {
             "type": "integer",
             "title": "Sort Order"
+          },
+          "done_criteria": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done Criteria"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Action"
           }
         },
         "type": "object",
@@ -1126,6 +1204,7 @@
           "node_type",
           "status",
           "view_bucket",
+          "is_in_my_day",
           "estimated_minutes",
           "sort_order"
         ],
@@ -1220,6 +1299,18 @@
               }
             ],
             "title": "View Bucket",
+            "description": "Omit to keep unchanged. Explicit null is rejected."
+          },
+          "is_in_my_day": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is In My Day",
             "description": "Omit to keep unchanged. Explicit null is rejected."
           },
           "estimated_minutes": {

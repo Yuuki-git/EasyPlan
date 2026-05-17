@@ -84,14 +84,20 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     task_properties = task_response["properties"]
 
     assert "view_bucket" in task_properties
+    assert "is_in_my_day" in task_properties
     assert "estimated_minutes" in task_properties
     assert "parent_task_id" in task_properties
     assert "client_node_id" in task_properties
-    assert {"title", "description", "view_bucket", "parent_task_id"}.issubset(
+    assert "done_criteria" in task_properties
+    assert "start_hint" in task_properties
+    assert "fallback_action" in task_properties
+    assert {"title", "description", "view_bucket", "is_in_my_day", "parent_task_id"}.issubset(
         task_create["properties"]
     )
-    assert task_create["properties"]["view_bucket"]["default"] == "my_day"
+    assert task_create["properties"]["view_bucket"]["default"] == "planned"
+    assert task_create["properties"]["is_in_my_day"]["default"] is False
     assert "view_bucket" in task_update["properties"]
+    assert "is_in_my_day" in task_update["properties"]
 
 
 def test_openapi_contract_documents_sse_token_query_fallback():

@@ -210,6 +210,10 @@ def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
     assert summary["strategy_compliance_rate"] == 1 / 3
     assert summary["json_parse_success_rate"] == 2 / 3
     assert summary["passed"] == 1
+    assert "action_quality_pass_rate" in summary
+    assert "average_actionability_score" in summary
+    assert "done_criteria_coverage" in summary
+    assert "abstract_task_violation_rate" in summary
 
 
 def test_exploration_decision_does_not_require_five_minute_icebreaker():
@@ -315,6 +319,60 @@ def test_failure_diagnostics_include_actionable_eval_context():
     assert "full cycle" in diagnostics[0]["horizon_failure_reason"]
     assert diagnostics[0]["planner_top_level_tasks"][0]["title"] == "第1周背单词"
     assert diagnostics[0]["first_action"]["estimated_minutes"] == 120
+
+
+def test_evaluate_plan_reports_action_quality_metrics_without_affecting_pass_status():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="今天下午前写完项目复盘",
+        expected_intent_type="short_term_delivery",
+        expected_horizon="hours",
+        must_have_icebreaker=False,
+        max_nodes=8,
+        description="Action quality metrics should be observational only",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "完成项目复盘",
+            "description": None,
+            "verb": "完成",
+            "estimated_minutes": 60,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "vague",
+                    "title": "学习语法",
+                    "description": None,
+                    "verb": "学习",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+            ],
+        },
+        "summary": "完成项目复盘",
+        "assumptions": [],
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert result.valid_task_tree is True
+    assert result.strategy_compliant is True
+    assert result.passed is True
+    assert result.action_quality_pass_rate == 0.0
+    assert result.done_criteria_coverage == 0.0
+    assert result.abstract_task_violation_rate == 1.0
 
 
 def test_load_env_file_sets_missing_environment_values(tmp_path, monkeypatch):

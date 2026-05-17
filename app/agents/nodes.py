@@ -9,9 +9,10 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.agents.state import AgentState, DISALLOWED_CHECKPOINT_KEYS, prune_state
-from app.api.schemas import IntentProfile, TaskTree
+from app.api.schemas import ACTION_QUALITY_FIELDS, IntentProfile, TaskTree
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.action_quality import score_action_node
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 
 
@@ -19,6 +20,11 @@ MAX_REPLAN_ATTEMPTS = 3
 MAX_TOP_LEVEL_NODES = 12
 MAX_CHILDREN_PER_TOP_LEVEL = 3
 LONG_TERM_MAX_DEPTH = 4
+ACTION_QUALITY_MIN_RUNTIME_SCORE = 70
+LONG_ACTION_DONE_CRITERIA_MINUTES = 20
+INVALID_DONE_CRITERIA_VALUES = ("完成任务", "学习完成", "完成即可")
+INVALID_START_HINT_VALUES = ("开始做", "准备开始")
+INVALID_FALLBACK_ACTION_VALUES = ("少做一点", "降低难度")
 LONG_TERM_SCOPE_KEYWORDS = (
     "全年",
     "一年",
@@ -52,7 +58,9 @@ LONG_TERM_CURRICULUM_TERMS = (
 )
 EXPLORATION_EXECUTION_PATTERNS = (
     r"[三四五六七八九十\d]+\s*个月.{0,8}(转行|创业|学习|执行).{0,8}计划",
+    r"(执行|制定).{0,10}(转行|创业).{0,12}计划",
     r"(直接|立即).{0,6}(辞职|转行|创业|报名|投递|执行)",
+    r"(报名|投递|辞职).{0,12}(课程|岗位|项目)",
     r"(转行|创业|长期学习).{0,8}(执行计划|学习计划|路线图)",
 )
 EXPLORATION_DISCOVERY_TERMS = (
@@ -89,17 +97,50 @@ LOW_VALUE_ICEBREAKER_TERMS = (
     "整理桌面",
 )
 
+RULE_PRIORITY_PROMPT = """规则优先级：
+1. intent_type 对应策略高于普通任务拆解习惯。
+2. Scope Horizon 高于计划完整性。宁可少给，也不要排满全周期。
+3. Strategy Compliance 高于任务数量。宁可生成 4 个正确任务，也不要生成 12 个错误任务。
+4. JSON Schema 合法性高于表达丰富度。
+5. 当前阶段可执行性高于长期完整性。"""
+
 HARD_RULES_PROMPT = """硬性规则：
 1. 整个任务树最多只能包含 12 个顶层节点（Group/Action）。
 2. 每个顶层节点最多只能包含 3 个子节点。
-3. 绝对禁止排满整个周期。
-4. 对于长周期或宏大目标，只能输出【当前启动阶段 Phase 1】的行动地图。
-5. 禁止输出 Markdown、解释性段落或 schema 外字段。
-6. title 和 description 必须短而具体，避免长文本导致 JSON 截断。"""
+3. Scope Horizon 规则：
+   - 对 long_term_growth，只允许输出当前启动阶段 Phase 1 的任务。
+   - Phase 1 默认覆盖未来 24-72 小时。
+   - 可以提及未来阶段名称，但不得展开未来阶段的具体任务。
+   - 不得生成完整周期计划、每日打卡表、周计划、月计划或备考全程表。
+   - 如果用户要求长期完整计划，也只能输出高层阶段名称，不得输出未来阶段任务。
+   - 不要新增 roadmap/current_phase/next_action 等 schema 外字段；未来阶段名称最多写入 assumptions。
+4. 禁止输出 Markdown、解释性段落或 schema 外字段。
+5. title 和 description 必须短而具体，避免长文本导致 JSON 截断。
+6. assumptions 必须是字符串数组；默认 assumptions 为 []；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
+
+ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
+1. 对所有 Action，尽量生成 done_criteria；done_criteria 必须具体说明做到什么程度算完成。
+2. start_hint 必须是用户可以立刻执行的第一步。
+3. fallback_action 必须是更小、更低门槛的替代动作。
+4. 对 estimated_minutes >= 20 的 Action，建议生成 fallback_action。
+5. 不要为了补字段扩大任务树规模，不要新增 roadmap/current_phase/next_action 等 schema 外字段。
+6. 字段值必须是一句短句，建议 <=30 汉字；不要包含英文双引号、换行、列表或多句解释。
+
+无效字段内容禁止：
+- done_criteria: “完成任务”
+- start_hint: “开始做”
+- fallback_action: “少做一点”
+- done_criteria: “学习完成”
+- start_hint: “准备好材料”
+
+有效字段示例：
+- done_criteria: “保存 1 个可打开的 N3 真题链接”
+- start_hint: “打开浏览器搜索“N3 真题 PDF””
+- fallback_action: “如果没有精力做 20 题，就先做前 5 题”"""
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
-第一个任务必须是极其简单的破冰动作，建议 <5 分钟，用来降低启动阻力。
+第一个任务必须是极其简单的破冰动作，建议 <=5 分钟，用来降低启动阻力。
 但后续任务可以是 25-60 分钟的深度工作。
 不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
 可以给 3-5 个高层阶段作为 roadmap；roadmap 只能是阶段标题和目的，不允许 estimated_minutes，不允许具体日期，不允许子任务。
@@ -107,6 +148,24 @@ INTENT_STRATEGY_PROMPTS = {
 Phase 1 建议覆盖未来 24-72 小时。
 禁止排满整个备考期、训练期、写作期或长期周期。
 禁止生成“第1周/第2周/第3个月”这种长期排期任务。
+
+long_term_growth 禁止：
+- 完整备考周期计划
+- 每日打卡表
+- 未来几周或几个月的详细任务
+- 第一项就是高压力深度任务
+- 超出 Phase 1 的具体行动
+- 第一项写成安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划
+
+long_term_growth 必须：
+- root.children 中第一个 action 的 estimated_minutes 必须 <= 5。
+- 第一个 action 只能是低阻力启动动作，例如搜索一篇资料、保存一个样例、写下一个问题、选定一个最小素材。
+- 即使用户当前已经能做较长动作，也必须先安排 <=5 分钟破冰；实际跑步、训练、写作、练习放在第二步以后。
+- 首个破冰 Action 必须生成 start_hint，且 start_hint 必须是打开页面、搜索关键词、写下一个问题等立刻可做的第一步。
+- 第一个 action 不得是安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划。
+- Phase 1 任务标题中不要写“训练计划”“学习计划”“备考计划”“长期路线”“课程大纲”。
+- summary 写成“Phase 1 启动计划”，不要回显完整长期目标。
+- assumptions 必须是 []，不要输出 roadmap 或未来阶段。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
@@ -133,6 +192,14 @@ roadmap:
 请直接按交付模块、逻辑顺序或时间块拆分。
 每个任务必须有明确产出。
 
+short_term_delivery 禁止：
+- 打开电脑
+- 打开 Word
+- 新建文档
+- 准备开始
+- 想一想
+- 搜集资料但没有明确产出
+
 <反面教材>
 动作：「打开 Word 准备写 PPT」，耗时：2 分钟。问题：这是废话，不是有效任务。
 
@@ -143,6 +210,20 @@ roadmap:
 无需深度拆解，也不需要破冰动作。
 请按地理位置、工具环境、顺路关系或时间场景聚合。
 目标是减少切换成本和遗漏，而不是生成复杂任务树。
+
+context_checklist 禁止：
+- 深度父子任务树
+- 长期阶段计划
+- 复杂推理任务
+- 每个琐事再拆成多个子任务
+
+context_checklist 必须：
+- 如果有 2 个以上零散事项，root.children 必须使用 group 节点。
+- 当清单中有 2 个以上事项，且可按地点、工具、顺路关系或时间场景聚合时，优先使用 Group，不要直接输出多个散乱顶层 Action。
+- root.children 顶层必须全部是 group 节点，不允许把多个事项作为顶层 action 平铺。
+- 即使只有一个场景，也建立一个 group，例如“出门前”“通勤路上”“手机处理”“缴费处理”。
+- group 按位置、工具、顺路关系、出门前/路上/到家后等场景命名。
+- 每个 group 下面放 1-3 个 action；不要把所有零散事项平铺成多个顶层 action。
 
 <正面教材>
 组：「下班路上」
@@ -158,7 +239,24 @@ roadmap:
 目标是降低不确定性，而不是强推执行。
 不要生成长期执行计划。
 当前阶段只生成信息收集、问题澄清、小实验和决策节点。
+任务必须围绕澄清问题、信息收集、低成本验证、决策依据。
 禁止直接生成完整转行计划、创业计划、长期学习计划。
+禁止直接生成长期执行计划或连续投入型任务。
+信息收集、小实验、决策节点任务建议生成 start_hint。
+
+exploration_decision 禁止：
+- 假设用户已经做出最终决定
+- 直接生成长期执行计划
+- 连续投入型任务
+- 生成打卡式任务
+- 跳过信息收集和低成本验证
+
+exploration_decision 输出措辞：
+- root.children 最多 5 个顶层任务。
+- summary 写成“探索澄清计划”；assumptions 必须是 []。
+- 不要在 summary、assumptions、title、description 或 verb 中写“执行计划”“学习计划”“路线图”“报名”“投递”“直接”“立即”。
+- 如果用户原文包含辞职、转行或创业，把用户原词改写为“方向A/选项A/当前选择”，保持探索口吻。
+- 任务标题应使用“澄清/列出/收集/访谈/比较/验证/决策记录”，不要使用“制定计划/开始执行/报名课程/投递岗位”。
 
 <正面教材>
 动作：「列出辞职做自媒体的 3 个核心担忧」，耗时：15 分钟。
@@ -328,7 +426,9 @@ def build_planner_prompt(
     intent_type = _intent_type_from_profile(intent_profile)
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
+        RULE_PRIORITY_PROMPT,
         HARD_RULES_PROMPT,
+        ACTION_QUALITY_PROMPT,
         INTENT_STRATEGY_PROMPTS[intent_type],
         "输出必须是符合 TaskTree JSON Schema 的 JSON。",
         f"用户意图：{intent_text}",
@@ -339,7 +439,8 @@ def build_planner_prompt(
         parts.append(f"用户自然语言反馈：{feedback}")
     if validation_errors:
         parts.append(
-            "验证失败，请继续拆解并按以下具体原因修正，不要重复输出同类错误："
+            "验证失败，请继续拆解并按以下具体原因修正；只修复验证指出的低质量任务，保持原 intent_type 和策略不变，"
+            "不要重写整棵任务树，不要新增 roadmap/current_phase/next_action，不要重复输出同类错误："
             + "; ".join(validation_errors)
         )
     return "\n".join(parts)
@@ -573,6 +674,7 @@ def _task_insert_row(task: Task, *, parent_task_id: UUID | None) -> dict[str, An
         "node_type": task.node_type,
         "status": task.status,
         "view_bucket": task.view_bucket,
+        "is_in_my_day": task.is_in_my_day,
         "estimated_minutes": task.estimated_minutes,
         "sort_order": task.sort_order,
         "ai_generated": task.ai_generated,
@@ -636,11 +738,12 @@ def flatten_task_tree_for_persistence(
                 node_type=node.node_type,
                 status="active",
                 view_bucket=default_view_bucket,
+                is_in_my_day=False,
                 estimated_minutes=node.estimated_minutes,
                 sort_order=sort_order,
                 ai_generated=True,
                 user_edited=False,
-                metadata_={},
+                metadata_=_action_quality_metadata(node),
             )
         )
         for dependency in node.depends_on:
@@ -661,6 +764,15 @@ def flatten_task_tree_for_persistence(
     return tasks, dependencies
 
 
+def _action_quality_metadata(node: Any, base_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = dict(base_metadata or {})
+    for field in ACTION_QUALITY_FIELDS:
+        value = getattr(node, field, None)
+        if value is not None:
+            metadata[field] = value
+    return metadata
+
+
 def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None = None) -> list[str]:
     try:
         parsed = TaskTree.model_validate(task_tree)
@@ -674,6 +786,7 @@ def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None
     _collect_dependency_errors(nodes_by_id, errors)
     _collect_global_size_errors(parsed, errors)
     _collect_strategy_errors(parsed, _intent_type_from_profile(intent_profile), errors)
+    _collect_action_quality_errors(parsed, _intent_type_from_profile(intent_profile), errors)
     return errors
 
 
@@ -746,59 +859,314 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
         first_action = _first_action(task_tree)
         if first_action is not None and _is_low_value_icebreaker(first_action):
             errors.append(
-                f"{first_action.client_node_id}: short_term_delivery first task is a low-value icebreaker"
+                _format_validator_feedback(
+                    error_code="LOW_VALUE_ICEBREAKER_IN_SPRINT",
+                    intent_type=intent_type,
+                    failed_rule="short_term_delivery 禁止项",
+                    problem="short_term_delivery 的首个任务是“打开电脑/打开 Word/新建文档/准备开始/想一想”这类低价值破冰动作。",
+                    offender=first_action,
+                    fix_suggestion="删除低价值破冰，直接从有明确产出的时间盒任务开始。",
+                )
             )
         return
 
     if intent_type == "long_term_growth":
         first_action = _first_action(task_tree)
-        if first_action is None or first_action.estimated_minutes >= 5:
-            node_id = first_action.client_node_id if first_action is not None else "root"
+        if first_action is None or first_action.estimated_minutes > 5:
             errors.append(
-                f"验证失败：{node_id}: long_term_growth first action must be a low-barrier icebreaker。请把第一步改成 5 分钟以内、具体、低阻力的启动动作。"
+                _format_validator_feedback(
+                    error_code="MISSING_LOW_BARRIER_ICEBREAKER",
+                    intent_type=intent_type,
+                    failed_rule="破冰法则",
+                    problem="long_term_growth 的第一个 action 不是 <= 5 分钟的低阻力破冰动作。",
+                    offender=first_action or task_tree.root,
+                    fix_suggestion="把第一步改成必须 <= 5 分钟、具体、低阻力的启动动作；后续再进入 25-60 分钟深度任务。",
+                )
             )
         total_nodes = sum(1 for _ in _iter_task_nodes(task_tree.root))
         max_depth = _task_tree_depth(task_tree.root)
         if total_nodes > MAX_TOP_LEVEL_NODES + MAX_CHILDREN_PER_TOP_LEVEL:
-            errors.append("验证失败：long_term_growth scope is too broad for Phase 1。请只保留高层 roadmap，并只展开当前 Phase 1 的 24-72 小时行动。")
+            errors.append(
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="输出任务数量过多，像完整周期计划而不是当前启动阶段 Phase 1。",
+                    offender=task_tree.root,
+                    fix_suggestion="只保留当前启动阶段 Phase 1 的 24-72 小时行动；未来阶段最多保留标题，不得展开任务。",
+                )
+            )
         if max_depth > LONG_TERM_MAX_DEPTH:
-            errors.append("验证失败：long_term_growth phase depth is too deep for Phase 1。请减少深层嵌套，只输出启动阶段行动。")
+            errors.append(
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="任务树嵌套过深，超出当前启动阶段 Phase 1 的行动地图范围。",
+                    offender=task_tree.root,
+                    fix_suggestion="减少深层嵌套，只输出当前启动阶段 Phase 1 的 24-72 小时行动。",
+                )
+            )
         if _contains_long_term_full_cycle_language(task_tree):
             errors.append(
-                "验证失败：long_term_growth plan must stay within 72-hour Phase 1 instead of covering the full long-term cycle。请不要排满完整备考期、训练期或长期周期。"
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="输出包含完整周期、未来阶段或全程计划语言，违反 Scope Horizon。",
+                    offender=task_tree.root,
+                    fix_suggestion="只保留当前启动阶段 Phase 1 的任务；未来阶段最多保留标题，不得展开任务。",
+                )
             )
         if _contains_long_term_schedule_language(task_tree):
             errors.append(
-                "验证失败：long_term_growth 出现第1周/第2周/第3个月/每天坚持等长期排期。请只展开当前 Phase 1 的 24-72 小时行动。"
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="输出出现第1周/第2周/第3个月/每天坚持等长期排期。",
+                    offender=task_tree.root,
+                    fix_suggestion="删除周计划、月计划和每日打卡表，只展开当前 Phase 1 的 24-72 小时行动。",
+                )
             )
         if _top_level_looks_like_long_term_curriculum(task_tree):
             errors.append(
-                "验证失败：long_term_growth 顶层任务像完整课程大纲。请把 roadmap 放入 assumptions，只在 tasks 中保留 Phase 1 行动。"
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="顶层任务像完整课程或长期阶段大纲，不是当前启动阶段任务。",
+                    offender=task_tree.root,
+                    fix_suggestion="未来阶段最多写成 assumptions 中的高层标题；TaskTree.root.children 只保留 Phase 1 行动。",
+                )
             )
         if _contains_overlong_long_term_action(task_tree):
             errors.append(
-                "验证失败：long_term_growth tasks 中存在超过当前启动阶段的长期任务。请拆成 24-72 小时内可完成的行动。"
+                _format_validator_feedback(
+                    error_code="HORIZON_OVER_EXPANDED",
+                    intent_type=intent_type,
+                    failed_rule="Scope Horizon",
+                    problem="tasks 中存在超过当前启动阶段的长期任务。",
+                    offender=task_tree.root,
+                    fix_suggestion="拆成 24-72 小时内可完成的 Phase 1 行动，不要展开完整周期。",
+                )
             )
         return
 
     if intent_type == "exploration_decision":
         if _contains_exploration_execution_language(task_tree):
             errors.append(
-                "验证失败：exploration_decision 不应直接生成长期执行计划。请改为问题澄清、信息收集、小实验和决策节点。"
+                _format_validator_feedback(
+                    error_code="EXPLORATION_PREMATURE_EXECUTION",
+                    intent_type=intent_type,
+                    failed_rule="exploration_decision 禁止项",
+                    problem="输出假设用户已经做出最终决定，并直接生成长期执行计划。",
+                    offender=task_tree.root,
+                    fix_suggestion="改为信息收集、问题澄清、低成本验证和决策节点，不要生成长期执行计划。",
+                )
             )
         if not _contains_exploration_discovery_language(task_tree):
             errors.append(
-                "验证失败：exploration_decision 缺少信息收集或决策节点。请加入澄清问题、调研、访谈、小实验或成本收益比较。"
+                _format_validator_feedback(
+                    error_code="EXPLORATION_DISCOVERY_MISSING",
+                    intent_type=intent_type,
+                    failed_rule="exploration_decision 策略",
+                    problem="输出缺少信息收集、问题澄清、低成本验证或决策节点。",
+                    offender=task_tree.root,
+                    fix_suggestion="加入澄清问题、调研、访谈、小实验或成本收益比较任务。",
+                )
             )
         return
 
     if intent_type == "context_checklist":
         max_depth = _task_tree_depth(task_tree.root)
         if max_depth > 3:
-            errors.append("验证失败：context_checklist task tree is too deep for a checklist。请不要生成多层复杂任务树。")
+            errors.append(
+                _format_validator_feedback(
+                    error_code="CHECKLIST_TOO_DEEP",
+                    intent_type=intent_type,
+                    failed_rule="context_checklist 禁止项",
+                    problem="情境清单被拆成深度父子任务树或复杂推理任务。",
+                    offender=task_tree.root,
+                    fix_suggestion="压平为轻量清单，按位置、工具、顺路关系或时间场景聚合。",
+                )
+            )
         top_level_nodes = task_tree.root.children
         if len(top_level_nodes) > 1 and not any(node.node_type == "group" for node in top_level_nodes):
-            errors.append("验证失败：context_checklist related actions should be grouped by context。请按地点、工具、时间或顺路关系聚合。")
+            errors.append(
+                _format_validator_feedback(
+                    error_code="CHECKLIST_NOT_GROUPED",
+                    intent_type=intent_type,
+                    failed_rule="context_checklist 聚合规则",
+                    problem="多个琐事没有按共同情境聚合，容易造成切换成本和遗漏。",
+                    offender=task_tree.root,
+                    fix_suggestion="按位置、工具、顺路关系或时间场景聚合；不要把每个琐事再拆成多个子任务。",
+                )
+            )
+
+
+def _collect_action_quality_errors(task_tree: TaskTree, intent_type: str, errors: list[str]) -> None:
+    for node in _iter_task_nodes(task_tree.root):
+        if node.node_type != "action":
+            continue
+
+        quality = score_action_node(node)
+        quality_issues = list(quality.reasons)
+        has_low_quality_score = quality.score < ACTION_QUALITY_MIN_RUNTIME_SCORE
+
+        if has_low_quality_score:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_LOW_SCORE",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=quality_issues,
+                    offender=node,
+                    problem="Action 可执行性分数过低，任务标题或完成标准过于空泛。",
+                    fix_suggestion=(
+                        "只修复该低质量任务：改成明确动词 + 明确对象 + 具体产出，补充可检查的 done_criteria。"
+                    ),
+                )
+            )
+            continue
+
+        if quality.has_abstract_violation:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_ABSTRACT_TASK",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=quality_issues or ["abstract_task_violation"],
+                    offender=node,
+                    problem="Action 标题明显空泛，抽象词不能单独作为任务核心。",
+                    fix_suggestion="只修复该低质量任务：把抽象动作改成具体对象、具体输出和可验证完成标准。",
+                )
+            )
+
+        invalid_field_issues = _invalid_action_quality_field_issues(node)
+        if invalid_field_issues:
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_INVALID_FIELD",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=invalid_field_issues,
+                    offender=node,
+                    problem="Action Quality 字段使用了无效占位内容。",
+                    fix_suggestion=(
+                        "只修复该低质量任务：给出具体完成标准、可立即执行的第一步和更小替代动作。"
+                    ),
+                )
+            )
+
+        if (
+            not quality.has_done_criteria
+            and isinstance(node.estimated_minutes, int)
+            and node.estimated_minutes >= LONG_ACTION_DONE_CRITERIA_MINUTES
+        ):
+            errors.append(
+                _format_action_quality_feedback(
+                    error_code="ACTION_QUALITY_MISSING_DONE_CRITERIA",
+                    intent_type=intent_type,
+                    task_title=node.title,
+                    actionability_score=quality.score,
+                    quality_issues=["missing_done_criteria"],
+                    offender=node,
+                    problem="预计时间较长的 Action 缺少 done_criteria，用户难以判断做到什么程度算完成。",
+                    fix_suggestion="只修复该低质量任务：补充一句可检查的完成标准，不要拆大整棵任务树。",
+                )
+            )
+
+
+def _invalid_action_quality_field_issues(node: Any) -> list[str]:
+    issues: list[str] = []
+    if _has_invalid_quality_value(getattr(node, "done_criteria", None), INVALID_DONE_CRITERIA_VALUES):
+        issues.append("invalid_done_criteria")
+    if _has_invalid_quality_value(getattr(node, "start_hint", None), INVALID_START_HINT_VALUES):
+        issues.append("invalid_start_hint")
+    if _has_invalid_quality_value(getattr(node, "fallback_action", None), INVALID_FALLBACK_ACTION_VALUES):
+        issues.append("invalid_fallback_action")
+    return issues
+
+
+def _has_invalid_quality_value(value: Any, invalid_values: tuple[str, ...]) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().strip("。.!！ ")
+    if normalized in invalid_values:
+        return True
+    return any(invalid_value in normalized and len(normalized) <= len(invalid_value) + 4 for invalid_value in invalid_values)
+
+
+def _format_action_quality_feedback(
+    *,
+    error_code: str,
+    intent_type: str,
+    task_title: str,
+    actionability_score: int,
+    quality_issues: list[str],
+    offender: Any,
+    problem: str,
+    fix_suggestion: str,
+) -> str:
+    return "\n".join(
+        [
+            f"错误代码: {error_code}",
+            f"intent_type: {intent_type}",
+            "failed_rule: Action Quality",
+            f"任务标题: {task_title}",
+            f"actionability_score: {actionability_score}",
+            f"quality_issues: {', '.join(quality_issues) if quality_issues else 'unknown'}",
+            f"问题: {problem}",
+            f"违规任务/组: {_node_summary(offender)}",
+            f"修复建议: {fix_suggestion}",
+            "修复约束: 保持原 intent_type 和策略不变；只修复该低质量任务；不要重写整棵任务树；不要新增 roadmap/current_phase/next_action。",
+        ]
+    )
+
+
+def _format_validator_feedback(
+    *,
+    error_code: str,
+    intent_type: str,
+    failed_rule: str,
+    problem: str,
+    offender: Any,
+    fix_suggestion: str,
+) -> str:
+    return "\n".join(
+        [
+            f"错误代码: {error_code}",
+            f"intent_type: {intent_type}",
+            f"failed_rule: {failed_rule}",
+            f"问题: {problem}",
+            f"违规任务/组: {_node_summary(offender)}",
+            f"修复要求: {fix_suggestion}",
+        ]
+    )
+
+
+def _node_summary(node: Any) -> str:
+    title = _truncate_text(getattr(node, "title", "") or "")
+    description = _truncate_text(getattr(node, "description", "") or "")
+    client_node_id = getattr(node, "client_node_id", "unknown")
+    node_type = getattr(node, "node_type", "unknown")
+    estimated_minutes = getattr(node, "estimated_minutes", None)
+    children = getattr(node, "children", []) or []
+    summary = (
+        f"{client_node_id} [{node_type}] title='{title}', "
+        f"estimated_minutes={estimated_minutes}, children={len(children)}"
+    )
+    if description:
+        summary += f", description='{description}'"
+    return summary
+
+
+def _truncate_text(value: str, limit: int = 80) -> str:
+    return value if len(value) <= limit else f"{value[:limit]}..."
 
 
 def _intent_type_from_profile(intent_profile: dict[str, Any] | None) -> str:

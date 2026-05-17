@@ -41,11 +41,12 @@
 #### 📍 v1.2.2: 交互重塑 —— 情绪价值与安全护城河 (Completed)
 *   **文案与视觉升华**：彻底废弃“看板”这一企业级词汇，转向更私人的表达（“我的手帐”）。
 *   **无痕心流与跨视图流转**：引入了极简的 `InlineTaskInput`，并在计划中视图加入了 `☀️ 加入我的一天` 的乐观更新 (Optimistic UI) 转移能力。
+*   **原生任务清理 (Task Deletion)**：新增 `DELETE /api/tasks/{id}` 接口及极简的悬浮垃圾桶 `Trash2` 按钮，配合乐观删除与 Framer Motion 退场动画，补齐看板的最终闭环。
 *   **情绪空状态 (Emotional Empty States)**：在不同视图清空后，展示带有温度的文案（如“今天辛苦了，去喝杯茶吧”），提供正向情绪反馈。
 *   **划除的仪式感 (The Completion Ritual)**：任务勾选后触发 Framer Motion 弹簧动画，停留 2 秒后再伴随渐变滑出，延缓多巴胺释放。
 *   **深水区排雷 (Security & DB Integrity)**：建立全局 401 鉴权熔断网防范 Token 过期；在 `task_repository.py` 严格引入 DDD 事务隔离 (`session.begin()`) 杜绝高并发脏写；使用 `isMounted` 并发锁和退场延时清理解决单页应用连接池泄漏与 Framer Motion 死锁。
 
-#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing) (Completed)
+#### 📍 v1.2.3: 意图画像与动态路由 (Intent Profiling & Routing) (Completed / Stable)
 **总纲 (Minimum Closed Loop)**：`Intent Profiling → Strategy Routing → Few-shot Selection → JSON Size Control → Basic Eval`。
 
 **🧠 核心 AI 能力升级 (Core AI Capabilities)**：
@@ -71,20 +72,43 @@
 7. `planning_cases.jsonl` 初版不少于 32 条测试数据。
 8. 自动评测脚本跑通，且策略采纳正确率达到 85% 以上。
 
-#### 📍 v1.2.4: 策略守门员与体验兜底 (Strategy Validation & Fallbacks)
-*   **Validator 策略校验**：Validator 升级，不再只检查 JSON 结构，更要校验“拆解策略是否匹配”（如短期目标排了三个月、探索型目标强行给清单等均判为错误并 Replan）。
-*   **任务质量拦截**：拦截“提升能力”、“完善方案”等抽象描述，强制要求大模型修改为“具体、可执行的真实动作”。
-*   **透明的策略短语**：在任务树上方，向用户展示一句极其简短的策略解释（如：“我已按回家路上、手机处理等场景整理”），建立人机信任。
-*   **全方位失败兜底**：应对模型超时、JSON 异常等极端情况，前端提供细分安抚文案；后端引入不依赖大模型的基于规则的本地 Fallback Planner，确保系统绝对兜底。
+#### 📍 v1.2.4: Action Quality & Fallback（任务质量与失败兜底） (Completed / RC.1)
+v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为“任务可执行的行动系统”。在 v1.2.3 已完成意图路由和策略校验的基础上，重点解决生成任务过于空泛、缺少完成标准、用户不知道如何开始，以及模型失败时无法兜底的问题。
 
-#### 📍 v1.3 系列: 智能执行中枢 (Advanced Agentic Engine)
-*   **虚拟化“我的一天” (Virtual My Day)**：废弃底层的物理 `view_bucket` 转移逻辑，改为引入 `is_in_my_day: boolean`。实现类似微软 To Do 的虚拟映射，让任务在加入我的一天的同时，始终保持在原计划树中的结构完整性。
-*   **差分微调 (Refine Diff)**：重构 Refine 逻辑。大模型不再将整棵树推翻重来，而是输出 Diff（删除哪些、合并哪些），保留用户已接受的结构，打造真正的“协作修改”体验。
-*   **信心指数与交互式澄清**：模型评估 `confidence_score`。遇到极端模糊输入（信心低）时放弃强拆，改为给出 2-3 个关键问题供用户选择，完成澄清。
-*   **断点恢复引导 (Resume Prompts)**：结合迷雾解锁机制，在用户隔日回归时，生成真实的进度接续语（如：“上次完成了资料收集，现在只需写下3个观点”），对抗执行中断。
-*   **UI 专属数据模型**：扩充大模型输出的字段，新增 `energy_level`, `context`, `is_breaker` 等元数据，为前端未来的高级看板筛选提供数据支撑。
+**核心能力**：
+*   **Action Quality Validator**：新增任务质量校验器，拦截“学习语法 / 研究一下”等低可执行性任务，强制要求明确动词与合理耗时。
+*   **Actionability Score**：为每个 Action 生成内部可执行性评分，用于 Validator 裁决与 Replan。
+*   **完成标准 (done_criteria)**：关键任务必须说明做到什么程度算完成。
+*   **开始提示 (start_hint)**：为高阻力任务提供最小启动提示（如“打开浏览器搜索PDF”）。
+*   **降级动作 (fallback_action)**：当用户做不动时提供更小版本（如“做不动20题就做5题”）。
+*   **本地 Fallback Planner**：当 LLM 超时或彻底熔断时，启用本地静态规则生成基础启动计划，确保系统 100% 永不宕机。
 
-#### 📍 基础设施建设 (Infrastructure & Dev Tools)
-*   **评测集驱动 (Evaluation Driven)**：建立 `planning_cases.jsonl`，收集 50-100 条典型用例，构建自动测试 Pipeline，用以量化检验 Intent 识别率和拆解粒度，取代人工玄学调参。
-*   **轻量级偏好记忆**：持久化用户的粗细粒度偏好和常用上下文，完成从“通用规划器”到“私人智囊”的进化。
-*   **真·流式输出 (True Streaming)**：后端引入局部 JSON 增量解析，前端容错渲染残缺 JSON，实现极限魔法动效。
+**验收标准**：
+*   ✅ 保持 v1.2.3 指标不降的前提下，新增：`Action Quality Pass Rate >= 85%`，`Done Criteria Coverage >= 90%`，`Fallback Planner Success Rate = 100%`。（注：DeepSeek 跑分已达 100% 大满贯）。
+*   **非目标**：本版本坚决不碰前端三层规划 UI、Task Copilot 和 Refine Diff。
+
+#### 🩹 v1.2.4.1: Provider Robustness Patch (Backlog)
+*   **Schema Enum Drift Repair**：将 `pydantic.ValidationError` 纳入 JSON Repair 重试链路，防范小模型幻觉枚举值（如输出 `node_type="leader"`）。
+*   **Checklist 强制聚合**：在 Validator 中对 `context_checklist` 加入强校验，任务数 >=2 时必须存在 `group` 节点。
+
+#### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning)
+*   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。
+*   **条件触发的 Roadmap UI**：路线图绝非全局标配，严格由 Intent Profile 决定显示逻辑：
+    *   `long_term_growth`：默认显示 3-5 个高层阶段路线图，提供长期方向感但不展开。
+    *   `exploration_decision`：显示“探索路线”（如“澄清问题 → 收集信息 → 验证 → 做决定”），降低决策不确定性。
+    *   `short_term_delivery` & `context_checklist`：**不显示路线图**，直接聚焦时间盒交付与情境聚合。
+*   **执行反馈**：增加 Current Phase 目标说明、Next Action 高亮，把计划列表升级为“执行引导界面”。
+
+#### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
+*   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。
+
+#### 📍 v1.3.1: 智能执行中枢与差分微调 (Execution Engine & Refine Diff)
+*   **动态调整**：支持根据执行状态动态调整计划，包括 Refine Diff、Resume Prompt。
+*   **场景化指令**：“我今天只有 20 分钟”、“我落后了帮我重排”。
+*   **交互式澄清**：利用 `intent_confidence` 进行模糊输入的选项澄清。
+
+#### 📍 v1.3.2: 虚拟化“我的一天” (Virtual My Day) (Completed Early)
+*   *注：此架构已在 v1.2.3 后期超前完成*。使用 `is_in_my_day` 保留原计划结构，避免任务在不同视图之间物理迁移造成状态混乱。
+
+#### 📍 v1.4: 私人定制 (Personalized Planning)
+*   轻量个性化偏好记忆，让 EasyPlan 根据用户偏好的任务粒度、常用场景、工作时长进行定制规划。

@@ -39,6 +39,7 @@ interface AppStore {
   theme: ThemeType;
   view: 'input' | 'board';
   currentViewBucket: 'planned' | 'my_day';
+  selectedProjectId: string | null;
   boardTasks: TaskResponse[] | null;
   boardError: string | null;
 
@@ -53,6 +54,7 @@ interface AppStore {
   setTheme: (theme: ThemeType) => void;
   setView: (view: 'input' | 'board') => void;
   setCurrentViewBucket: (bucket: 'planned' | 'my_day') => void;
+  setSelectedProjectId: (projectId: string | null) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
   setTaskTree: (tree: TaskTree | null) => void;
@@ -69,7 +71,7 @@ interface AppStore {
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
   updateTaskDetails: (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => Promise<void>;
   createManualTask: (title: string) => Promise<void>;
-  moveTaskToMyDay: (taskId: string) => Promise<void>;
+  toggleTaskInMyDay: (taskId: string, currentState: boolean) => Promise<void>;
   generateNextPhasePlan: () => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
 }
@@ -91,6 +93,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: 'input',
   currentViewBucket: 'planned', // Default to planned after transition
+  selectedProjectId: null,
   boardTasks: null,
   boardError: null,
 
@@ -99,7 +102,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setAppState: (appState) => {
     set({ appState });
     if (appState === 'SUCCESS' && get().view === 'board') {
-      set({ currentViewBucket: 'planned' });
+      set({ currentViewBucket: 'planned', selectedProjectId: null });
       get().fetchTasks('planned');
     }
   },
@@ -123,7 +126,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => {
     set({ view });
     if (view === 'board') {
-      set({ currentViewBucket: 'planned' });
+      set({ currentViewBucket: 'planned', selectedProjectId: null });
       get().fetchTasks('planned');
     }
   },
@@ -131,6 +134,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ currentViewBucket: bucket });
     get().fetchTasks(bucket);
   },
+  setSelectedProjectId: (projectId) => set({ selectedProjectId: projectId }),
   
   generateSyncId: () => set({ syncRequestId: generateUUID() }),
   
@@ -275,6 +279,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   createManualTask: async (title: string) => {
     const { token, currentViewBucket, boardTasks } = get();
     if (!token) return;
+    const shouldAddToMyDay = currentViewBucket === 'my_day';
 
     try {
       const headers: Record<string, string> = {
@@ -286,7 +291,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers,
         body: JSON.stringify({
           title,
-          view_bucket: currentViewBucket
+          view_bucket: shouldAddToMyDay ? 'planned' : currentViewBucket,
+          is_in_my_day: shouldAddToMyDay
         })
       });
       
@@ -311,14 +317,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  moveTaskToMyDay: async (taskId: string) => {
-    const { token, boardTasks } = get();
+  toggleTaskInMyDay: async (taskId: string, currentState: boolean) => {
+    const { token, boardTasks, currentViewBucket } = get();
     if (!token) return;
 
-    // Optimistically remove from current planned view immediately for visual smoothness
-    set({
-      boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
-    });
+    const nextState = !currentState;
+    const originalTasks = boardTasks ? [...boardTasks] : [];
+
+    if (currentViewBucket === 'my_day' && !nextState) {
+      set({
+        boardTasks: (boardTasks || []).filter(t => t.id !== taskId)
+      });
+    } else {
+      set({
+        boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, is_in_my_day: nextState } : t)
+      });
+    }
 
     try {
       const headers: Record<string, string> = {
@@ -328,21 +342,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ view_bucket: 'my_day' })
+        body: JSON.stringify({ is_in_my_day: nextState })
       });
       
-      // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
         set({ showAuthModal: true });
+        set({ boardTasks: originalTasks });
         return;
       }
 
-      if (!response.ok) throw new Error('Failed to move task to my day');
+      if (!response.ok) throw new Error('Failed to toggle task in my day');
     } catch (err) {
-      console.error("Move task to my day failed", err);
-      // Revert if failed by refetching
-      get().fetchTasks();
+      console.error("Toggle task in my day failed", err);
+      set({ boardTasks: originalTasks });
       throw err;
     }
   },
@@ -402,6 +415,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const intentText = [
       '请基于我当前 EasyPlan 原生任务看板中已经完成的 Phase 1，生成下一阶段 Phase 2 的计划。',
       '保持 Fog of War Lite：只解锁下一阶段，不要排完整长期周期。',
+      '请保持原始意图类型，不要重新解释为短期交付或情境清单；本次只是为同一目标解锁下一阶段。',
       `当前视图：${currentViewBucket}`,
       `当前任务数量：${plannedTasks.length}，已完成：${completedCount}`,
       taskSnapshot ? `当前任务快照：\n${taskSnapshot}` : '当前任务快照为空，请给出一个保守的下一阶段启动计划。',

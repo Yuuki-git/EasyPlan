@@ -57,6 +57,9 @@ export interface TaskNode {
   node_type: 'group' | 'action';
   depends_on?: string[];
   children?: TaskNode[];
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
 }
 
 export interface TaskTree {
@@ -107,6 +110,10 @@ export interface TaskResponse {
   view_bucket: string;
   estimated_minutes: number | null;
   sort_order: number;
+  is_in_my_day: boolean;
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
 }
 
 export interface TaskUpdateRequest {
@@ -116,6 +123,10 @@ export interface TaskUpdateRequest {
   view_bucket?: 'planned' | 'my_day' | 'backlog' | null;
   estimated_minutes?: number | null;
   sort_order?: number | null;
+  is_in_my_day?: boolean;
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
 }
 
 export interface ValidationError {

@@ -1,46 +1,92 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Sparkles, Trash2 } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Sparkles, Trash2, Folder } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
-  const { currentViewBucket, setCurrentViewBucket } = useAppStore();
+  const { currentViewBucket, setCurrentViewBucket, boardTasks, selectedProjectId, setSelectedProjectId } = useAppStore();
+
+  const projects = useMemo(() => {
+    if (!boardTasks) return [];
+    const projectMap = new Map<string, { id: string; title: string }>();
+    boardTasks.forEach(task => {
+      if (task.parent_task_id === null && task.thread_id) {
+        projectMap.set(task.thread_id, {
+          id: task.thread_id,
+          title: task.title
+        });
+      }
+    });
+    return Array.from(projectMap.values());
+  }, [boardTasks]);
 
   return (
     <motion.div
       initial={{ width: 240 }}
       animate={{ width: isOpen ? 240 : 0, opacity: isOpen ? 1 : 0 }}
-      className="h-full bg-background/50 border-r border-muted/30 backdrop-blur-md overflow-hidden shrink-0"
+      className="h-full bg-background/50 border-r border-muted/30 backdrop-blur-md overflow-hidden shrink-0 flex flex-col"
     >
       <div className="w-[240px] p-4 flex flex-col h-full">
         <div className="flex items-center justify-between mb-8">
           <span className="font-medium text-foreground/80 tracking-wide px-2">我的手帐</span>
         </div>
         
-        <div className="space-y-1 flex-1">
-          <button 
-            onClick={() => setCurrentViewBucket('my_day')}
+        <div className="space-y-1 mb-6">
+          <button
+            onClick={() => {
+              setCurrentViewBucket('my_day');
+            }}
             className={clsx(
               "w-full flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-colors",
               currentViewBucket === 'my_day' ? "bg-accent/20 text-accent-foreground" : "text-muted-foreground hover:bg-muted/30"
             )}
           >
             <Sun size={16} className={currentViewBucket === 'my_day' ? "text-amber-500" : ""} />
-            <span>我的一天 (My Day)</span>
+            <span>我的一天</span>
           </button>
-          <button 
-            onClick={() => setCurrentViewBucket('planned')}
+          <button
+            onClick={() => {
+              setCurrentViewBucket('planned');
+              setSelectedProjectId(null); // All planned
+            }}
             className={clsx(
               "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors",
-              currentViewBucket === 'planned' ? "bg-accent/20 text-accent-foreground font-medium" : "text-muted-foreground hover:bg-muted/30"
+              currentViewBucket === 'planned' && selectedProjectId === null ? "bg-accent/20 text-accent-foreground font-medium" : "text-muted-foreground hover:bg-muted/30"
             )}
           >
-            <Calendar size={16} className={currentViewBucket === 'planned' ? "text-blue-500" : ""} />
-            <span>计划中 (Planned)</span>
-          </button>
-        </div>
+            <Calendar size={16} className={currentViewBucket === 'planned' && selectedProjectId === null ? "text-blue-500" : ""} />
+            <span>全部计划</span>
+          </button>        </div>
+
+        {projects.length > 0 && (
+          <>
+            <div className="h-px bg-muted/30 mx-2 mb-4" />
+            <div className="px-2 mb-2 text-xs font-semibold text-muted-foreground/50 tracking-wider uppercase">
+              项目
+            </div>
+            <div className="space-y-1 flex-1 overflow-y-auto overflow-x-hidden pr-2 custom-scrollbar">
+              {projects.map(project => (
+                <button
+                  key={project.id}
+                  onClick={() => {
+                    setCurrentViewBucket('planned');
+                    setSelectedProjectId(project.id);
+                  }}
+                  className={clsx(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left",
+                    currentViewBucket === 'planned' && selectedProjectId === project.id ? "bg-accent/20 text-accent-foreground font-medium" : "text-muted-foreground hover:bg-muted/30"
+                  )}
+                  title={project.title}
+                >
+                  <Folder size={14} className="shrink-0 opacity-70" />
+                  <span className="truncate text-sm">{project.title}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </motion.div>
   );
@@ -51,7 +97,7 @@ interface TreeNode extends TaskResponse {
 }
 
 const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const { updateTaskStatus, moveTaskToMyDay, currentViewBucket, updateTaskDetails, deleteTask } = useAppStore();
+  const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
   
@@ -120,10 +166,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     }
   };
 
-  const handleMoveToMyDay = async (e: React.MouseEvent) => {
+  const handleToggleMyDay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await moveTaskToMyDay(node.id);
+      await toggleTaskInMyDay(node.id, !!node.is_in_my_day);
     } catch (err) {
       // Error handled in store
     }
@@ -250,7 +296,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           )} />
         )}
       </div>
-      <div className="flex-1 pr-8">
+      <div className="flex-1 pr-24">
         {isEditing ? (
           <div
             ref={editContainerRef}
@@ -309,12 +355,53 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
                 </span>
               </div>
             )}
+            {node.done_criteria && (
+              <div className={clsx(
+                "text-xs mt-2 transition-colors font-medium break-words",
+                localCompleted ? "text-muted-foreground/30 line-through" : "text-foreground/70"
+              )}>
+                完成标准：{node.done_criteria}
+              </div>
+            )}
+            {(node.start_hint || node.fallback_action) && (
+              <details 
+                className="mt-3 text-xs group/details outline-none"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <summary className={clsx(
+                  "cursor-pointer select-none transition-colors outline-none",
+                  localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/70 hover:text-foreground/90"
+                )}>
+                  执行提示
+                </summary>
+                <div className={clsx(
+                  "mt-2 pl-3 border-l border-muted/30 space-y-1.5 break-words",
+                  localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/80"
+                )}>
+                  {node.start_hint && <div><span className="font-medium text-foreground/70">如何开始：</span>{node.start_hint}</div>}
+                  {node.fallback_action && <div><span className="font-medium text-foreground/70">做不动时：</span>{node.fallback_action}</div>}
+                </div>
+              </details>
+            )}
           </>
         )}
       </div>
       
+      <button
+        onClick={handleToggleMyDay}
+        className={clsx(
+          "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
+          node.is_in_my_day
+            ? "text-amber-500 bg-amber-500/10 opacity-100"
+            : "text-muted-foreground/40 opacity-0 group-hover:opacity-100 hover:text-amber-500 hover:bg-amber-500/10"
+        )}
+        title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
+      >
+        <Sun size={16} />
+      </button>
+
       {!localCompleted && !isEditing && (
-        <div className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+        <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -325,15 +412,6 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           >
             <Pencil size={16} />
           </button>
-          {currentViewBucket === 'planned' && (
-            <button
-              onClick={handleMoveToMyDay}
-              className="p-1.5 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-md pointer-events-auto transition-colors"
-              title="加入我的一天"
-            >
-              <Sun size={16} />
-            </button>
-          )}
           <button
             onClick={handleDelete}
             className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
@@ -422,7 +500,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
+  const { currentViewBucket, selectedProjectId, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -445,7 +523,8 @@ export const TaskBoard: React.FC = () => {
         view_bucket: 'my_day',
         estimated_minutes: null,
         sort_order: 0,
-        children: boardTasks.sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
+        is_in_my_day: false,
+        children: [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
       };
       return root;
     } else {
@@ -458,12 +537,14 @@ export const TaskBoard: React.FC = () => {
 
       const rootChildren: TreeNode[] = [];
 
-      boardTasks.sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
+      [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
         const node = taskMap.get(t.id)!;
         if (t.parent_task_id && taskMap.has(t.parent_task_id)) {
           taskMap.get(t.parent_task_id)!.children!.push(node);
         } else {
-          rootChildren.push(node);
+          if (!selectedProjectId || node.thread_id === selectedProjectId) {
+            rootChildren.push(node);
+          }
         }
       });
 
@@ -480,11 +561,26 @@ export const TaskBoard: React.FC = () => {
         view_bucket: 'planned',
         estimated_minutes: null,
         sort_order: 0,
+        is_in_my_day: false,
         children: rootChildren
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket]);
+  }, [boardTasks, currentViewBucket, selectedProjectId]);
+
+  const showFogOfWar = useMemo(() => {
+    if (currentViewBucket !== 'planned' || !boardTasks) return false;
+    
+    const relevantTasks = selectedProjectId 
+      ? boardTasks.filter(t => t.thread_id === selectedProjectId)
+      : boardTasks;
+      
+    const actions = relevantTasks.filter(t => t.node_type === 'action');
+    
+    if (actions.length === 0) return false;
+    
+    return actions.every(t => t.status === 'completed');
+  }, [boardTasks, currentViewBucket, selectedProjectId]);
 
   if (boardError) {
     return (
@@ -521,14 +617,6 @@ export const TaskBoard: React.FC = () => {
   }
 
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
-
-  const showFogOfWar = useMemo(() => {
-    if (currentViewBucket !== 'planned') return false;
-    if (!boardTasks || boardTasks.length === 0) return false;
-    const actions = boardTasks.filter(t => t.node_type === 'action');
-    if (actions.length === 0) return false;
-    return actions.every(t => t.status === 'completed');
-  }, [boardTasks, currentViewBucket]);
 
   const handleNewPlan = () => {
     if (isGenerating) {
@@ -574,7 +662,7 @@ export const TaskBoard: React.FC = () => {
               onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
-              {isGenerating ? '返回当前意图' : '新计划'}
+              {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
             </button>
           </div>
         </header>
@@ -589,13 +677,12 @@ export const TaskBoard: React.FC = () => {
                     : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
                 </p>
                 {currentViewBucket === 'planned' && (
-                  <button 
+                  <button
                     onClick={handleNewPlan}
                     className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
                   >
-                    {isGenerating ? '返回当前意图' : '新建意图'}
-                  </button>
-                )}
+                    {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
+                  </button>                )}
               </div>
             ) : (
               <BoardTaskNode node={displayTree} />
@@ -634,4 +721,6 @@ export const TaskBoard: React.FC = () => {
     </motion.div>
   );
 };
+
+
 
