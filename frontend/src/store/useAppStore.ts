@@ -200,11 +200,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { token, boardTasks } = get();
     if (!token) return;
 
-    const originalTasks = boardTasks ? [...boardTasks] : [];
-    // Optimistic UI sync
+    const taskToRollback = boardTasks?.find(t => t.id === taskId);
+    const originalStatus = taskToRollback ? taskToRollback.status : (status === 'completed' ? 'active' : 'completed');
+
+    // Optimistic UI sync (task level)
     set({
       boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status } : t)
     });
+
+    const rollback = () => {
+      set((state) => ({
+        boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, status: originalStatus } : t),
+        boardError: '任务状态同步失败，请稍后重试'
+      }));
+    };
 
     try {
       const headers: Record<string, string> = {
@@ -220,13 +229,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
         set({ showAuthModal: true });
+        rollback();
         return;
       }
 
       if (!response.ok) throw new Error('Failed to update task status');
     } catch (err) {
       console.error("Update task status failed", err);
-      set({ boardTasks: originalTasks });
+      rollback();
       throw err;
     }
   },

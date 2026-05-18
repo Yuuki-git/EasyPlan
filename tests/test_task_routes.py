@@ -415,6 +415,76 @@ def test_patch_task_updates_only_authenticated_users_task():
     assert repository.tasks[other_task.id].title == "Other tenant"
 
 
+def test_patch_task_marks_planned_task_completed_without_view_context():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        is_in_my_day=False,
+    )
+    repository.tasks[task.id] = task
+
+    response = client.patch(
+        f"/api/tasks/{task.id}",
+        json={"status": "completed"},
+    )
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(task.id)
+    assert response.json()["status"] == "completed"
+    assert response.json()["view_bucket"] == "planned"
+    assert response.json()["is_in_my_day"] is False
+    assert planned_response.status_code == 200
+    assert planned_response.json()[0]["id"] == str(task.id)
+    assert planned_response.json()[0]["status"] == "completed"
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": task.id,
+            "changes": {"status": "completed"},
+        }
+    ]
+
+
+def test_patch_task_marks_virtual_my_day_task_completed_in_both_views():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Review launch notes",
+        is_in_my_day=True,
+    )
+    repository.tasks[task.id] = task
+
+    response = client.patch(
+        f"/api/tasks/{task.id}",
+        json={"status": "completed"},
+    )
+    my_day_response = client.get("/api/tasks?view_bucket=my_day")
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(task.id)
+    assert response.json()["status"] == "completed"
+    assert my_day_response.status_code == 200
+    assert planned_response.status_code == 200
+    assert my_day_response.json()[0]["id"] == str(task.id)
+    assert my_day_response.json()[0]["status"] == "completed"
+    assert planned_response.json()[0]["id"] == str(task.id)
+    assert planned_response.json()[0]["status"] == "completed"
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": task.id,
+            "changes": {"status": "completed"},
+        }
+    ]
+
+
 def test_patch_task_allows_clearing_nullable_description():
     repository = FakeTaskRepository()
     client, user = _client_with_task_repository(repository)
