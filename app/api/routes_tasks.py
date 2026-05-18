@@ -47,6 +47,7 @@ async def create_task(
         description=payload.description,
         view_bucket=view_bucket,
         parent_task_id=payload.parent_task_id,
+        thread_id=payload.thread_id,
         is_in_my_day=is_in_my_day,
     )
     if task is None:

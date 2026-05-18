@@ -144,6 +144,7 @@ class TaskCreateRequest(BaseModel):
     view_bucket: TaskViewBucket = "planned"
     is_in_my_day: bool = False
     parent_task_id: UUID | None = None
+    thread_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class TaskResponse(BaseModel):

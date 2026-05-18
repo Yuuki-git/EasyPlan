@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
@@ -8,6 +9,7 @@ from app.api.routes_intents import get_agent_runtime as get_intent_runtime
 from app.api.routes_intents import get_thread_repository as get_intent_repository
 from app.api.routes_threads import get_agent_runtime as get_thread_runtime
 from app.api.routes_threads import get_thread_repository as get_thread_repository
+from app.api.routes_tasks import get_task_repository as get_task_repository
 from app.main import create_app
 
 
@@ -24,10 +26,30 @@ class FakeThread:
     latest_checkpoint_id: str | None = None
 
 
+@dataclass
+class FakeRouteTask:
+    id: UUID
+    user_id: UUID
+    thread_id: str
+    client_node_id: str
+    parent_task_id: UUID | None
+    title: str
+    description: str | None
+    node_type: str
+    status: str
+    view_bucket: str
+    is_in_my_day: bool
+    estimated_minutes: int | None
+    sort_order: int
+    metadata_: dict[str, Any]
+
+
 class FakeThreadRepository:
     def __init__(self) -> None:
         self.threads: dict[tuple[str, str], FakeThread] = {}
+        self.tasks: dict[UUID, FakeRouteTask] = {}
         self.created: list[FakeThread] = []
+        self.deleted: list[dict] = []
 
     async def create_thread(self, *, user_id, thread_id, intent_text, selected_provider):
         thread = FakeThread(
@@ -45,6 +67,31 @@ class FakeThreadRepository:
 
     async def mark_confirmation_accepted(self, *, thread, request_id):
         thread.status = "running"
+
+    async def delete_thread_for_user(self, *, user_id, thread_id):
+        key = (str(user_id), thread_id)
+        if key not in self.threads:
+            return False
+        del self.threads[key]
+        self.tasks = {
+            task_id: task
+            for task_id, task in self.tasks.items()
+            if not (str(task.user_id) == str(user_id) and task.thread_id == thread_id)
+        }
+        self.deleted.append({"user_id": user_id, "thread_id": thread_id})
+        return True
+
+    async def list_tasks_for_user(self, *, user_id, view_bucket=None):
+        return [
+            task
+            for task in self.tasks.values()
+            if str(task.user_id) == str(user_id)
+            and (
+                view_bucket is None
+                or (view_bucket == "my_day" and task.is_in_my_day)
+                or (view_bucket != "my_day" and task.view_bucket == view_bucket)
+            )
+        ]
 
 
 class FakeRuntime:
@@ -82,6 +129,7 @@ def _client_with_overrides(repository: FakeThreadRepository, runtime: FakeRuntim
         pass
     app.dependency_overrides[get_intent_repository] = lambda: repository
     app.dependency_overrides[get_thread_repository] = lambda: repository
+    app.dependency_overrides[get_task_repository] = lambda: repository
     app.dependency_overrides[get_intent_runtime] = lambda: runtime
     app.dependency_overrides[get_thread_runtime] = lambda: runtime
     return TestClient(app), user
@@ -195,3 +243,91 @@ def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
     assert runtime.resumed[0]["thread_id"] == "thread-1"
     assert runtime.resumed[0]["decision"]["action"] == "refine"
     assert runtime.resumed[0]["decision"]["feedback"] == "更小一点"
+
+
+def test_delete_thread_removes_owned_thread_and_associated_tasks_from_views():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    repository.threads[(str(user.id), "thread-1")] = FakeThread(
+        thread_id="thread-1",
+        user_id=str(user.id),
+        intent_text="写论文",
+    )
+    repository.threads[(str(user.id), "thread-2")] = FakeThread(
+        thread_id="thread-2",
+        user_id=str(user.id),
+        intent_text="保留计划",
+    )
+    deleted_task = _fake_route_task(
+        user_id=user.id,
+        thread_id="thread-1",
+        title="Deleted task",
+        is_in_my_day=True,
+    )
+    kept_task = _fake_route_task(
+        user_id=user.id,
+        thread_id="thread-2",
+        title="Kept task",
+        is_in_my_day=True,
+    )
+    repository.tasks[deleted_task.id] = deleted_task
+    repository.tasks[kept_task.id] = kept_task
+
+    response = client.delete("/api/threads/thread-1")
+
+    assert response.status_code == 204
+    assert ("thread-1" not in [thread_id for _user_id, thread_id in repository.threads])
+    planned_titles = [task["title"] for task in client.get("/api/tasks?view_bucket=planned").json()]
+    my_day_titles = [task["title"] for task in client.get("/api/tasks?view_bucket=my_day").json()]
+    assert planned_titles == ["Kept task"]
+    assert my_day_titles == ["Kept task"]
+    assert repository.deleted == [{"user_id": user.id, "thread_id": "thread-1"}]
+
+
+def test_delete_thread_rejects_other_users_thread():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, _user = _client_with_overrides(repository, runtime)
+    other_user_id = uuid4()
+    repository.threads[(str(other_user_id), "thread-1")] = FakeThread(
+        thread_id="thread-1",
+        user_id=str(other_user_id),
+        intent_text="其他用户计划",
+    )
+
+    response = client.delete("/api/threads/thread-1")
+
+    assert response.status_code == 404
+    assert (str(other_user_id), "thread-1") in repository.threads
+    assert repository.deleted == []
+
+
+def test_delete_thread_returns_404_for_missing_thread():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, _user = _client_with_overrides(repository, runtime)
+
+    response = client.delete("/api/threads/missing-thread")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Thread not found"
+
+
+def _fake_route_task(*, user_id: UUID, thread_id: str, title: str, is_in_my_day: bool = False) -> FakeRouteTask:
+    return FakeRouteTask(
+        id=uuid4(),
+        user_id=user_id,
+        thread_id=thread_id,
+        client_node_id=f"node_{uuid4().hex}",
+        parent_task_id=None,
+        title=title,
+        description=None,
+        node_type="action",
+        status="active",
+        view_bucket="planned",
+        is_in_my_day=is_in_my_day,
+        estimated_minutes=None,
+        sort_order=0,
+        metadata_={},
+    )

@@ -144,25 +144,17 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     if (timeoutRef.current) return;
 
     if (!localCompleted) {
-      // Complete with ritual delay
       setLocalCompleted(true);
-      timeoutRef.current = setTimeout(async () => {
-        try {
-          await updateTaskStatus(node.id, 'completed');
-        } catch (err) {
-          setLocalCompleted(false);
-        } finally {
-          timeoutRef.current = null;
-        }
+      // Fire backend request immediately for instant sync
+      updateTaskStatus(node.id, 'completed').catch(() => setLocalCompleted(false));
+      
+      // Use timeout to block spam clicking
+      timeoutRef.current = setTimeout(() => {
+        timeoutRef.current = null;
       }, 2000);
     } else {
-      // Uncheck instantly
       setLocalCompleted(false);
-      try {
-        await updateTaskStatus(node.id, 'active');
-      } catch (err) {
-        setLocalCompleted(true);
-      }
+      updateTaskStatus(node.id, 'active').catch(() => setLocalCompleted(true));
     }
   };
 
@@ -426,7 +418,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 };
 
 const InlineTaskInput: React.FC = () => {
-  const { createManualTask } = useAppStore();
+  const { createManualTask, selectedProjectId } = useAppStore();
   const [isAdding, setIsAdding] = React.useState(false);
   const [title, setTitle] = React.useState('');
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -446,7 +438,7 @@ const InlineTaskInput: React.FC = () => {
     const taskTitle = title.trim();
     setTitle(''); // Clear immediately for UX
     try {
-      await createManualTask(taskTitle);
+      await createManualTask(taskTitle, { thread_id: selectedProjectId });
       // Keep input open to add more
     } catch (err) {
       // Error is handled/logged in store
@@ -500,7 +492,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, selectedProjectId, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
+  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -619,13 +611,7 @@ export const TaskBoard: React.FC = () => {
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
   const handleNewPlan = () => {
-    if (isGenerating) {
-      setView('input');
-    } else {
-      setView('input');
-      useAppStore.getState().setAppState('INITIAL');
-      setTimeout(() => reset(), 500);
-    }
+    useAppStore.getState().startNewIntent();
   };
 
   const handleGenerateNextPhase = async () => {
@@ -690,7 +676,7 @@ export const TaskBoard: React.FC = () => {
             
             <InlineTaskInput />
             
-            {showFogOfWar && (
+            {false && showFogOfWar && (
               <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
