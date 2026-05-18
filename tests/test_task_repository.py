@@ -32,7 +32,82 @@ def test_create_task_for_user_commits_manual_thread_and_task_together():
     assert [type(item) for item in session.added] == [AgentThread, Task]
     assert task.view_bucket == "planned"
     assert task.is_in_my_day is True
+    assert task.thread_id.startswith("manual_")
     assert task in session.refreshed
+
+
+def test_create_task_for_user_adds_root_task_to_existing_thread_without_manual_thread():
+    user_id = uuid4()
+    thread = _agent_thread(user_id=user_id, thread_id="thread-plan-1")
+    session = FakeTaskSession(scalar_results=[thread, 0])
+    repository = TaskRepository(session)
+
+    task = asyncio.run(
+        repository.create_task_for_user(
+            user_id=user_id,
+            title="Add root task",
+            description=None,
+            view_bucket="planned",
+            is_in_my_day=False,
+            parent_task_id=None,
+            thread_id="thread-plan-1",
+        )
+    )
+
+    assert task is not None
+    assert task.thread_id == "thread-plan-1"
+    assert task.parent_task_id is None
+    assert [type(item) for item in session.added] == [Task]
+    assert session.commit_count == 1
+    assert len(session.select_statements) == 2
+
+
+def test_create_task_for_user_inherits_parent_thread_before_payload_thread():
+    user_id = uuid4()
+    parent_id = uuid4()
+    parent_task = _task(user_id=user_id, task_id=parent_id, thread_id="thread-parent")
+    session = FakeTaskSession(scalar_results=[parent_task, 0])
+    repository = TaskRepository(session)
+
+    task = asyncio.run(
+        repository.create_task_for_user(
+            user_id=user_id,
+            title="Child task",
+            description=None,
+            view_bucket="planned",
+            is_in_my_day=False,
+            parent_task_id=parent_id,
+            thread_id="thread-ignored",
+        )
+    )
+
+    assert task is not None
+    assert task.thread_id == "thread-parent"
+    assert task.parent_task_id == parent_id
+    assert [type(item) for item in session.added] == [Task]
+    assert session.commit_count == 1
+
+
+def test_create_task_for_user_rejects_thread_not_owned_by_user():
+    session = FakeTaskSession(scalar_results=[None])
+    repository = TaskRepository(session)
+
+    task = asyncio.run(
+        repository.create_task_for_user(
+            user_id=uuid4(),
+            title="Bad context",
+            description=None,
+            view_bucket="planned",
+            is_in_my_day=False,
+            parent_task_id=None,
+            thread_id="other-thread",
+        )
+    )
+
+    assert task is None
+    assert session.added == []
+    assert session.commit_count == 0
+    assert session.rollback_count == 1
 
 
 def test_create_task_for_user_rolls_back_manual_thread_when_task_add_fails():
@@ -128,10 +203,57 @@ def test_delete_task_for_user_returns_false_when_no_user_scoped_row_matches():
     assert session.rollback_count == 0
 
 
+def _agent_thread(*, user_id, thread_id: str) -> AgentThread:
+    return AgentThread(
+        user_id=user_id,
+        thread_id=thread_id,
+        intent_text="Existing plan",
+        status="completed",
+        current_node="human_review",
+        next_nodes=[],
+        interrupt_payload=None,
+        latest_checkpoint_id=None,
+        task_tree=None,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+
+
+def _task(*, user_id, task_id, thread_id: str) -> Task:
+    return Task(
+        id=task_id,
+        user_id=user_id,
+        thread_id=thread_id,
+        parent_task_id=None,
+        client_node_id=f"node_{uuid4().hex}",
+        title="Parent",
+        description=None,
+        node_type="action",
+        status="active",
+        view_bucket="planned",
+        is_in_my_day=False,
+        estimated_minutes=None,
+        sort_order=0,
+        ai_generated=False,
+        user_edited=True,
+        metadata_={},
+    )
+
+
 class FakeTaskSession:
-    def __init__(self, *, raise_on_task_add: bool = False, delete_rowcount: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        raise_on_task_add: bool = False,
+        delete_rowcount: int = 0,
+        scalar_results: list | None = None,
+    ) -> None:
         self.raise_on_task_add = raise_on_task_add
         self.delete_rowcount = delete_rowcount
+        self.scalar_results = list(scalar_results or [])
         self.added = []
         self.delete_statements = []
         self.select_statements = []
@@ -156,6 +278,8 @@ class FakeTaskSession:
             return FakeDeleteResult(self.delete_rowcount)
         assert isinstance(statement, Select)
         self.select_statements.append(statement)
+        if self.scalar_results:
+            return FakeScalarResult(self.scalar_results.pop(0))
         return FakeScalarResult(0)
 
     async def commit(self):
@@ -173,7 +297,7 @@ class FakeScalarResult:
         self.value = value
 
     def scalar_one_or_none(self):
-        return None
+        return self.value
 
     def scalar_one(self):
         return self.value

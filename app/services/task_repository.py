@@ -35,6 +35,7 @@ class TaskRepository:
         description: str | None,
         view_bucket: str,
         parent_task_id: UUID | None,
+        thread_id: str | None = None,
         is_in_my_day: bool = False,
     ) -> Task | None:
         view_bucket, is_in_my_day = _normalize_create_bucket(
@@ -43,6 +44,7 @@ class TaskRepository:
         )
         try:
             parent_task: Task | None = None
+            should_create_manual_thread = False
             if parent_task_id is not None:
                 result = await self.session.execute(
                     select(Task).where(
@@ -54,9 +56,23 @@ class TaskRepository:
                 if parent_task is None:
                     await self.session.rollback()
                     return None
+                thread_id = parent_task.thread_id
+            elif thread_id is not None:
+                result = await self.session.execute(
+                    select(AgentThread).where(
+                        AgentThread.user_id == user_id,
+                        AgentThread.thread_id == thread_id,
+                    )
+                )
+                thread = result.scalar_one_or_none()
+                if thread is None:
+                    await self.session.rollback()
+                    return None
+            else:
+                thread_id = f"manual_{uuid4().hex}"
+                should_create_manual_thread = True
 
-            thread_id = parent_task.thread_id if parent_task is not None else f"manual_{uuid4().hex}"
-            if parent_task is None:
+            if should_create_manual_thread:
                 self.session.add(
                     AgentThread(
                         user_id=user_id,

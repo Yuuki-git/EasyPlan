@@ -14,6 +14,7 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "post" in schema["paths"]["/api/intents"]
     assert "/api/threads/{thread_id}" in schema["paths"]
     assert "get" in schema["paths"]["/api/threads/{thread_id}"]
+    assert "delete" in schema["paths"]["/api/threads/{thread_id}"]
     assert "/api/threads/{thread_id}/events" in schema["paths"]
     assert "get" in schema["paths"]["/api/threads/{thread_id}/events"]
     assert "/api/threads/{thread_id}/confirm" in schema["paths"]
@@ -56,6 +57,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
 
     intent_params = _parameter_names(schema["paths"]["/api/intents"]["post"])
     snapshot_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}"]["get"])
+    thread_delete_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}"]["delete"])
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
     tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
@@ -65,6 +67,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
 
     assert "Authorization" in intent_params
     assert "Authorization" in snapshot_params
+    assert "Authorization" in thread_delete_params
     assert "Authorization" in events_params
     assert "Authorization" in confirm_params
     assert "Authorization" in tasks_params
@@ -91,7 +94,7 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     assert "done_criteria" in task_properties
     assert "start_hint" in task_properties
     assert "fallback_action" in task_properties
-    assert {"title", "description", "view_bucket", "is_in_my_day", "parent_task_id"}.issubset(
+    assert {"title", "description", "view_bucket", "is_in_my_day", "parent_task_id", "thread_id"}.issubset(
         task_create["properties"]
     )
     assert task_create["properties"]["view_bucket"]["default"] == "planned"

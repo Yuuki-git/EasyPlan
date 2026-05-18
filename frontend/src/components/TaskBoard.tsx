@@ -102,7 +102,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const hasChildren = node.children && node.children.length > 0;
   
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
-  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isToggling, setIsToggling] = React.useState(false);
 
   // Inline editing state
   const [isEditing, setIsEditing] = React.useState(false);
@@ -123,14 +123,6 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   }, [node.title, node.description, node.estimated_minutes]);
 
   React.useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  React.useEffect(() => {
     if (isEditing && editTitleRef.current) {
       editTitleRef.current.focus();
     }
@@ -139,30 +131,20 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isGroup || isEditing) return;
-    
-    // Prevent double clicking during ritual
-    if (timeoutRef.current) return;
+    if (isToggling) return;
 
-    if (!localCompleted) {
-      // Complete with ritual delay
-      setLocalCompleted(true);
-      timeoutRef.current = setTimeout(async () => {
-        try {
-          await updateTaskStatus(node.id, 'completed');
-        } catch (err) {
-          setLocalCompleted(false);
-        } finally {
-          timeoutRef.current = null;
-        }
-      }, 2000);
-    } else {
-      // Uncheck instantly
-      setLocalCompleted(false);
-      try {
-        await updateTaskStatus(node.id, 'active');
-      } catch (err) {
-        setLocalCompleted(true);
-      }
+    const nextCompleted = !localCompleted;
+    const nextStatus = nextCompleted ? 'completed' : 'active';
+
+    setIsToggling(true);
+    setLocalCompleted(nextCompleted);
+
+    try {
+      await updateTaskStatus(node.id, nextStatus);
+    } catch {
+      setLocalCompleted(!nextCompleted);
+    } finally {
+      setIsToggling(false);
     }
   };
 
@@ -274,7 +256,8 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         localCompleted 
           ? "bg-muted/10 border-transparent" 
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
-        (timeoutRef.current || isEditing) && "pointer-events-none cursor-default",
+        isEditing && "cursor-default",
+        isToggling && "cursor-wait",
         depth > 0 && "ml-4"
       )}
       onClick={handleToggle}
@@ -426,7 +409,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 };
 
 const InlineTaskInput: React.FC = () => {
-  const { createManualTask } = useAppStore();
+  const { createManualTask, selectedProjectId } = useAppStore();
   const [isAdding, setIsAdding] = React.useState(false);
   const [title, setTitle] = React.useState('');
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -446,7 +429,7 @@ const InlineTaskInput: React.FC = () => {
     const taskTitle = title.trim();
     setTitle(''); // Clear immediately for UX
     try {
-      await createManualTask(taskTitle);
+      await createManualTask(taskTitle, { thread_id: selectedProjectId });
       // Keep input open to add more
     } catch (err) {
       // Error is handled/logged in store
@@ -500,7 +483,7 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, selectedProjectId, boardTasks, boardError, reset, setView, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
+  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -619,13 +602,7 @@ export const TaskBoard: React.FC = () => {
   const isEmpty = !displayTree.children || displayTree.children.length === 0;
 
   const handleNewPlan = () => {
-    if (isGenerating) {
-      setView('input');
-    } else {
-      setView('input');
-      useAppStore.getState().setAppState('INITIAL');
-      setTimeout(() => reset(), 500);
-    }
+    useAppStore.getState().startNewIntent();
   };
 
   const handleGenerateNextPhase = async () => {
@@ -690,7 +667,7 @@ export const TaskBoard: React.FC = () => {
             
             <InlineTaskInput />
             
-            {showFogOfWar && (
+            {false && showFogOfWar && (
               <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

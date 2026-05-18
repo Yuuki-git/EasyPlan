@@ -1,13 +1,13 @@
-# EasyPlan 🪐 - Intent-Driven AI Planning System (v1.2.3)
+# EasyPlan 🪐 - Intent-Driven AI Planning System (v1.2.4)
 
-> **Current:** v1.2.3 Intent Profiling & Dynamic Routing  
-> **Status:** Core pipeline implemented, eval expansion in progress
+> **Current:** v1.2.4 Action Quality & Fallback (Release Candidate)  
+> **Status:** Actionability Scorer and Runtime Validator implemented. Evaluating 100% stable on DeepSeek.
 
 **EasyPlan is an intent-driven AI planning system. It identifies the user's goal type first, then selects the appropriate decomposition strategy, translating fuzzy intents into actionable, adjustable, and sustainable task maps.** More than a simple to-do list, it's an intelligent Agent companion that understands behavioral psychology.
 
 ```text
 [Architecture Flow]
-Intent Capture → Intent Profile → Strategy Router → Planner → Validator → Task Board ⇌ Refine / Fog Unlock
+Intent Capture → Intent Profile → Strategy Router → Planner (w/ Action Quality) → Runtime Validator → Task Board ⇌ Refine / Fog Unlock
 ```
 
 [中文版本](./README.md) | [Quick Start](#-quick-start) | [Architecture](#-architecture)
@@ -21,23 +21,26 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Maintain Human Agency**: We stick to "Human-in-the-Loop (HITL)" design. AI handles the tedious planning; you retain ultimate control.
 - **Seamless Closed-Loop**：Say goodbye to clunky external syncing. A built-in "My Day" and "Planned" task board ensures your data is private, lighting-fast, and distraction-free.
 
-## ✨ Features (v1.2.3)
+## ✨ Features (v1.2.4)
 
 - **Spotlight Capture**: A single dynamic input box for fuzzy natural language goal entry.
 - **Agentic Decomposition**: Powered by **LangGraph** for multi-step reasoning, dynamically selecting ice-breaker, time-boxing, context aggregation, or exploration strategies based on the intent profile.
-- **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans the diff instantly.
-- **Fluid Motion UI**: "Balanced Minimalism" interface with a parchment theme, where the task tree grows organically as you plan.
-- **Native Task Engine**: A built-in task board supporting inline editing and cross-view transfers, creating a seamless "Plan -> Decompose -> Execute" experience.
+- **Action Quality Guardrails**: Built-in Runtime Validator enforcing explicit `done_criteria` and `start_hint` to prevent vague or unactionable LLM outputs.
+- **Natural Language Refinement**: Not satisfied with the plan? Just tell the AI what to change, and it re-plans the diff instantly with structured replan feedback.
+- **Fluid Motion UI**: "Balanced Minimalism" interface with a parchment theme, elegant collapsible hints, and organic task tree growth.
 - **Enterprise-Grade Security**: Multi-tenant isolation and strict JWT-based authentication.
 
-## 📊 Planning Eval (Xiaomi Mimo API)
+## 📊 Planning Eval
 EasyPlan adopts an **Eval-Driven** approach for LLM tuning.
+- **Primary Provider**: DeepSeek (v1.2.4 Achieved 100%)
+- **Compatibility Provider**: Xiaomi MiMo
 - **Core Cases**: 32 Core Cases
 - **Intent Classification Accuracy**: 100.00%
-- **JSON Parse Success Rate**: 100.00%
-- **Strategy Compliance Rate**: 93.75%
-- **Horizon Accuracy**: 96.875%
-- **Overall Pass Rate**: 93.75%
+- **JSON Parse Success Rate**: 100.00% (with robust JSON Repair fallback)
+- **Strategy Compliance Rate**: 100.00%
+- **Horizon Accuracy**: 100.00%
+- **Action Quality Pass Rate**: 100.00%
+- **Overall Pass Rate**: 100.00%
 
 ## 🛠️ Architecture
 
@@ -124,11 +127,10 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📅 Roadmap
 
-### 🔜 v1.2.3 (Intent Profiling & Routing - *Current Focus*)
-- **Evaluation Driven**: Establish `planning_cases.jsonl` to automatically test LLM decomposition quality.
-- **Intent Profiling & Routing**: Introduce the `Intent → Profile → Strategy` pipeline. Dynamically switch Prompts based on time horizon and ambiguity.
-- **Ice-breaker Redefined**: Only long-term, high-friction goals require low-barrier ice-breakers. Short sprints strictly forbid low-value actions like "Open Software".
-- **Lightweight Strategy Validator**: Validator checks not only JSON validity but also strategy violations (e.g., forbidding long-term goals from planning out entire cycles).
+### 🔜 v1.2.5 (Three-Tier Planning & Execution Guide - *Current Focus*)
+- **Conditional Roadmap**: Roadmaps are no longer a standard feature. They are only displayed for "long-term goals" and "exploration decisions" as high-level breadcrumbs.
+- **Phase Progress Awareness**: Allow users to clearly perceive the current phase's progress and unlock conditions.
+- **Next Action Highlights**: Visually emphasize the single most important task to execute right now, completely eliminating choice paralysis.
 
 ---
 

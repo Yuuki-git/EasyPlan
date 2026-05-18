@@ -70,6 +70,7 @@ class FakeTaskRepository:
         description,
         view_bucket,
         parent_task_id,
+        thread_id=None,
         is_in_my_day=False,
     ):
         self.create_calls.append(
@@ -80,12 +81,15 @@ class FakeTaskRepository:
                 "view_bucket": view_bucket,
                 "is_in_my_day": is_in_my_day,
                 "parent_task_id": parent_task_id,
+                "thread_id": thread_id,
             }
         )
+        inherited_thread_id = thread_id
         if parent_task_id is not None:
             parent_task = self.tasks.get(parent_task_id)
             if parent_task is None or parent_task.user_id != user_id:
                 return None
+            inherited_thread_id = parent_task.thread_id
         task = _fake_task(
             user_id=user_id,
             view_bucket=view_bucket,
@@ -93,6 +97,7 @@ class FakeTaskRepository:
             title=title,
             parent_task_id=parent_task_id,
             description=description,
+            thread_id=inherited_thread_id or f"manual-{uuid4().hex}",
         )
         task.client_node_id = f"manual-{uuid4().hex}"
         self.tasks[task.id] = task
@@ -245,8 +250,54 @@ def test_post_tasks_can_mark_task_as_in_my_day_without_physical_bucket_move():
             "view_bucket": "planned",
             "is_in_my_day": True,
             "parent_task_id": None,
+            "thread_id": None,
         }
     ]
+
+
+def test_post_tasks_creates_root_task_under_existing_thread_context():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+
+    response = client.post(
+        "/api/tasks",
+        json={"title": "Add root task", "thread_id": "thread-plan-1"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["thread_id"] == "thread-plan-1"
+    assert payload["parent_task_id"] is None
+    assert repository.create_calls[0]["thread_id"] == "thread-plan-1"
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+    assert [task["title"] for task in planned_response.json()] == ["Add root task"]
+
+
+def test_post_tasks_with_parent_inherits_parent_thread_over_payload_thread():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    parent = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Parent",
+        thread_id="thread-parent",
+    )
+    repository.tasks[parent.id] = parent
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "title": "Child task",
+            "parent_task_id": str(parent.id),
+            "thread_id": "thread-ignored",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["thread_id"] == "thread-parent"
+    assert payload["parent_task_id"] == str(parent.id)
+    assert repository.create_calls[0]["thread_id"] == "thread-ignored"
 
 
 def test_post_tasks_normalizes_explicit_my_day_to_virtual_mapping():
@@ -270,6 +321,7 @@ def test_post_tasks_normalizes_explicit_my_day_to_virtual_mapping():
             "view_bucket": "planned",
             "is_in_my_day": True,
             "parent_task_id": None,
+            "thread_id": None,
         }
     ]
     my_day_response = client.get("/api/tasks?view_bucket=my_day")
@@ -361,6 +413,76 @@ def test_patch_task_updates_only_authenticated_users_task():
     assert repository.tasks[own_task.id].is_in_my_day is True
     assert forbidden_response.status_code == 404
     assert repository.tasks[other_task.id].title == "Other tenant"
+
+
+def test_patch_task_marks_planned_task_completed_without_view_context():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Draft outline",
+        is_in_my_day=False,
+    )
+    repository.tasks[task.id] = task
+
+    response = client.patch(
+        f"/api/tasks/{task.id}",
+        json={"status": "completed"},
+    )
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(task.id)
+    assert response.json()["status"] == "completed"
+    assert response.json()["view_bucket"] == "planned"
+    assert response.json()["is_in_my_day"] is False
+    assert planned_response.status_code == 200
+    assert planned_response.json()[0]["id"] == str(task.id)
+    assert planned_response.json()[0]["status"] == "completed"
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": task.id,
+            "changes": {"status": "completed"},
+        }
+    ]
+
+
+def test_patch_task_marks_virtual_my_day_task_completed_in_both_views():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    task = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Review launch notes",
+        is_in_my_day=True,
+    )
+    repository.tasks[task.id] = task
+
+    response = client.patch(
+        f"/api/tasks/{task.id}",
+        json={"status": "completed"},
+    )
+    my_day_response = client.get("/api/tasks?view_bucket=my_day")
+    planned_response = client.get("/api/tasks?view_bucket=planned")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(task.id)
+    assert response.json()["status"] == "completed"
+    assert my_day_response.status_code == 200
+    assert planned_response.status_code == 200
+    assert my_day_response.json()[0]["id"] == str(task.id)
+    assert my_day_response.json()[0]["status"] == "completed"
+    assert planned_response.json()[0]["id"] == str(task.id)
+    assert planned_response.json()[0]["status"] == "completed"
+    assert repository.update_calls == [
+        {
+            "user_id": user.id,
+            "task_id": task.id,
+            "changes": {"status": "completed"},
+        }
+    ]
 
 
 def test_patch_task_allows_clearing_nullable_description():
@@ -520,12 +642,13 @@ def _fake_task(
     parent_task_id: UUID | None = None,
     description: str | None = None,
     is_in_my_day: bool = False,
+    thread_id: str = "thread-1",
     metadata_: dict[str, Any] | None = None,
 ) -> FakeTask:
     return FakeTask(
         id=uuid4(),
         user_id=user_id,
-        thread_id="thread-1",
+        thread_id=thread_id,
         client_node_id=f"node-{uuid4().hex}",
         parent_task_id=parent_task_id,
         title=title,

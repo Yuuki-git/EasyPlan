@@ -70,10 +70,12 @@ interface AppStore {
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
   updateTaskDetails: (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => Promise<void>;
-  createManualTask: (title: string) => Promise<void>;
+  createManualTask: (title: string, options?: { thread_id?: string | null }) => Promise<void>;
   toggleTaskInMyDay: (taskId: string, currentState: boolean) => Promise<void>;
   generateNextPhasePlan: () => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
+  startNewIntent: () => void;
+  deleteThread: (threadId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -196,7 +198,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateTaskStatus: async (taskId: string, status: 'completed' | 'active') => {
     const { token, boardTasks } = get();
-    if (!token) return;
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+
+    const taskToRollback = boardTasks?.find(t => t.id === taskId);
+    const originalStatus = taskToRollback ? taskToRollback.status : (status === 'completed' ? 'active' : 'completed');
+
+    // Optimistic UI sync (task level)
+    set({
+      boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status } : t)
+    });
+
+    const rollback = () => {
+      set((state) => ({
+        boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, status: originalStatus } : t),
+        error: '任务状态同步失败，请稍后重试'
+      }));
+    };
 
     try {
       const headers: Record<string, string> = {
@@ -208,25 +228,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers,
         body: JSON.stringify({ status })
       });
-      
-      // P1 Fix: Global Auth Recovery
+
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
         set({ showAuthModal: true });
+        rollback();
         return;
       }
 
       if (!response.ok) throw new Error('Failed to update task status');
-      
-      const updatedTask = await response.json();
-      
-      // Optimistic/Post-update UI sync
-      set({
-        boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status: updatedTask.status } : t)
-      });
     } catch (err) {
       console.error("Update task status failed", err);
-      throw err; // allow component to revert visual state
+      rollback();
+      throw err;
     }
   },
 
@@ -276,10 +290,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  createManualTask: async (title: string) => {
-    const { token, currentViewBucket, boardTasks } = get();
+  createManualTask: async (title: string, options?: { thread_id?: string | null }) => {
+    const { token, currentViewBucket, boardTasks, selectedProjectId } = get();
     if (!token) return;
     const shouldAddToMyDay = currentViewBucket === 'my_day';
+    const targetThreadId = options?.thread_id !== undefined ? options.thread_id : selectedProjectId;
 
     try {
       const headers: Record<string, string> = {
@@ -292,7 +307,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         body: JSON.stringify({
           title,
           view_bucket: shouldAddToMyDay ? 'planned' : currentViewBucket,
-          is_in_my_day: shouldAddToMyDay
+          is_in_my_day: shouldAddToMyDay,
+          thread_id: targetThreadId
         })
       });
       
@@ -393,6 +409,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error("Delete task failed", err);
       // Revert optimistic update on error
       set({ boardTasks: originalTasks });
+      throw err;
+    }
+  },
+
+  startNewIntent: () => {
+    set({
+      appState: 'INITIAL',
+      view: 'input',
+      intent: '',
+      threadId: null,
+      syncRequestId: null,
+      reasoningLogs: [],
+      error: null,
+      pendingIntent: null,
+      selectedProjectId: null,
+    });
+    setTimeout(() => {
+      set({ boardTasks: null, taskTree: null, nodeStatuses: {} });
+    }, 500);
+  },
+
+  deleteThread: async (threadId: string) => {
+    const { token, boardTasks, selectedProjectId } = get();
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/threads/${threadId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+      
+      if (!response.ok) throw new Error('Failed to delete plan');
+      set({
+        boardTasks: (boardTasks || []).filter(t => t.thread_id !== threadId),
+        selectedProjectId: selectedProjectId === threadId ? null : selectedProjectId
+      });
+    } catch (err) {
+      console.error("Delete plan failed", err);
       throw err;
     }
   },
