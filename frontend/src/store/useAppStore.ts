@@ -198,7 +198,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateTaskStatus: async (taskId: string, status: 'completed' | 'active') => {
     const { token, boardTasks } = get();
-    if (!token) return;
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
 
     const taskToRollback = boardTasks?.find(t => t.id === taskId);
     const originalStatus = taskToRollback ? taskToRollback.status : (status === 'completed' ? 'active' : 'completed');
@@ -211,7 +214,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const rollback = () => {
       set((state) => ({
         boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, status: originalStatus } : t),
-        boardError: '任务状态同步失败，请稍后重试'
+        error: '任务状态同步失败，请稍后重试'
       }));
     };
 

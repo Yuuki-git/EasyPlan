@@ -102,7 +102,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const hasChildren = node.children && node.children.length > 0;
   
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
-  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isToggling, setIsToggling] = React.useState(false);
 
   // Inline editing state
   const [isEditing, setIsEditing] = React.useState(false);
@@ -123,14 +123,6 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   }, [node.title, node.description, node.estimated_minutes]);
 
   React.useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  React.useEffect(() => {
     if (isEditing && editTitleRef.current) {
       editTitleRef.current.focus();
     }
@@ -139,22 +131,20 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isGroup || isEditing) return;
-    
-    // Prevent double clicking during ritual
-    if (timeoutRef.current) return;
+    if (isToggling) return;
 
-    if (!localCompleted) {
-      setLocalCompleted(true);
-      // Fire backend request immediately for instant sync
-      updateTaskStatus(node.id, 'completed').catch(() => setLocalCompleted(false));
-      
-      // Use timeout to block spam clicking
-      timeoutRef.current = setTimeout(() => {
-        timeoutRef.current = null;
-      }, 2000);
-    } else {
-      setLocalCompleted(false);
-      updateTaskStatus(node.id, 'active').catch(() => setLocalCompleted(true));
+    const nextCompleted = !localCompleted;
+    const nextStatus = nextCompleted ? 'completed' : 'active';
+
+    setIsToggling(true);
+    setLocalCompleted(nextCompleted);
+
+    try {
+      await updateTaskStatus(node.id, nextStatus);
+    } catch {
+      setLocalCompleted(!nextCompleted);
+    } finally {
+      setIsToggling(false);
     }
   };
 
@@ -266,7 +256,8 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         localCompleted 
           ? "bg-muted/10 border-transparent" 
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
-        (timeoutRef.current || isEditing) && "pointer-events-none cursor-default",
+        isEditing && "cursor-default",
+        isToggling && "cursor-wait",
         depth > 0 && "ml-4"
       )}
       onClick={handleToggle}
