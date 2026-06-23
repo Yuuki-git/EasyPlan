@@ -2,7 +2,7 @@ import type { IntentCreateRequest } from '../types/api';
 
 export type PlannerProvider = NonNullable<IntentCreateRequest['planner_provider']>;
 
-const DEFAULT_PLANNER_PROVIDER: PlannerProvider = 'openai';
+const DEFAULT_PLANNER_PROVIDER: PlannerProvider = 'deepseek';
 const PLANNER_PROVIDERS = new Set<PlannerProvider>(['openai', 'deepseek', 'xiaomi']);
 
 export function resolvePlannerProvider(env: Record<string, string | undefined>): PlannerProvider {

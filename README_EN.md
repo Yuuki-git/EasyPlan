@@ -1,7 +1,7 @@
-# EasyPlan 🪐 - Intent-Driven AI Planning System (v1.2.4)
+# EasyPlan 🪐 - Intent-Driven AI Planning System (v1.2.4-rc.1)
 
-> **Current:** v1.2.4 Action Quality & Fallback (Release Candidate)  
-> **Status:** Actionability Scorer and Runtime Validator implemented. Evaluating 100% stable on DeepSeek.
+> **Current:** v1.2.4-rc.1 Action Quality & Fallback
+> **Status:** RC acceptance completed. DeepSeek is the default and primary planning provider.
 
 **EasyPlan is an intent-driven AI planning system. It identifies the user's goal type first, then selects the appropriate decomposition strategy, translating fuzzy intents into actionable, adjustable, and sustainable task maps.** More than a simple to-do list, it's an intelligent Agent companion that understands behavioral psychology.
 

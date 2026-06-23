@@ -10,6 +10,33 @@ const generateUUID = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
+type MutableTaskStatus = 'completed' | 'active';
+
+const TASK_STATUS_OVERRIDE_TTL_MS = 10000;
+const taskStatusOverrides = new Map<string, { status: MutableTaskStatus; pending: boolean; updatedAt: number }>();
+
+const applyTaskStatusOverrides = (tasks: TaskResponse[], fetchStartedAt: number) => {
+  const now = Date.now();
+
+  return tasks.map((task) => {
+    const override = taskStatusOverrides.get(task.id);
+    if (!override) return task;
+
+    if (task.status === override.status) {
+      taskStatusOverrides.delete(task.id);
+      return task;
+    }
+
+    const isRecent = now - override.updatedAt < TASK_STATUS_OVERRIDE_TTL_MS;
+    if (override.pending || override.updatedAt >= fetchStartedAt || isRecent) {
+      return { ...task, status: override.status };
+    }
+
+    taskStatusOverrides.delete(task.id);
+    return task;
+  });
+};
+
 export type AppState = 
   | 'INITIAL' 
   | 'THINKING' 
@@ -152,21 +179,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   
   setError: (error) => set({ error, appState: error ? 'ERROR' : 'INITIAL' }),
   
-  reset: () => set({
-    intent: '',
-    appState: 'INITIAL',
-    threadId: null,
-    syncRequestId: null,
-    reasoningLogs: [],
-    taskTree: null,
-    nodeStatuses: {},
-    error: null,
-    showAuthModal: false,
-    pendingIntent: null,
-    view: 'input',
-    boardTasks: null,
-    boardError: null
-  }),
+  reset: () => {
+    taskStatusOverrides.clear();
+    set({
+      intent: '',
+      appState: 'INITIAL',
+      threadId: null,
+      syncRequestId: null,
+      reasoningLogs: [],
+      taskTree: null,
+      nodeStatuses: {},
+      error: null,
+      showAuthModal: false,
+      pendingIntent: null,
+      view: 'input',
+      boardTasks: null,
+      boardError: null
+    });
+  },
 
   fetchTasks: async (bucket) => {
     const targetBucket = bucket || get().currentViewBucket;
@@ -175,6 +205,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({ boardError: null });
     try {
+      const fetchStartedAt = Date.now();
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${token}`
       };
@@ -189,7 +220,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const tasks = await response.json();
-      set({ boardTasks: tasks });
+      set({ boardTasks: applyTaskStatusOverrides(tasks, fetchStartedAt) });
     } catch (err) {
       console.error("Fetch tasks failed", err);
       set({ boardError: "获取任务失败，请重试" });
@@ -205,6 +236,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     const taskToRollback = boardTasks?.find(t => t.id === taskId);
     const originalStatus = taskToRollback ? taskToRollback.status : (status === 'completed' ? 'active' : 'completed');
+    taskStatusOverrides.set(taskId, { status, pending: true, updatedAt: Date.now() });
 
     // Optimistic UI sync (task level)
     set({
@@ -212,9 +244,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
 
     const rollback = () => {
+      taskStatusOverrides.delete(taskId);
       set((state) => ({
         boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, status: originalStatus } : t),
-        error: '任务状态同步失败，请稍后重试'
+        boardError: '任务状态同步失败，请稍后重试'
       }));
     };
 
@@ -230,16 +263,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
+        taskStatusOverrides.delete(taskId);
         get().setToken(null);
         set({ showAuthModal: true });
-        rollback();
-        return;
+        throw new Error('Authentication required');
       }
 
       if (!response.ok) throw new Error('Failed to update task status');
+
+      const updatedTask = await response.json();
+      const serverStatus = updatedTask.status === 'completed' || updatedTask.status === 'active' ? updatedTask.status : status;
+      taskStatusOverrides.set(taskId, { status: serverStatus, pending: false, updatedAt: Date.now() });
+      set((state) => ({
+        boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
+      }));
     } catch (err) {
-      console.error("Update task status failed", err);
-      rollback();
+      if ((err as Error).message !== 'Authentication required') {
+        console.error("Update task status failed", err);
+        rollback();
+      }
       throw err;
     }
   },

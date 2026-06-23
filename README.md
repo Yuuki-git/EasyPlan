@@ -1,13 +1,13 @@
-# EasyPlan 🪐 - 意图驱动的 AI 规划系统 (v1.2.4)
+# EasyPlan 🪐 - 意图驱动的 AI 规划系统 (v1.2.4-rc.1)
 
-> **Current:** v1.2.4 Action Quality & Fallback (Release Candidate)  
-> **Status:** Actionability Scorer and Runtime Validator implemented. Evaluating 100% stable on DeepSeek.
+> **Current:** v1.2.4-rc.1 Action Quality & Fallback
+> **Status:** RC acceptance completed. DeepSeek is the default and primary planning provider.
 
 **EasyPlan 是一个意图驱动的 AI 规划系统，它先识别用户目标类型，再选择合适的拆解策略，把模糊意图转化为可执行、可调整、可持续推进的任务地图。** 它不只是一个待办清单，而是一个懂得行为心理学的智能 Agent 伙伴。
 
 ```text
 [核心管线 Architecture Flow]
-Intent Capture → Intent Profile → Strategy Router → Planner (w/ Action Quality) → Runtime Validator → Task Board ⇌ Refine / Fog Unlock
+Intent Capture → Intent Profile → Strategy Router → Planner (w/ Action Quality) → Runtime Validator → Task Board
 ```
 
 [English](./README_EN.md) | [快速开始](#-快速开始) | [技术架构](#-技术架构)
@@ -33,7 +33,7 @@ Intent Capture → Intent Profile → Strategy Router → Planner (w/ Action Qua
 ## 📊 评测基准 (Planning Eval)
 EasyPlan 采用**评测集驱动 (Eval Driven)** 的方式进行大模型调优。
 - **主验收模型 (Primary Provider)**: DeepSeek (v1.2.4 满分通关)
-- **兼容性测试模型 (Compatibility Provider)**: Xiaomi MiMo
+- **可选兼容 Provider**: OpenAI / Xiaomi MiMo（不纳入当前发布验收）
 - **Core Cases**: 32 条核心用例
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00% (含强力 JSON Repair 兜底机制)

@@ -32,3 +32,4 @@ Thumbs.db
 # Project specific
 backend/app/__pycache__/
 frontend/dist/
+.codex_*.log

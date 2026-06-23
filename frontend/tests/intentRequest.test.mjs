@@ -20,7 +20,7 @@ function loadIntentRequestModule() {
 const { buildIntentRequest, resolvePlannerProvider } = loadIntentRequestModule();
 
 assert.equal(resolvePlannerProvider({ VITE_PLANNER_PROVIDER: 'deepseek' }), 'deepseek');
-assert.equal(resolvePlannerProvider({ VITE_PLANNER_PROVIDER: ' bad-provider ' }), 'openai');
+assert.equal(resolvePlannerProvider({ VITE_PLANNER_PROVIDER: ' bad-provider ' }), 'deepseek');
 
 assert.deepEqual(
   JSON.parse(JSON.stringify(buildIntentRequest({
