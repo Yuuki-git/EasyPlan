@@ -20,6 +20,10 @@ class AgentState(TypedDict, total=False):
     error: dict[str, Any]
     prompt: str
     raw_llm_response: Any
+    planning_mode: Literal["initial", "next_phase"]
+    committed_task_tree: dict[str, Any]
+    current_phase_task_summary: str
+    phase_request_id: str
 
 
 MAX_INTENT_TEXT_CHARS = 2000

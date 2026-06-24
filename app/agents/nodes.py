@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import inspect
+import json
 import re
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -14,6 +15,11 @@ from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
 from app.services.action_quality import score_action_node
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
+from app.services.phase_planning import (
+    choose_next_action,
+    phase_planning_enabled,
+    validate_next_phase_transition,
+)
 
 
 MAX_REPLAN_ATTEMPTS = 3
@@ -113,7 +119,7 @@ HARD_RULES_PROMPT = """硬性规则：
    - 可以提及未来阶段名称，但不得展开未来阶段的具体任务。
    - 不得生成完整周期计划、每日打卡表、周计划、月计划或备考全程表。
    - 如果用户要求长期完整计划，也只能输出高层阶段名称，不得输出未来阶段任务。
-   - 不要新增 roadmap/current_phase/next_action 等 schema 外字段；未来阶段名称最多写入 assumptions。
+   - Roadmap 仅允许写入 planning_context.roadmap；不得把未来阶段展开为 TaskTree 任务。
 4. 禁止输出 Markdown、解释性段落或 schema 外字段。
 5. title 和 description 必须短而具体，避免长文本导致 JSON 截断。
 6. assumptions 必须是字符串数组；默认 assumptions 为 []；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
@@ -123,7 +129,7 @@ ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
 2. start_hint 必须是用户可以立刻执行的第一步。
 3. fallback_action 必须是更小、更低门槛的替代动作。
 4. 对 estimated_minutes >= 20 的 Action，建议生成 fallback_action。
-5. 不要为了补字段扩大任务树规模，不要新增 roadmap/current_phase/next_action 等 schema 外字段。
+5. 不要为了补字段扩大任务树规模，不要在 planning_context 之外新增 roadmap/current_phase/next_action 字段。
 6. 字段值必须是一句短句，建议 <=30 汉字；不要包含英文双引号、换行、列表或多句解释。
 
 无效字段内容禁止：
@@ -138,13 +144,38 @@ ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
 - start_hint: “打开浏览器搜索“N3 真题 PDF””
 - fallback_action: “如果没有精力做 20 题，就先做前 5 题”"""
 
+THREE_TIER_PLANNING_PROMPT = """三层规划契约：
+1. planning_context 必须存在，并生成 3-5 个 Roadmap 阶段。
+2. roadmap 只包含 phase_id、order、title、objective、status；不得包含 estimated_minutes、日期或子任务。
+3. 首次规划只能把第 1 个阶段标记为 current，其余阶段标记为 planned。
+4. current_phase 必须逐字段匹配 roadmap 中唯一的 current 阶段。
+5. TaskTree.root 只能展开当前 Phase 1 的任务，不得展开未来阶段。
+6. next_action_client_node_id 必须引用当前阶段内一个 Action；服务端持久化时会确定性复核。
+7. intent_type 和 time_horizon 必须与已识别的 IntentProfile 完全一致。
+8. assumptions 保持为 []，不得把 Roadmap 编码进 assumptions。"""
+
+NO_PHASE_PLANNING_PROMPT = """三层规划契约：
+planning_context 必须为 null。不要生成 Roadmap、Current Phase 或 Next Action。"""
+
+PHASE_PLANNING_DISABLED_PROMPT = """三层规划功能开关已关闭：
+planning_context 必须为 null，并保持 v1.2.4 TaskTree 输出。"""
+
+NEXT_PHASE_PROMPT = """下一阶段规划模式：
+1. completed 阶段必须逐字段保持不变，禁止修改 phase_id、order、title、objective 或 status。
+2. intent_type 和 time_horizon 必须保持不变，不得重新分类。
+3. 原 current 阶段只能变为 completed，且除 status 外不得修改。
+4. 只能展开一个新的 current phase；TaskTree.root 只能包含该阶段任务。
+5. 只允许重写原 roadmap 的 planned 后缀，不得生成所有未来阶段的任务。
+6. 所有 Action 继续满足 Action Quality、Scope Horizon 和依赖规则。
+7. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
 第一个任务必须是极其简单的破冰动作，建议 <=5 分钟，用来降低启动阻力。
 但后续任务可以是 25-60 分钟的深度工作。
 不要排满整个周期，只输出当前启动阶段 Phase 1，且 Phase 1 只覆盖最近 72 小时内可以启动的行动。
 可以给 3-5 个高层阶段作为 roadmap；roadmap 只能是阶段标题和目的，不允许 estimated_minutes，不允许具体日期，不允许子任务。
-如果需要输出 roadmap，只能放在 assumptions 里；TaskTree.root.children 只能放当前 Phase 1 tasks。
+Roadmap 必须写入 planning_context.roadmap；TaskTree.root.children 只能放当前 Phase 1 tasks。
 Phase 1 建议覆盖未来 24-72 小时。
 禁止排满整个备考期、训练期、写作期或长期周期。
 禁止生成“第1周/第2周/第3个月”这种长期排期任务。
@@ -165,7 +196,7 @@ long_term_growth 必须：
 - 第一个 action 不得是安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划。
 - Phase 1 任务标题中不要写“训练计划”“学习计划”“备考计划”“长期路线”“课程大纲”。
 - summary 写成“Phase 1 启动计划”，不要回显完整长期目标。
-- assumptions 必须是 []，不要输出 roadmap 或未来阶段。
+- assumptions 必须是 []；Roadmap 只能写入 planning_context.roadmap，未来阶段不得写入 TaskTree 任务。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
@@ -220,6 +251,7 @@ context_checklist 禁止：
 context_checklist 必须：
 - 如果有 2 个以上零散事项，root.children 必须使用 group 节点。
 - 当清单中有 2 个以上事项，且可按地点、工具、顺路关系或时间场景聚合时，优先使用 Group，不要直接输出多个散乱顶层 Action。
+- 同一地点、工具或时间场景的事项必须放入同一个 Group，不得拆成多个顶层 Action。
 - root.children 顶层必须全部是 group 节点，不允许把多个事项作为顶层 action 平铺。
 - 即使只有一个场景，也建立一个 group，例如“出门前”“通勤路上”“手机处理”“缴费处理”。
 - group 按位置、工具、顺路关系、出门前/路上/到家后等场景命名。
@@ -422,28 +454,60 @@ def build_planner_prompt(
     feedback: str | None = None,
     current_task_tree_summary: str | None = None,
     validation_errors: list[str] | None = None,
+    planning_mode: str = "initial",
+    committed_task_tree: dict[str, Any] | None = None,
+    current_phase_task_summary: str | None = None,
 ) -> str:
     intent_type = _intent_type_from_profile(intent_profile)
+    phase_contract = _phase_contract_prompt(
+        intent_type=intent_type,
+        planning_mode=planning_mode,
+    )
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
         RULE_PRIORITY_PROMPT,
         HARD_RULES_PROMPT,
         ACTION_QUALITY_PROMPT,
         INTENT_STRATEGY_PROMPTS[intent_type],
+        phase_contract,
         "输出必须是符合 TaskTree JSON Schema 的 JSON。",
         f"用户意图：{intent_text}",
     ]
+    if planning_mode == "next_phase":
+        if current_phase_task_summary:
+            parts.append(f"当前阶段任务完成摘要：{current_phase_task_summary}")
+        if committed_task_tree:
+            parts.append(
+                "已提交计划（只读基线）："
+                + json.dumps(committed_task_tree, ensure_ascii=False, separators=(",", ":"))
+            )
     if current_task_tree_summary:
         parts.append(f"当前计划摘要：{current_task_tree_summary}")
     if feedback:
         parts.append(f"用户自然语言反馈：{feedback}")
     if validation_errors:
-        parts.append(
-            "验证失败，请继续拆解并按以下具体原因修正；只修复验证指出的低质量任务，保持原 intent_type 和策略不变，"
-            "不要重写整棵任务树，不要新增 roadmap/current_phase/next_action，不要重复输出同类错误："
-            + "; ".join(validation_errors)
-        )
+        if planning_mode == "next_phase":
+            repair_instruction = (
+                "验证失败，请只修复新阶段中被指出的任务；保持 intent_type/time_horizon 和所有 completed 阶段不变，"
+                "不要重写整棵任务树，不要改写已提交阶段，不要重复输出同类错误："
+            )
+        else:
+            repair_instruction = (
+                "验证失败，请继续拆解并按以下具体原因修正；只修复验证指出的低质量任务，保持原 intent_type 和策略不变，"
+                "不要重写整棵任务树，不得借验证修复机会改写既有 roadmap，不要重复输出同类错误："
+            )
+        parts.append(repair_instruction + "; ".join(validation_errors))
     return "\n".join(parts)
+
+
+def _phase_contract_prompt(*, intent_type: str, planning_mode: str) -> str:
+    if not phase_planning_enabled():
+        return PHASE_PLANNING_DISABLED_PROMPT
+    if planning_mode == "next_phase":
+        return NEXT_PHASE_PROMPT
+    if intent_type in {"long_term_growth", "exploration_decision"}:
+        return THREE_TIER_PLANNING_PROMPT
+    return NO_PHASE_PLANNING_PROMPT
 
 
 def planner_node_factory(planner: PlannerClient):
@@ -454,6 +518,9 @@ def planner_node_factory(planner: PlannerClient):
             feedback=state.get("refinement_feedback"),
             current_task_tree_summary=_task_tree_summary(state.get("task_tree")),
             validation_errors=state.get("validation_errors"),
+            planning_mode=state.get("planning_mode", "initial"),
+            committed_task_tree=state.get("committed_task_tree"),
+            current_phase_task_summary=state.get("current_phase_task_summary"),
         )
         reasoning_sink = ListReasoningSink()
         task_tree = await _call_planner(planner, prompt, reasoning_sink)
@@ -494,6 +561,8 @@ async def task_tree_validator_node(state: AgentState) -> AgentState:
     errors = _validate_task_tree(
         state.get("task_tree"),
         intent_profile=state.get("intent_profile"),
+        planning_mode=state.get("planning_mode"),
+        committed_task_tree=state.get("committed_task_tree"),
     )
     if not errors:
         return {
@@ -527,6 +596,51 @@ async def failed_validation_node(state: AgentState) -> AgentState:
     }
 
 
+async def finalize_phase_rejection_node(state: AgentState) -> AgentState:
+    from app.db.session import async_session
+
+    request_id = state.get("phase_request_id")
+    if state.get("planning_mode") != "next_phase" or not request_id:
+        return {}
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(AgentThread)
+                .where(
+                    AgentThread.user_id == UUID(str(state["user_id"])),
+                    AgentThread.thread_id == state["thread_id"],
+                )
+                .with_for_update()
+            )
+            thread = result.scalar_one_or_none()
+            if thread is None:
+                raise RuntimeError("phase thread not found during cancellation")
+            envelope = _terminal_phase_envelope(
+                thread.interrupt_payload,
+                request_id=request_id,
+                status="cancelled",
+                now=now,
+            )
+            await session.execute(
+                update(AgentThread)
+                .where(
+                    AgentThread.user_id == UUID(str(state["user_id"])),
+                    AgentThread.thread_id == state["thread_id"],
+                )
+                .values(
+                    status="succeeded",
+                    current_node="cancel_phase",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    interrupt_payload=envelope,
+                    updated_at=now,
+                )
+            )
+    return {"phase_request_status": "cancelled"}
+
+
 async def persist_internal_tasks_node(state: AgentState) -> AgentState:
     from app.db.session import async_session
 
@@ -539,21 +653,118 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
     async with async_session() as session:
         async with session.begin():
             await _persist_tasks_idempotently(session, tasks, dependencies)
+            task_tree = await _with_server_derived_next_action(
+                session,
+                task_tree=state["task_tree"],
+                user_id=UUID(str(state["user_id"])),
+                thread_id=state["thread_id"],
+            )
+            update_values: dict[str, Any] = {
+                "status": "succeeded",
+                "current_node": "persist_internal_tasks",
+                "task_tree": task_tree,
+                "completed_at": now,
+                "updated_at": now,
+            }
+            if state.get("planning_mode") == "next_phase":
+                thread_result = await session.execute(
+                    select(AgentThread)
+                    .where(
+                        AgentThread.user_id == UUID(str(state["user_id"])),
+                        AgentThread.thread_id == state["thread_id"],
+                    )
+                    .with_for_update()
+                )
+                thread = thread_result.scalar_one_or_none()
+                if thread is None:
+                    raise RuntimeError("phase thread not found during persistence")
+                request_id = state.get("phase_request_id")
+                if not request_id:
+                    raise RuntimeError("phase_request_id is required for next-phase persistence")
+                update_values.update(
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    interrupt_payload=_terminal_phase_envelope(
+                        thread.interrupt_payload,
+                        request_id=request_id,
+                        status="confirmed",
+                        now=now,
+                    ),
+                )
             await session.execute(
                 update(AgentThread)
                 .where(
                     AgentThread.user_id == UUID(str(state["user_id"])),
                     AgentThread.thread_id == state["thread_id"],
                 )
-                .values(
-                    status="succeeded",
-                    current_node="persist_internal_tasks",
-                    task_tree=state.get("task_tree"),
-                    completed_at=now,
-                    updated_at=now,
-                )
+                .values(**update_values)
             )
     return {"task_persistence_status": "succeeded"}
+
+
+async def _with_server_derived_next_action(
+    session: Any,
+    *,
+    task_tree: dict[str, Any],
+    user_id: UUID,
+    thread_id: str,
+) -> dict[str, Any]:
+    parsed = TaskTree.model_validate(task_tree)
+    context = parsed.planning_context
+    if context is None or context.current_phase is None:
+        return parsed.model_dump(mode="json")
+
+    result = await session.execute(
+        select(Task).where(
+            Task.user_id == user_id,
+            Task.thread_id == thread_id,
+        )
+    )
+    persisted_tasks = list(result.scalars().all())
+    task_by_client_id = {task.client_node_id: task for task in persisted_tasks}
+    dependencies_by_task_id: dict[UUID, set[UUID]] = {}
+    for node in _iter_task_nodes(parsed.root):
+        task = task_by_client_id.get(node.client_node_id)
+        if task is None:
+            continue
+        dependency_ids = {
+            dependency_task.id
+            for dependency_client_id in node.depends_on
+            if (dependency_task := task_by_client_id.get(dependency_client_id)) is not None
+        }
+        if dependency_ids:
+            dependencies_by_task_id[task.id] = dependency_ids
+
+    next_task = choose_next_action(
+        persisted_tasks,
+        dependencies_by_task_id,
+        context.current_phase.phase_id,
+    )
+    context.next_action_client_node_id = (
+        next_task.client_node_id if next_task is not None else None
+    )
+    return parsed.model_dump(mode="json")
+
+
+def _terminal_phase_envelope(
+    current_payload: Any,
+    *,
+    request_id: str,
+    status: str,
+    now: datetime,
+) -> dict[str, Any]:
+    payload = current_payload if isinstance(current_payload, dict) else {}
+    history = dict(payload.get("history") or {})
+    history[request_id] = {
+        "status": status,
+        "updated_at": now.isoformat(),
+    }
+    return {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": status,
+        "history": history,
+    }
 
 
 async def _persist_tasks_idempotently(
@@ -722,6 +933,17 @@ def flatten_task_tree_for_persistence(
     tasks: list[Task] = []
     dependency_pairs: list[tuple[str, str]] = []
     id_by_client_node_id: dict[str, UUID] = {}
+    phase_metadata: dict[str, Any] = {"source": "ai"}
+    if parsed.planning_context and parsed.planning_context.current_phase:
+        current_phase = next(
+            phase
+            for phase in parsed.planning_context.roadmap
+            if phase.phase_id == parsed.planning_context.current_phase.phase_id
+        )
+        phase_metadata.update(
+            phase_id=current_phase.phase_id,
+            phase_order=current_phase.order,
+        )
 
     def visit(node: Any, parent_task_id: UUID | None, sort_order: int) -> None:
         task_id = uuid4()
@@ -743,7 +965,7 @@ def flatten_task_tree_for_persistence(
                 sort_order=sort_order,
                 ai_generated=True,
                 user_edited=False,
-                metadata_=_action_quality_metadata(node),
+                metadata_=_action_quality_metadata(node, base_metadata=phase_metadata),
             )
         )
         for dependency in node.depends_on:
@@ -773,7 +995,13 @@ def _action_quality_metadata(node: Any, base_metadata: dict[str, Any] | None = N
     return metadata
 
 
-def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None = None) -> list[str]:
+def _validate_task_tree(
+    task_tree: Any,
+    *,
+    intent_profile: dict[str, Any] | None = None,
+    planning_mode: str | None = None,
+    committed_task_tree: dict[str, Any] | None = None,
+) -> list[str]:
     try:
         parsed = TaskTree.model_validate(task_tree)
     except ValidationError as exc:
@@ -785,9 +1013,63 @@ def _validate_task_tree(task_tree: Any, *, intent_profile: dict[str, Any] | None
     _collect_rule_errors(parsed.root.model_dump(mode="json"), seen, nodes_by_id, errors)
     _collect_dependency_errors(nodes_by_id, errors)
     _collect_global_size_errors(parsed, errors)
-    _collect_strategy_errors(parsed, _intent_type_from_profile(intent_profile), errors)
-    _collect_action_quality_errors(parsed, _intent_type_from_profile(intent_profile), errors)
+    intent_type = _intent_type_from_profile(intent_profile)
+    _collect_phase_contract_errors(
+        parsed,
+        intent_profile=intent_profile,
+        planning_mode=planning_mode,
+        committed_task_tree=committed_task_tree,
+        errors=errors,
+    )
+    _collect_strategy_errors(parsed, intent_type, errors)
+    _collect_action_quality_errors(parsed, intent_type, errors)
     return errors
+
+
+def _collect_phase_contract_errors(
+    task_tree: TaskTree,
+    *,
+    intent_profile: dict[str, Any] | None,
+    planning_mode: str | None,
+    committed_task_tree: dict[str, Any] | None,
+    errors: list[str],
+) -> None:
+    if planning_mode is None:
+        return
+
+    context = task_tree.planning_context
+    intent_type = _intent_type_from_profile(intent_profile)
+    if not phase_planning_enabled():
+        if context is not None:
+            errors.append("phase planning is disabled; planning_context must be null")
+        return
+
+    if planning_mode == "next_phase":
+        if committed_task_tree is None:
+            errors.append("next_phase requires committed_task_tree")
+            return
+        try:
+            committed = TaskTree.model_validate(committed_task_tree)
+        except ValidationError as exc:
+            errors.append(f"committed_task_tree is invalid: {exc}")
+            return
+        if committed.planning_context is None or context is None:
+            errors.append("next_phase requires planning_context in committed and proposed trees")
+            return
+        errors.extend(validate_next_phase_transition(committed.planning_context, context))
+        return
+
+    if intent_type in {"long_term_growth", "exploration_decision"}:
+        if context is None:
+            errors.append(f"{intent_type} initial plan requires planning_context")
+            return
+        if context.intent_type != intent_type:
+            errors.append("planning_context intent_type must match IntentProfile")
+        expected_horizon = (intent_profile or {}).get("time_horizon")
+        if isinstance(expected_horizon, str) and context.time_horizon != expected_horizon:
+            errors.append("planning_context time_horizon must match IntentProfile")
+    elif context is not None:
+        errors.append(f"{intent_type} planning_context must be null")
 
 
 def _collect_rule_errors(

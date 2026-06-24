@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agents.nodes import build_planner_prompt
 from app.api.schemas import IntentProfile, TaskTree
 from app.services.llm_service import (
     DeepSeekPlannerClient,
@@ -278,6 +279,133 @@ def test_deepseek_planner_rejects_json_that_does_not_match_task_tree():
 
     with pytest.raises(LLMStructuredOutputError):
         asyncio.run(planner.create_plan("Create a launch plan"))
+
+
+def test_deepseek_planner_normalizes_context_checklist_actions_into_group():
+    task_tree = _valid_task_tree()
+    task_tree["root"]["title"] = "上学前准备"
+    task_tree["root"]["children"] = [
+        {
+            "client_node_id": "uniform",
+            "title": "准备校服",
+            "description": None,
+            "verb": "准备",
+            "estimated_minutes": 5,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        },
+        {
+            "client_node_id": "water",
+            "title": "装好水杯",
+            "description": None,
+            "verb": "装好",
+            "estimated_minutes": 3,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        },
+        {
+            "client_node_id": "homework",
+            "title": "检查作业本",
+            "description": None,
+            "verb": "检查",
+            "estimated_minutes": 5,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        },
+        {
+            "client_node_id": "thermometer",
+            "title": "放好体温表",
+            "description": None,
+            "verb": "放好",
+            "estimated_minutes": 2,
+            "node_type": "action",
+            "depends_on": [],
+            "children": [],
+        },
+    ]
+    fake_deepseek = FakeChatClient(json.dumps(task_tree, ensure_ascii=False))
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+    prompt = build_planner_prompt(
+        "明天带孩子上学前要准备校服、水杯、作业本和体温表",
+        intent_profile={"intent_type": "context_checklist"},
+    )
+
+    result = asyncio.run(planner.create_plan(prompt))
+
+    assert len(result["root"]["children"]) == 1
+    group = result["root"]["children"][0]
+    assert group["node_type"] == "group"
+    assert group["title"] == "上学前准备"
+    assert [child["client_node_id"] for child in group["children"]] == [
+        "uniform",
+        "water",
+        "homework",
+        "thermometer",
+    ]
+
+
+def test_deepseek_planner_repairs_schema_mismatch_without_replanning():
+    invalid = _valid_task_tree()
+    invalid["planning_context"] = {
+        "schema_version": 1,
+        "intent_type": "exploration_decision",
+        "time_horizon": "days",
+        "roadmap": [
+            {
+                "phase_id": "phase_01",
+                "order": 1,
+                "title": "澄清问题",
+                "objective": "明确核心顾虑",
+                "status": "current",
+            },
+            {
+                "phase_id": "phase_02",
+                "order": 2,
+                "title": "收集信息",
+                "objective": "补齐决策依据",
+                "description": "This extra key violates the schema.",
+                "status": "planned",
+            },
+            {
+                "phase_id": "phase_03",
+                "order": 3,
+                "title": "形成结论",
+                "objective": "记录可解释的决定",
+                "status": "planned",
+            },
+        ],
+        "current_phase": {
+            "phase_id": "phase_01",
+            "title": "澄清问题",
+            "objective": "明确核心顾虑",
+            "completion_rule": "all_ai_actions_completed",
+        },
+        "next_action_client_node_id": "task-1",
+    }
+    repaired = json.loads(json.dumps(invalid))
+    del repaired["planning_context"]["roadmap"][1]["description"]
+    fake_deepseek = FakeChatClient(
+        [
+            json.dumps(invalid, ensure_ascii=False),
+            json.dumps(repaired, ensure_ascii=False),
+        ]
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.create_plan("Help me decide whether to attend graduate school"))
+
+    assert result["planning_context"]["roadmap"][1]["objective"] == "补齐决策依据"
+    assert len(fake_deepseek.chat.completions.calls) == 2
+    repair_prompt = "\n".join(
+        message["content"]
+        for message in fake_deepseek.chat.completions.calls[1]["messages"]
+    )
+    assert "schema" in repair_prompt.lower()
+    assert "Do not replan" in repair_prompt
+    assert "Extra inputs are not permitted" in repair_prompt
 
 
 def test_deepseek_profiles_intent_with_json_mode():

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_next_phase_prompt_preserves_original_intent_type():
+def test_next_phase_generation_uses_same_thread_phase_endpoint_not_new_intent():
     source = (
         Path(__file__).resolve().parents[1]
         / "frontend"
@@ -9,5 +9,9 @@ def test_next_phase_prompt_preserves_original_intent_type():
         / "store"
         / "useAppStore.ts"
     ).read_text(encoding="utf-8")
+    function_start = source.index("generateNextPhasePlan: async () =>")
+    function_end = source.index("submitIntent: async", function_start)
+    function_source = source[function_start:function_end]
 
-    assert "请保持原始意图类型，不要重新解释为短期交付或情境清单；本次只是为同一目标解锁下一阶段。" in source
+    assert "/api/threads/${selectedProjectId}/phases/next" in function_source
+    assert "fetch('/api/intents'" not in function_source

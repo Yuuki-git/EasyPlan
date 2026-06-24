@@ -14,6 +14,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASES_PATH = PROJECT_ROOT / "tests" / "evals" / "planning_cases.jsonl"
+DEFAULT_PHASE_CASES_PATH = PROJECT_ROOT / "tests" / "evals" / "phase_planning_cases.jsonl"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -148,6 +149,41 @@ class EvalResult:
         return True
 
 
+@dataclass(frozen=True)
+class PhaseEvalCase:
+    case_id: str
+    mode: str
+    intent_text: str
+    intent_profile: dict[str, Any]
+    expect_roadmap_visible: bool
+    expect_current_phase_only: bool
+    expect_completed_phase_immutable: bool
+    committed_task_tree: dict[str, Any] | None = None
+
+
+@dataclass
+class PhaseEvalResult:
+    case_id: str
+    mode: str
+    roadmap_visible: bool
+    current_phase_horizon_ok: bool
+    completed_phase_immutable: bool
+    json_parse_success: bool
+    action_quality_pass_rate: float
+    done_criteria_coverage: float
+    validation_error: str | None = None
+    runtime_error: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.json_parse_success
+            and self.roadmap_visible
+            and self.current_phase_horizon_ok
+            and self.completed_phase_immutable
+        )
+
+
 def load_env_file(path: Path = PROJECT_ROOT / ".env") -> None:
     if not path.exists():
         return
@@ -182,6 +218,32 @@ def load_cases(path: Path) -> list[EvalCase]:
                 cases.append(EvalCase(**raw_case))
             except TypeError as exc:
                 raise ValueError(f"Invalid eval case at {path}:{line_number}: {exc}") from exc
+    return cases
+
+
+def load_phase_cases(path: Path) -> list[PhaseEvalCase]:
+    cases: list[PhaseEvalCase] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip().lstrip("\ufeff")
+            if not stripped:
+                continue
+            raw_case = json.loads(stripped)
+            try:
+                case = PhaseEvalCase(**raw_case)
+            except TypeError as exc:
+                raise ValueError(
+                    f"Invalid phase eval case at {path}:{line_number}: {exc}"
+                ) from exc
+            if case.mode not in {"initial", "next_phase"}:
+                raise ValueError(
+                    f"Invalid phase eval mode at {path}:{line_number}: {case.mode}"
+                )
+            if case.mode == "next_phase" and case.committed_task_tree is None:
+                raise ValueError(
+                    f"next_phase case requires committed_task_tree at {path}:{line_number}"
+                )
+            cases.append(case)
     return cases
 
 
@@ -238,6 +300,45 @@ async def run_cases(
     return results
 
 
+async def run_phase_cases(
+    cases: list[PhaseEvalCase],
+    *,
+    provider: str | None,
+    model: str | None,
+    planner: Any | None = None,
+) -> list[PhaseEvalResult]:
+    selected_provider = (provider or os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek")).lower()
+    if selected_provider != "deepseek":
+        raise ValueError("Phase planning evals must use the deepseek provider")
+    planner = planner or create_planner_client(provider="deepseek", model=model)
+    results: list[PhaseEvalResult] = []
+    for case in cases:
+        reasoning_sink = ListReasoningSink()
+        usage_sink = ListUsageSink()
+        try:
+            raw_plan = await _create_phase_plan(
+                planner,
+                case,
+                reasoning_sink,
+                usage_sink,
+            )
+            result = evaluate_phase_case(case, raw_plan)
+        except Exception as exc:
+            result = PhaseEvalResult(
+                case_id=case.case_id,
+                mode=case.mode,
+                roadmap_visible=False,
+                current_phase_horizon_ok=False,
+                completed_phase_immutable=False,
+                json_parse_success=False,
+                action_quality_pass_rate=0.0,
+                done_criteria_coverage=0.0,
+                runtime_error=f"{type(exc).__name__}: {exc}",
+            )
+        results.append(result)
+    return results
+
+
 async def _profile_intent(
     planner: Any,
     user_input: str,
@@ -275,6 +376,108 @@ async def _create_plan(
             usage_sink=usage_sink,
         )
     return await planner.create_plan(prompt, reasoning_sink=reasoning_sink)
+
+
+async def _create_phase_plan(
+    planner: Any,
+    case: PhaseEvalCase,
+    reasoning_sink: ListReasoningSink,
+    usage_sink: ListUsageSink,
+) -> dict[str, Any]:
+    prompt = build_planner_prompt(
+        case.intent_text,
+        intent_profile=case.intent_profile,
+        planning_mode=case.mode,
+        committed_task_tree=case.committed_task_tree,
+        current_phase_task_summary=(
+            "all current phase AI actions completed"
+            if case.mode == "next_phase"
+            else None
+        ),
+    )
+    parameters = inspect.signature(planner.create_plan).parameters
+    kwargs: dict[str, Any] = {"reasoning_sink": reasoning_sink}
+    if "usage_sink" in parameters:
+        kwargs["usage_sink"] = usage_sink
+    return await planner.create_plan(prompt, **kwargs)
+
+
+def evaluate_phase_case(
+    case: PhaseEvalCase,
+    raw_plan: dict[str, Any],
+) -> PhaseEvalResult:
+    try:
+        task_tree = TaskTree.model_validate(raw_plan)
+    except Exception as exc:
+        return PhaseEvalResult(
+            case_id=case.case_id,
+            mode=case.mode,
+            roadmap_visible=False,
+            current_phase_horizon_ok=False,
+            completed_phase_immutable=False,
+            json_parse_success=False,
+            action_quality_pass_rate=0.0,
+            done_criteria_coverage=0.0,
+            validation_error=str(exc),
+        )
+
+    context = task_tree.planning_context
+    roadmap_visible = context is not None and 3 <= len(context.roadmap) <= 5
+    text = task_tree_text(task_tree)
+    horizon_patterns = (
+        LONG_TERM_HORIZON_PATTERNS
+        if case.intent_profile.get("intent_type") == "long_term_growth"
+        else EXPLORATION_EXECUTION_PATTERNS
+    )
+    current_phase_horizon_ok = (
+        context is not None
+        and context.current_phase is not None
+        and not any(pattern.search(text) for pattern in horizon_patterns)
+        and len(task_tree.root.children) <= 12
+    )
+    completed_phase_immutable = _completed_phases_are_immutable(
+        case.committed_task_tree,
+        task_tree,
+    )
+    action_quality = summarize_action_quality(task_tree)
+    return PhaseEvalResult(
+        case_id=case.case_id,
+        mode=case.mode,
+        roadmap_visible=(roadmap_visible == case.expect_roadmap_visible),
+        current_phase_horizon_ok=(
+            current_phase_horizon_ok == case.expect_current_phase_only
+        ),
+        completed_phase_immutable=(
+            completed_phase_immutable == case.expect_completed_phase_immutable
+        ),
+        json_parse_success=True,
+        action_quality_pass_rate=action_quality.action_quality_pass_rate,
+        done_criteria_coverage=action_quality.done_criteria_coverage,
+    )
+
+
+def _completed_phases_are_immutable(
+    committed_task_tree: dict[str, Any] | None,
+    proposed: TaskTree,
+) -> bool:
+    if committed_task_tree is None:
+        return True
+    try:
+        committed = TaskTree.model_validate(committed_task_tree)
+    except Exception:
+        return False
+    if committed.planning_context is None or proposed.planning_context is None:
+        return False
+    proposed_by_id = {
+        phase.phase_id: phase for phase in proposed.planning_context.roadmap
+    }
+    for phase in committed.planning_context.roadmap:
+        if phase.status != "completed":
+            continue
+        proposed_phase = proposed_by_id.get(phase.phase_id)
+        if proposed_phase is None or proposed_phase.model_dump() != phase.model_dump():
+            return False
+    return True
 
 
 def evaluate_plan(
@@ -623,6 +826,45 @@ def print_report(results: list[EvalResult]) -> None:
     print(json.dumps({"summary": summarize(results)}, ensure_ascii=False, indent=2))
 
 
+def summarize_phase_results(results: list[PhaseEvalResult]) -> dict[str, Any]:
+    total = len(results)
+    return {
+        "cases": total,
+        "passed": sum(result.passed for result in results),
+        "pass_rate": _rate(sum(result.passed for result in results), total),
+        "roadmap_visibility_accuracy": _rate(
+            sum(result.roadmap_visible for result in results), total
+        ),
+        "current_phase_horizon_accuracy": _rate(
+            sum(result.current_phase_horizon_ok for result in results), total
+        ),
+        "completed_phase_immutability": _rate(
+            sum(result.completed_phase_immutable for result in results), total
+        ),
+        "json_parse_success_rate": _rate(
+            sum(result.json_parse_success for result in results), total
+        ),
+        "action_quality_pass_rate": _rate(
+            sum(result.action_quality_pass_rate for result in results), total
+        ),
+        "done_criteria_coverage": _rate(
+            sum(result.done_criteria_coverage for result in results), total
+        ),
+    }
+
+
+def print_phase_report(results: list[PhaseEvalResult]) -> None:
+    for result in results:
+        print(json.dumps(asdict(result), ensure_ascii=False))
+    print(
+        json.dumps(
+            {"phase_summary": summarize_phase_results(results)},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def build_failure_diagnostics(results: list[EvalResult]) -> list[dict[str, Any]]:
     diagnostics: list[dict[str, Any]] = []
     for index, result in enumerate(results, start=1):
@@ -680,6 +922,17 @@ def parse_args() -> argparse.Namespace:
         help="Planner provider. Defaults to EASYPLAN_LLM_PROVIDER or llm_service default.",
     )
     parser.add_argument(
+        "--phase-cases",
+        nargs="?",
+        type=Path,
+        const=DEFAULT_PHASE_CASES_PATH,
+        default=None,
+        help=(
+            "Run the DeepSeek-only phase planning suite. Optionally provide a JSONL path; "
+            "the flag without a value uses tests/evals/phase_planning_cases.jsonl."
+        ),
+    )
+    parser.add_argument(
         "--model",
         default=None,
         help="Optional planner model override.",
@@ -731,6 +984,27 @@ def parse_args() -> argparse.Namespace:
 async def amain() -> int:
     load_env_file()
     args = parse_args()
+    if args.phase_cases is not None:
+        phase_cases = load_phase_cases(args.phase_cases)
+        phase_results = await run_phase_cases(
+            phase_cases,
+            provider=args.provider,
+            model=args.model,
+        )
+        print_phase_report(phase_results)
+        if args.strict_exit:
+            phase_summary = summarize_phase_results(phase_results)
+            if (
+                phase_summary["roadmap_visibility_accuracy"] < 1.0
+                or phase_summary["current_phase_horizon_accuracy"] < 1.0
+                or phase_summary["completed_phase_immutability"] < 1.0
+                or phase_summary["json_parse_success_rate"] < 1.0
+                or phase_summary["action_quality_pass_rate"] < 0.85
+                or phase_summary["done_criteria_coverage"] < 0.90
+            ):
+                return 1
+        return 0
+
     cases = load_cases(args.cases)
     results = await run_cases(cases, provider=args.provider, model=args.model)
     print_report(results)

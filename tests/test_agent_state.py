@@ -51,3 +51,21 @@ def test_prune_state_preserves_intent_profile():
     pruned = prune_state(state)
 
     assert pruned["intent_profile"] == state["intent_profile"]
+
+
+def test_prune_state_preserves_phase_planning_context_without_prompt_payloads():
+    state: AgentState = {
+        "planning_mode": "next_phase",
+        "phase_request_id": "11111111-1111-1111-1111-111111111111",
+        "committed_task_tree": {"summary": "Committed tree"},
+        "current_phase_task_summary": "2/2 AI actions completed",
+        "prompt": "must not persist",
+    }
+
+    pruned = prune_state(state)
+
+    assert pruned["planning_mode"] == "next_phase"
+    assert pruned["phase_request_id"] == state["phase_request_id"]
+    assert pruned["committed_task_tree"] == state["committed_task_tree"]
+    assert pruned["current_phase_task_summary"] == state["current_phase_task_summary"]
+    assert "prompt" not in pruned

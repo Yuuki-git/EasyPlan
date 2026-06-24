@@ -1,12 +1,13 @@
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol
 
 from pydantic import ValidationError
 
-from app.api.schemas import IntentProfile, TaskTree
+from app.api.schemas import IntentProfile, TaskNode, TaskTree
 
 
 DEFAULT_OPENAI_PLANNER_MODEL = "gpt-4o-2024-08-06"
@@ -26,6 +27,8 @@ USER_VISIBLE_REASONING_MESSAGES = {
 }
 logger = logging.getLogger(__name__)
 JSON_REPAIR_MAX_ATTEMPTS = 2
+CONTEXT_CHECKLIST_PROMPT_MARKER = "策略：这是情境清单型任务。"
+CONTEXT_CHECKLIST_GROUP_PREFIX = "context_group_"
 
 
 class LLMStructuredOutputError(RuntimeError):
@@ -171,6 +174,7 @@ class OpenAIPlannerClient:
             task_tree = parsed if isinstance(parsed, TaskTree) else TaskTree.model_validate(parsed)
         except ValidationError as exc:
             raise LLMStructuredOutputError(str(exc)) from exc
+        task_tree = _normalize_task_tree_for_prompt(task_tree, prompt)
 
         await emit_reasoning(
             reasoning_sink,
@@ -298,6 +302,7 @@ class DeepSeekPlannerClient:
                 max_tokens=int(os.getenv("EASYPLAN_DEEPSEEK_MAX_TOKENS", "4096")),
             ),
         )
+        task_tree = _normalize_task_tree_for_prompt(task_tree, prompt)
 
         await emit_reasoning(
             reasoning_sink,
@@ -420,6 +425,7 @@ class XiaomiMiMoPlannerClient:
                 max_tokens=int(os.getenv("EASYPLAN_XIAOMI_MIMO_MAX_TOKENS", "4096")),
             ),
         )
+        task_tree = _normalize_task_tree_for_prompt(task_tree, prompt)
 
         await emit_reasoning(
             reasoning_sink,
@@ -593,7 +599,7 @@ async def _parse_task_tree_json_content(
     content: str,
     *,
     provider_name: str,
-    repair_json: Callable[[str, json.JSONDecodeError, str], Awaitable[str]] | None = None,
+    repair_json: Callable[[str, Exception, str], Awaitable[str]] | None = None,
     max_repair_attempts: int = JSON_REPAIR_MAX_ATTEMPTS,
 ) -> TaskTree:
     current_content = content
@@ -611,7 +617,10 @@ async def _parse_task_tree_json_content(
         try:
             return TaskTree.model_validate(parsed_json)
         except ValidationError as exc:
-            raise LLMStructuredOutputError(str(exc)) from exc
+            if repair_json is None or attempt >= max_repair_attempts:
+                raise LLMStructuredOutputError(str(exc)) from exc
+            current_content = await repair_json(current_content, exc, cleaned_content)
+            continue
 
     raise LLMStructuredOutputError(f"{provider_name} response did not include valid TaskTree JSON")
 
@@ -622,7 +631,7 @@ async def _repair_json_with_chat_completion(
     model: str,
     provider_name: str,
     invalid_content: str,
-    error: json.JSONDecodeError,
+    error: Exception,
     cleaned_content: str,
     max_tokens: int,
 ) -> str:
@@ -648,25 +657,39 @@ def _json_repair_messages(
     *,
     provider_name: str,
     invalid_content: str,
-    error: json.JSONDecodeError,
+    error: Exception,
     cleaned_content: str,
 ) -> list[dict[str, str]]:
+    if isinstance(error, json.JSONDecodeError):
+        repair_scope = "Fix only JSON syntax."
+        failure_details = (
+            "The previous response could not be parsed as JSON.\n"
+            f"JSON parse error: {error.msg}\n"
+            f"Error position: {error.pos}\n"
+            f"Nearby 300-character excerpt:\n{_json_error_excerpt(cleaned_content, error.pos)}"
+        )
+    else:
+        repair_scope = "Fix only TaskTree schema conformance."
+        failure_details = (
+            "The previous response is valid JSON but does not match the TaskTree schema.\n"
+            f"Schema validation error:\n{error}\n"
+            f"TaskTree JSON Schema:\n"
+            f"{json.dumps(TaskTree.model_json_schema(), ensure_ascii=False, separators=(',', ':'))}"
+        )
     return [
         {
             "role": "system",
             "content": (
-                f"You repair JSON returned by {provider_name}. Fix only JSON syntax. "
-                "Do not replan, rewrite, translate, add, remove, reorder, or reinterpret any task content. "
+                f"You repair JSON returned by {provider_name}. {repair_scope} "
+                "Do not replan, rewrite, translate, reorder, or reinterpret any task content. "
+                "For schema repair, add, remove, or rename fields only when the schema requires it. "
                 "Return one valid JSON object only, with no markdown or commentary."
             ),
         },
         {
             "role": "user",
             "content": (
-                "The previous response could not be parsed as JSON.\n"
-                f"JSON parse error: {error.msg}\n"
-                f"Error position: {error.pos}\n"
-                f"Nearby 300-character excerpt:\n{_json_error_excerpt(cleaned_content, error.pos)}\n\n"
+                f"{failure_details}\n\n"
                 "Original output to repair, preserving all business field semantics:\n"
                 f"{invalid_content}"
             ),
@@ -702,6 +725,81 @@ def _json_error_excerpt(content: str, position: int, size: int = 300) -> str:
 
 def _deepseek_system_prompt() -> str:
     return _json_mode_system_prompt("DeepSeek")
+
+
+def _normalize_task_tree_for_prompt(task_tree: TaskTree, prompt: str) -> TaskTree:
+    if CONTEXT_CHECKLIST_PROMPT_MARKER not in prompt:
+        return task_tree
+
+    top_level_nodes = task_tree.root.children
+    if len(top_level_nodes) <= 1 or any(node.node_type == "group" for node in top_level_nodes):
+        return task_tree
+
+    group_node = TaskNode(
+        client_node_id=_next_context_group_id(task_tree),
+        title=_context_group_title(task_tree, prompt),
+        description=task_tree.root.description,
+        verb=task_tree.root.verb or "归类",
+        estimated_minutes=sum(max(node.estimated_minutes, 0) for node in top_level_nodes),
+        node_type="group",
+        depends_on=[],
+        children=[node.model_copy(deep=True) for node in top_level_nodes],
+    )
+    normalized_root = task_tree.root.model_copy(update={"children": [group_node]})
+    return task_tree.model_copy(update={"root": normalized_root})
+
+
+def _context_group_title(task_tree: TaskTree, prompt: str) -> str:
+    root_title = task_tree.root.title.strip()
+    if root_title:
+        return root_title
+
+    user_intent = _prompt_user_intent(prompt)
+    pattern_map = (
+        (r"(上学前)", r"\1准备"),
+        (r"(出差前)", r"\1准备"),
+        (r"(去公司前)", r"\1准备"),
+        (r"(出门前)", r"\1准备"),
+        (r"(下班路上|回家路上|通勤路上)", "路上顺手处理"),
+        (r"(下班后)", "下班后顺手处理"),
+        (r"(月底前)", "账单处理"),
+    )
+    for pattern, replacement in pattern_map:
+        match = re.search(pattern, user_intent)
+        if match is None:
+            continue
+        if "\\1" in replacement:
+            return replacement.replace("\\1", match.group(1))
+        return replacement
+    if any(keyword in user_intent for keyword in ("房租", "信用卡", "水电费", "电费")):
+        return "账单处理"
+    if any(keyword in user_intent for keyword in ("快递", "买菜", "超市", "药店", "加油")):
+        return "顺路处理"
+    return "当前情境"
+
+
+def _prompt_user_intent(prompt: str) -> str:
+    marker = "用户意图："
+    if marker not in prompt:
+        return ""
+    return prompt.rsplit(marker, 1)[-1].strip()
+
+
+def _next_context_group_id(task_tree: TaskTree) -> str:
+    existing_ids = {node.client_node_id for node in _iter_task_nodes(task_tree.root)}
+    index = 1
+    while True:
+        candidate = f"{CONTEXT_CHECKLIST_GROUP_PREFIX}{index:02d}"
+        if candidate not in existing_ids:
+            return candidate
+        index += 1
+
+
+def _iter_task_nodes(node: TaskNode) -> list[TaskNode]:
+    nodes = [node]
+    for child in node.children:
+        nodes.extend(_iter_task_nodes(child))
+    return nodes
 
 
 def _parse_intent_profile_response(response: Any, provider_name: str) -> IntentProfile:

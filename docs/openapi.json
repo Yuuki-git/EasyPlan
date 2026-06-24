@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.2.2"
+    "version": "1.2.5"
   },
   "paths": {
     "/health": {
@@ -478,6 +478,86 @@
         }
       }
     },
+    "/api/threads/{thread_id}/phases/next": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Start Next Phase",
+        "operationId": "start_next_phase_api_threads__thread_id__phases_next_post",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "X-User-Timezone",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
+              "title": "X-User-Timezone"
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NextPhaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextPhaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks": {
       "get": {
         "tags": [
@@ -755,7 +835,7 @@
           "task_tree": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/TaskTree"
+                "$ref": "#/components/schemas/TaskTree-Input"
               },
               {
                 "type": "null"
@@ -817,6 +897,42 @@
           "status"
         ],
         "title": "ConfirmationResponse"
+      },
+      "CurrentPhase": {
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Phase Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Objective"
+          },
+          "completion_rule": {
+            "type": "string",
+            "const": "all_ai_actions_completed",
+            "title": "Completion Rule",
+            "default": "all_ai_actions_completed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "phase_id",
+          "title",
+          "objective"
+        ],
+        "title": "CurrentPhase"
       },
       "HTTPValidationError": {
         "properties": {
@@ -929,6 +1045,119 @@
         ],
         "title": "LoginRequest"
       },
+      "NextPhaseRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "NextPhaseRequest"
+      },
+      "NextPhaseResponse": {
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "events_url": {
+            "type": "string",
+            "title": "Events Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "thread_id",
+          "request_id",
+          "status",
+          "events_url"
+        ],
+        "title": "NextPhaseResponse"
+      },
+      "PlanningContext": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "intent_type": {
+            "type": "string",
+            "enum": [
+              "long_term_growth",
+              "exploration_decision"
+            ],
+            "title": "Intent Type"
+          },
+          "time_horizon": {
+            "type": "string",
+            "enum": [
+              "minutes",
+              "hours",
+              "days",
+              "weeks",
+              "months"
+            ],
+            "title": "Time Horizon"
+          },
+          "roadmap": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapPhase"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 3,
+            "title": "Roadmap"
+          },
+          "current_phase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentPhase"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_action_client_node_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Action Client Node Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "intent_type",
+          "time_horizon",
+          "roadmap",
+          "current_phase"
+        ],
+        "title": "PlanningContext"
+      },
       "RegisterRequest": {
         "properties": {
           "email": {
@@ -963,6 +1192,53 @@
           "password"
         ],
         "title": "RegisterRequest"
+      },
+      "RoadmapPhase": {
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Phase Id"
+          },
+          "order": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Order"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Objective"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "current",
+              "completed"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "phase_id",
+          "order",
+          "title",
+          "objective",
+          "status"
+        ],
+        "title": "RoadmapPhase"
       },
       "TaskCreateRequest": {
         "properties": {
@@ -1032,7 +1308,7 @@
         ],
         "title": "TaskCreateRequest"
       },
-      "TaskNode": {
+      "TaskNode-Input": {
         "properties": {
           "client_node_id": {
             "type": "string",
@@ -1085,7 +1361,114 @@
           },
           "children": {
             "items": {
-              "$ref": "#/components/schemas/TaskNode"
+              "$ref": "#/components/schemas/TaskNode-Input"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Children"
+          },
+          "done_criteria": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done Criteria"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "client_node_id",
+          "title",
+          "verb",
+          "estimated_minutes",
+          "node_type"
+        ],
+        "title": "TaskNode"
+      },
+      "TaskNode-Output": {
+        "properties": {
+          "client_node_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Client Node Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "verb": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Verb"
+          },
+          "estimated_minutes": {
+            "type": "integer",
+            "maximum": 43200.0,
+            "minimum": 0.0,
+            "title": "Estimated Minutes"
+          },
+          "node_type": {
+            "type": "string",
+            "enum": [
+              "group",
+              "action"
+            ],
+            "title": "Node Type"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depends On"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/TaskNode-Output"
             },
             "type": "array",
             "maxItems": 20,
@@ -1253,6 +1636,39 @@
               }
             ],
             "title": "Fallback Action"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "phase_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Id"
+          },
+          "phase_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Order"
           }
         },
         "type": "object",
@@ -1273,10 +1689,10 @@
         ],
         "title": "TaskResponse"
       },
-      "TaskTree": {
+      "TaskTree-Input": {
         "properties": {
           "root": {
-            "$ref": "#/components/schemas/TaskNode"
+            "$ref": "#/components/schemas/TaskNode-Input"
           },
           "summary": {
             "type": "string",
@@ -1289,6 +1705,52 @@
             },
             "type": "array",
             "title": "Assumptions"
+          },
+          "planning_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanningContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "root",
+          "summary"
+        ],
+        "title": "TaskTree"
+      },
+      "TaskTree-Output": {
+        "properties": {
+          "root": {
+            "$ref": "#/components/schemas/TaskNode-Output"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Summary"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assumptions"
+          },
+          "planning_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanningContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1446,14 +1908,12 @@
           "task_tree": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/TaskTree-Output"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Task Tree"
+            ]
           },
           "interrupt_payload": {
             "anyOf": [

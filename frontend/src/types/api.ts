@@ -48,6 +48,51 @@ export interface OAuthStartResponse {
   expires_at: string;
 }
 
+export type RoadmapStatus = 'planned' | 'current' | 'completed';
+
+export interface RoadmapPhase {
+  phase_id: string;
+  order: number;
+  title: string;
+  objective: string;
+  status: RoadmapStatus;
+}
+
+export interface CurrentPhase {
+  phase_id: string;
+  title: string;
+  objective: string;
+  completion_rule: 'all_ai_actions_completed';
+}
+
+export interface PlanningContext {
+  schema_version: 1;
+  intent_type: 'long_term_growth' | 'exploration_decision';
+  time_horizon: 'minutes' | 'hours' | 'days' | 'weeks' | 'months';
+  roadmap: RoadmapPhase[];
+  current_phase: CurrentPhase | null;
+  next_action_client_node_id: string | null;
+}
+
+export interface NextPhaseRequest {
+  request_id: string;
+}
+
+export interface NextPhaseResponse {
+  thread_id: string;
+  request_id: string;
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled';
+  events_url: string;
+}
+
+export interface NextPhaseReviewEnvelope {
+  type: 'next_phase_review';
+  request_id: string;
+  status: 'awaiting_confirmation';
+  task_tree: TaskTree;
+  history?: any[];
+}
+
 export interface TaskNode {
   client_node_id: string;
   title: string;
@@ -66,6 +111,7 @@ export interface TaskTree {
   root: TaskNode;
   summary: string;
   assumptions?: string[];
+  planning_context?: PlanningContext | null;
 }
 
 export interface ThreadSnapshot {
@@ -75,8 +121,8 @@ export interface ThreadSnapshot {
   last_event_id: string | null;
   server_time: string;
   intent_text: string;
-  task_tree?: any | null;
-  interrupt_payload?: any | null;
+  task_tree?: TaskTree | null;
+  interrupt_payload?: any | NextPhaseReviewEnvelope | null;
   latest_checkpoint_id?: string | null;
 }
 
@@ -114,6 +160,9 @@ export interface TaskResponse {
   done_criteria?: string | null;
   start_hint?: string | null;
   fallback_action?: string | null;
+  source?: 'ai' | 'manual';
+  phase_id?: string | null;
+  phase_order?: number | null;
 }
 
 export interface TaskUpdateRequest {
@@ -124,9 +173,6 @@ export interface TaskUpdateRequest {
   estimated_minutes?: number | null;
   sort_order?: number | null;
   is_in_my_day?: boolean;
-  done_criteria?: string | null;
-  start_hint?: string | null;
-  fallback_action?: string | null;
 }
 
 export interface ValidationError {

@@ -128,3 +128,31 @@ assert.deepEqual(
   ],
 );
 assert.equal(useAppStore.getState().boardError, '任务状态同步失败，请稍后重试');
+
+let loadedSnapshotThread = null;
+useAppStore.setState({ loadProjectSnapshot: async (threadId) => { loadedSnapshotThread = threadId; } });
+
+// Now mock a successful AI phase task update
+let resolveAiPatch;
+const aiPatchResponse = new Promise((resolve) => {
+  resolveAiPatch = resolve;
+});
+const { useAppStore: useAppStoreAi } = loadAppStoreModule(() => aiPatchResponse);
+
+useAppStoreAi.setState({
+  token: 'token',
+  view: 'board',
+  boardError: null,
+  error: null,
+  boardTasks: [
+    { id: 'ai-task', title: 'AI Task', status: 'active', source: 'ai', phase_id: 'phase-1', thread_id: 'thread-1' }
+  ],
+  loadProjectSnapshot: async (threadId) => { loadedSnapshotThread = threadId; }
+});
+
+const aiUpdatePromise = useAppStoreAi.getState().updateTaskStatus('ai-task', 'completed');
+resolveAiPatch({ ok: true, json: async () => ({ id: 'ai-task', status: 'completed', source: 'ai', phase_id: 'phase-1', thread_id: 'thread-1' }) });
+await aiUpdatePromise;
+
+assert.equal(loadedSnapshotThread, 'thread-1');
+console.log('taskStatusUpdate tests passed');

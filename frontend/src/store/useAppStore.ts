@@ -7,7 +7,10 @@ const generateUUID = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
   }
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 };
 
 type MutableTaskStatus = 'completed' | 'active';
@@ -48,6 +51,8 @@ export type AppState =
 
 export type ThemeType = 'parchment' | 'void';
 
+export type PreviewMode = 'initial' | 'next_phase' | null;
+
 interface AppStore {
   // Data
   intent: string;
@@ -69,6 +74,9 @@ interface AppStore {
   selectedProjectId: string | null;
   boardTasks: TaskResponse[] | null;
   boardError: string | null;
+  previewMode: PreviewMode;
+  phaseRequestId: string | null;
+  isPhaseRequestPending: boolean;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -103,6 +111,9 @@ interface AppStore {
   deleteTask: (taskId: string) => Promise<void>;
   startNewIntent: () => void;
   deleteThread: (threadId: string) => Promise<void>;
+  loadProjectSnapshot: (threadId: string) => Promise<void>;
+  cancelPlanPreview: () => Promise<void>;
+  finishAgentRun: () => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -125,16 +136,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   selectedProjectId: null,
   boardTasks: null,
   boardError: null,
+  previewMode: (localStorage.getItem('easyplan_preview_mode') as PreviewMode) || null,
+  phaseRequestId: null,
+  isPhaseRequestPending: false,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
-  setAppState: (appState) => {
-    set({ appState });
-    if (appState === 'SUCCESS' && get().view === 'board') {
-      set({ currentViewBucket: 'planned', selectedProjectId: null });
-      get().fetchTasks('planned');
-    }
-  },
+  setAppState: (appState) => set({ appState }),
   setThreadId: (threadId) => set({ threadId }),
   setToken: (token) => {
     if (token) {
@@ -194,8 +202,69 @@ export const useAppStore = create<AppStore>((set, get) => ({
       pendingIntent: null,
       view: 'input',
       boardTasks: null,
-      boardError: null
+      boardError: null,
+      previewMode: null,
+      phaseRequestId: null,
     });
+  },
+
+  finishAgentRun: async () => {
+    const { view, previewMode, selectedProjectId, fetchTasks, loadProjectSnapshot } = get();
+    if (previewMode === 'next_phase' && selectedProjectId) {
+      set({ currentViewBucket: 'planned' });
+      await fetchTasks('planned');
+      await loadProjectSnapshot(selectedProjectId);
+      set({ previewMode: null, phaseRequestId: null });
+      localStorage.removeItem('easyplan_preview_mode');
+    } else {
+      if (view === 'board') {
+        set({ currentViewBucket: 'planned', selectedProjectId: null });
+        fetchTasks('planned');
+      }
+    }
+  },
+
+  loadProjectSnapshot: async (threadId: string) => {
+    try {
+      const { token } = get();
+      const headers: Record<string, string> = {
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`/api/threads/${threadId}`, { headers });
+      if (!response.ok) throw new Error('Failed to load project snapshot');
+      const snapshot = await response.json();
+
+      set({
+        taskTree: snapshot.task_tree
+      });
+    } catch (err) {
+      console.error('loadProjectSnapshot failed', err);
+    }
+  },
+
+  cancelPlanPreview: async () => {
+    const { token, selectedProjectId } = get();
+    if (!token || !selectedProjectId) return;
+    try {
+      await fetch(`/api/threads/${selectedProjectId}/phases/next/cancel`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+    } catch (err) {
+      console.error('cancelPlanPreview error:', err);
+    }
+    set({
+      view: 'board',
+      previewMode: null,
+      phaseRequestId: null,
+      appState: 'INITIAL',
+    });
+    localStorage.removeItem('easyplan_preview_mode');
+    get().fetchTasks();
   },
 
   fetchTasks: async (bucket) => {
@@ -277,6 +346,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => ({
         boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
       }));
+
+      if (updatedTask.source === 'ai' && updatedTask.phase_id) {
+        get().loadProjectSnapshot(updatedTask.thread_id);
+      }
     } catch (err) {
       if ((err as Error).message !== 'Authentication required') {
         console.error("Update task status failed", err);
@@ -324,6 +397,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({
         boardTasks: (get().boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
       });
+
+      if (updatedTask.source === 'ai' && updatedTask.phase_id) {
+        get().loadProjectSnapshot(updatedTask.thread_id);
+      }
     } catch (err) {
       console.error("Update task details failed", err);
       // Revert optimistic update on error
@@ -422,6 +499,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { token, boardTasks } = get();
     if (!token) return;
 
+    const taskToDelete = boardTasks?.find(t => t.id === taskId);
     // Optimistic UI sync
     const originalTasks = boardTasks ? [...boardTasks] : [];
     set({
@@ -446,6 +524,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (!response.ok) {
         throw new Error('Failed to delete task');
+      }
+
+      if (taskToDelete?.source === 'ai' && taskToDelete?.phase_id) {
+        get().loadProjectSnapshot(taskToDelete.thread_id);
       }
     } catch (err) {
       console.error("Delete task failed", err);
@@ -499,38 +581,50 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   generateNextPhasePlan: async () => {
-    const { boardTasks, currentViewBucket } = get();
-    const tasks = boardTasks || [];
-    const plannedTasks = tasks.filter((task) => task.view_bucket === currentViewBucket);
-    const completedCount = plannedTasks.filter((task) => task.status === 'completed').length;
-    const taskSnapshot = plannedTasks
-      .slice(0, 20)
-      .map((task, index) => {
-        const statusLabel = task.status === 'completed' ? '已完成' : '未完成';
-        const estimate = task.estimated_minutes != null ? `${task.estimated_minutes}分钟` : '未估时';
-        const description = task.description ? `：${task.description}` : '';
-        return `${index + 1}. [${statusLabel}] ${task.title}${description} (${estimate})`;
-      })
-      .join('\n');
+    const { token, selectedProjectId, taskTree, isPhaseRequestPending, phaseRequestId, boardTasks } = get();
+    if (!token || !selectedProjectId || !taskTree?.planning_context || isPhaseRequestPending) return;
+    if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return;
 
-    const intentText = [
-      '请基于我当前 EasyPlan 原生任务看板中已经完成的 Phase 1，生成下一阶段 Phase 2 的计划。',
-      '保持 Fog of War Lite：只解锁下一阶段，不要排完整长期周期。',
-      '请保持原始意图类型，不要重新解释为短期交付或情境清单；本次只是为同一目标解锁下一阶段。',
-      `当前视图：${currentViewBucket}`,
-      `当前任务数量：${plannedTasks.length}，已完成：${completedCount}`,
-      taskSnapshot ? `当前任务快照：\n${taskSnapshot}` : '当前任务快照为空，请给出一个保守的下一阶段启动计划。',
-    ].join('\n');
+    // Use dynamic import or alternative to avoid circular deps if they occur
+    const { selectPlanningView } = await import('./planningState');
+    const planningView = selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
+    if (!planningView?.canUnlock) return;
 
-    set({
-      view: 'input',
-      appState: 'THINKING',
-      error: null,
-      reasoningLogs: [],
-      taskTree: null,
-      nodeStatuses: {},
-    });
-    await get().submitIntent(intentText);
+    const requestId = phaseRequestId || generateUUID();
+    set({ isPhaseRequestPending: true });
+
+    try {
+      const response = await fetch(`/api/threads/${selectedProjectId}/phases/next`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ request_id: requestId }),
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true, isPhaseRequestPending: false });
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to generate next phase plan');
+
+      set({
+        threadId: selectedProjectId,
+        previewMode: 'next_phase',
+        phaseRequestId: requestId,
+        view: 'input',
+        appState: 'THINKING'
+      });
+      localStorage.setItem('easyplan_preview_mode', 'next_phase');
+    } catch (err) {
+      console.error("Generate next phase plan failed", err);
+    } finally {
+      set({ isPhaseRequestPending: false });
+    }
   },
 
   submitIntent: async (intentText: string) => {
@@ -585,11 +679,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (!response.ok) throw new Error('Failed to align state');
       const snapshot = await response.json();
       
+      const savedPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
+      const isPending = snapshot.status === 'awaiting_confirmation';
+      if (!isPending) {
+        localStorage.removeItem('easyplan_preview_mode');
+      }
+
       set({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
         taskTree: snapshot.task_tree,
-        appState: snapshot.status === 'awaiting_confirmation' ? 'PENDING' : 'THINKING'
+        appState: isPending ? 'PENDING' : 'THINKING',
+        previewMode: isPending && savedPreviewMode ? savedPreviewMode : null,
       });
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });

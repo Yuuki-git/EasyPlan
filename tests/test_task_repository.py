@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.dml import Delete
 
-from app.models.task import Task
+from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
 from app.services.task_repository import TaskRepository
 
@@ -166,10 +166,11 @@ def test_list_tasks_for_user_keeps_planned_as_physical_bucket():
 
 
 def test_delete_task_for_user_uses_user_scoped_hard_delete():
-    session = FakeTaskSession(delete_rowcount=1)
-    repository = TaskRepository(session)
     user_id = uuid4()
     task_id = uuid4()
+    task = _task(user_id=user_id, task_id=task_id, thread_id="thread-delete")
+    session = FakeTaskSession(delete_rowcount=1, scalar_results=[task])
+    repository = TaskRepository(session)
 
     deleted = asyncio.run(
         repository.delete_task_for_user(
@@ -188,7 +189,7 @@ def test_delete_task_for_user_uses_user_scoped_hard_delete():
 
 
 def test_delete_task_for_user_returns_false_when_no_user_scoped_row_matches():
-    session = FakeTaskSession(delete_rowcount=0)
+    session = FakeTaskSession(delete_rowcount=0, scalar_results=[None])
     repository = TaskRepository(session)
 
     deleted = asyncio.run(
@@ -199,8 +200,125 @@ def test_delete_task_for_user_returns_false_when_no_user_scoped_row_matches():
     )
 
     assert deleted is False
+    assert session.commit_count == 0
+    assert session.rollback_count == 0
+
+
+def test_update_phase_action_recalculates_next_action_and_commits_once():
+    user_id = uuid4()
+    first = _phase_task(
+        user_id=user_id,
+        thread_id="thread-phase",
+        client_node_id="phase_01_action_01",
+        sort_order=0,
+    )
+    second = _phase_task(
+        user_id=user_id,
+        thread_id="thread-phase",
+        client_node_id="phase_01_action_02",
+        sort_order=1,
+    )
+    dependency = TaskDependency(
+        id=uuid4(),
+        task_id=second.id,
+        depends_on_task_id=first.id,
+    )
+    thread = _phase_thread(user_id=user_id, thread_id="thread-phase", final_phase=False)
+    session = FakeTaskSession(
+        scalar_results=[first, thread, [first, second], [dependency]],
+    )
+    repository = TaskRepository(session)
+
+    updated = asyncio.run(
+        repository.update_task_for_user(
+            user_id=user_id,
+            task_id=first.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    assert updated is first
+    assert first.status == "completed"
+    assert thread.task_tree["planning_context"]["next_action_client_node_id"] == second.client_node_id
     assert session.commit_count == 1
     assert session.rollback_count == 0
+
+
+def test_patch_final_ai_action_completes_final_roadmap_phase():
+    user_id = uuid4()
+    task = _phase_task(
+        user_id=user_id,
+        thread_id="thread-final",
+        client_node_id="phase_03_action_01",
+        phase_id="phase_03",
+        phase_order=3,
+    )
+    thread = _phase_thread(user_id=user_id, thread_id="thread-final", final_phase=True)
+    session = FakeTaskSession(scalar_results=[task, thread, [task], []])
+    repository = TaskRepository(session)
+
+    updated = asyncio.run(
+        repository.update_task_for_user(
+            user_id=user_id,
+            task_id=task.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    context = thread.task_tree["planning_context"]
+    assert updated is task
+    assert context["current_phase"] is None
+    assert context["next_action_client_node_id"] is None
+    assert all(phase["status"] == "completed" for phase in context["roadmap"])
+    assert session.commit_count == 1
+
+
+def test_manual_task_status_update_does_not_recalculate_phase_state():
+    user_id = uuid4()
+    task = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-manual")
+    session = FakeTaskSession(scalar_results=[task])
+    repository = TaskRepository(session)
+
+    asyncio.run(
+        repository.update_task_for_user(
+            user_id=user_id,
+            task_id=task.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    assert len(session.select_statements) == 1
+    assert session.commit_count == 1
+
+
+def test_delete_phase_action_recalculates_next_action_before_commit():
+    user_id = uuid4()
+    deleted_task = _phase_task(
+        user_id=user_id,
+        thread_id="thread-delete-phase",
+        client_node_id="phase_01_action_01",
+        sort_order=0,
+    )
+    remaining = _phase_task(
+        user_id=user_id,
+        thread_id="thread-delete-phase",
+        client_node_id="phase_01_action_02",
+        sort_order=1,
+    )
+    thread = _phase_thread(user_id=user_id, thread_id="thread-delete-phase", final_phase=False)
+    session = FakeTaskSession(
+        delete_rowcount=1,
+        scalar_results=[deleted_task, thread, [remaining], []],
+    )
+    repository = TaskRepository(session)
+
+    deleted = asyncio.run(
+        repository.delete_task_for_user(user_id=user_id, task_id=deleted_task.id)
+    )
+
+    assert deleted is True
+    assert thread.task_tree["planning_context"]["next_action_client_node_id"] == remaining.client_node_id
+    assert session.commit_count == 1
 
 
 def _agent_thread(*, user_id, thread_id: str) -> AgentThread:
@@ -240,6 +358,89 @@ def _task(*, user_id, task_id, thread_id: str) -> Task:
         ai_generated=False,
         user_edited=True,
         metadata_={},
+    )
+
+
+def _phase_task(
+    *,
+    user_id,
+    thread_id: str,
+    client_node_id: str,
+    phase_id: str = "phase_01",
+    phase_order: int = 1,
+    sort_order: int = 0,
+) -> Task:
+    return Task(
+        id=uuid4(),
+        user_id=user_id,
+        thread_id=thread_id,
+        parent_task_id=None,
+        client_node_id=client_node_id,
+        title=client_node_id,
+        description=None,
+        node_type="action",
+        status="active",
+        view_bucket="planned",
+        is_in_my_day=False,
+        estimated_minutes=5,
+        sort_order=sort_order,
+        ai_generated=True,
+        user_edited=False,
+        metadata_={"source": "ai", "phase_id": phase_id, "phase_order": phase_order},
+    )
+
+
+def _phase_thread(*, user_id, thread_id: str, final_phase: bool) -> AgentThread:
+    statuses = ["completed", "completed", "current"] if final_phase else ["current", "planned", "planned"]
+    current_order = 3 if final_phase else 1
+    return AgentThread(
+        user_id=user_id,
+        thread_id=thread_id,
+        intent_text="Long-term goal",
+        status="succeeded",
+        current_node="persist_internal_tasks",
+        next_nodes=[],
+        interrupt_payload=None,
+        latest_checkpoint_id=None,
+        task_tree={
+            "root": {
+                "client_node_id": f"phase_{current_order:02d}_root",
+                "title": "Current phase",
+                "verb": "推进",
+                "estimated_minutes": 5,
+                "node_type": "group",
+                "children": [],
+            },
+            "summary": "Current phase",
+            "assumptions": [],
+            "planning_context": {
+                "schema_version": 1,
+                "intent_type": "long_term_growth",
+                "time_horizon": "months",
+                "roadmap": [
+                    {
+                        "phase_id": f"phase_{index:02d}",
+                        "order": index,
+                        "title": f"Phase {index}",
+                        "objective": f"Objective {index}",
+                        "status": statuses[index - 1],
+                    }
+                    for index in range(1, 4)
+                ],
+                "current_phase": {
+                    "phase_id": f"phase_{current_order:02d}",
+                    "title": f"Phase {current_order}",
+                    "objective": f"Objective {current_order}",
+                    "completion_rule": "all_ai_actions_completed",
+                },
+                "next_action_client_node_id": f"phase_{current_order:02d}_action_01",
+            },
+        },
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
     )
 
 

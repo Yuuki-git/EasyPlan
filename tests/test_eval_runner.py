@@ -395,6 +395,97 @@ def test_load_env_file_sets_missing_environment_values(tmp_path, monkeypatch):
     assert runner.os.environ["EXISTING_VALUE"] == "from_env"
 
 
+def test_phase_metrics_detect_completed_phase_mutation():
+    runner = _load_eval_runner()
+    committed = _phase_eval_tree(current_order=2)
+    proposed = _phase_eval_tree(current_order=3)
+    proposed["planning_context"]["roadmap"][0]["objective"] = "Mutated completed objective"
+    case = runner.PhaseEvalCase(
+        case_id="phase_next_keep_completed",
+        mode="next_phase",
+        intent_text="学习日语 N3",
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+        committed_task_tree=committed,
+        expect_roadmap_visible=True,
+        expect_current_phase_only=True,
+        expect_completed_phase_immutable=True,
+    )
+
+    metrics = runner.evaluate_phase_case(case, proposed)
+
+    assert metrics.completed_phase_immutable is False
+    assert metrics.current_phase_horizon_ok is True
+    assert metrics.json_parse_success is True
+
+
+def test_load_phase_cases_reads_twelve_fixed_deepseek_cases():
+    runner = _load_eval_runner()
+
+    cases = runner.load_phase_cases(
+        Path(__file__).parent / "evals" / "phase_planning_cases.jsonl"
+    )
+
+    assert len(cases) == 12
+    assert {case.mode for case in cases} == {"initial", "next_phase"}
+    assert sum(case.mode == "next_phase" for case in cases) == 4
+
+
+def _phase_eval_tree(*, current_order: int) -> dict[str, Any]:
+    roadmap = []
+    for order in range(1, 4):
+        status = "completed" if order < current_order else "current" if order == current_order else "planned"
+        roadmap.append(
+            {
+                "phase_id": f"phase_{order:02d}",
+                "order": order,
+                "title": f"Phase {order}",
+                "objective": f"Objective {order}",
+                "status": status,
+            }
+        )
+    return {
+        "root": {
+            "client_node_id": f"phase_{current_order:02d}_root",
+            "title": f"Phase {current_order}",
+            "description": None,
+            "verb": "推进",
+            "estimated_minutes": 30,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": f"phase_{current_order:02d}_action_01",
+                    "title": "保存一份可打开的参考资料",
+                    "description": None,
+                    "verb": "保存",
+                    "estimated_minutes": 5,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存 1 个可正常打开的资料链接",
+                    "start_hint": "打开浏览器搜索目标关键词",
+                    "fallback_action": "只收藏搜索结果中的第一个链接",
+                }
+            ],
+        },
+        "summary": "当前阶段行动",
+        "assumptions": [],
+        "planning_context": {
+            "schema_version": 1,
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+            "roadmap": roadmap,
+            "current_phase": {
+                "phase_id": f"phase_{current_order:02d}",
+                "title": f"Phase {current_order}",
+                "objective": f"Objective {current_order}",
+                "completion_rule": "all_ai_actions_completed",
+            },
+            "next_action_client_node_id": f"phase_{current_order:02d}_action_01",
+        },
+    }
+
+
 class FakePlanner:
     def __init__(self) -> None:
         self.profile_inputs: list[str] = []

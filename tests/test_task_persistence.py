@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from uuid import UUID
 
 import pytest
@@ -6,6 +7,7 @@ from sqlalchemy.sql import Select, Update
 
 from app.agents.nodes import flatten_task_tree_for_persistence, persist_internal_tasks_node
 from app.models.task import Task, TaskDependency
+from app.models.thread import AgentThread
 
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -47,6 +49,64 @@ def valid_tree_with_hierarchy_and_dependency() -> dict:
         "summary": "Paper starter plan",
         "assumptions": [],
     }
+
+
+def phase_tree_with_hierarchy_and_dependency() -> dict:
+    tree = valid_tree_with_hierarchy_and_dependency()
+    tree["planning_context"] = {
+        "schema_version": 1,
+        "intent_type": "long_term_growth",
+        "time_horizon": "months",
+        "roadmap": [
+            {
+                "phase_id": "phase_01",
+                "order": 1,
+                "title": "起步",
+                "objective": "完成论文启动",
+                "status": "current",
+            },
+            {
+                "phase_id": "phase_02",
+                "order": 2,
+                "title": "撰写",
+                "objective": "完成论文初稿",
+                "status": "planned",
+            },
+            {
+                "phase_id": "phase_03",
+                "order": 3,
+                "title": "修改",
+                "objective": "完成论文定稿",
+                "status": "planned",
+            },
+        ],
+        "current_phase": {
+            "phase_id": "phase_01",
+            "title": "起步",
+            "objective": "完成论文启动",
+            "completion_rule": "all_ai_actions_completed",
+        },
+        "next_action_client_node_id": "outline",
+    }
+    return tree
+
+
+def next_phase_tree() -> dict:
+    tree = deepcopy(phase_tree_with_hierarchy_and_dependency())
+    tree["root"]["client_node_id"] = "phase_02_root"
+    tree["root"]["children"][0]["client_node_id"] = "phase_02_outline"
+    tree["root"]["children"][1]["client_node_id"] = "phase_02_review"
+    tree["root"]["children"][1]["depends_on"] = ["phase_02_outline"]
+    tree["planning_context"]["roadmap"][0]["status"] = "completed"
+    tree["planning_context"]["roadmap"][1]["status"] = "current"
+    tree["planning_context"]["current_phase"] = {
+        "phase_id": "phase_02",
+        "title": "撰写",
+        "objective": "完成论文初稿",
+        "completion_rule": "all_ai_actions_completed",
+    }
+    tree["planning_context"]["next_action_client_node_id"] = "model-supplied-id"
+    return tree
 
 
 def test_flatten_task_tree_preserves_client_node_parent_mapping_and_planned_bucket():
@@ -92,11 +152,24 @@ def test_flatten_task_tree_persists_action_quality_fields_to_metadata():
     outline = {task.client_node_id: task for task in tasks}["outline"]
     review = {task.client_node_id: task for task in tasks}["review"]
     assert outline.metadata_ == {
+        "source": "ai",
         "done_criteria": "Outline has three sections.",
         "start_hint": "Start from the existing notes.",
         "fallback_action": "Write only the section headings.",
     }
-    assert review.metadata_ == {}
+    assert review.metadata_ == {"source": "ai"}
+
+
+def test_flatten_phase_tree_adds_phase_metadata_to_every_ai_node():
+    tasks, _ = flatten_task_tree_for_persistence(
+        phase_tree_with_hierarchy_and_dependency(),
+        user_id=USER_ID,
+        thread_id="thread-1",
+    )
+
+    assert all(task.metadata_["source"] == "ai" for task in tasks)
+    assert all(task.metadata_["phase_id"] == "phase_01" for task in tasks)
+    assert all(task.metadata_["phase_order"] == 1 for task in tasks)
 
 
 def test_persist_internal_tasks_node_inserts_tasks_dependencies_and_marks_thread_succeeded(monkeypatch):
@@ -182,9 +255,79 @@ def test_persist_internal_tasks_node_can_retry_without_duplicate_rows(monkeypatc
     assert session.dependency_rows_inserted == 1
 
 
+def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="awaiting_confirmation",
+        current_node="human_review",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "awaiting_confirmation",
+            "task_tree": next_phase_tree(),
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    result = asyncio.run(
+        persist_internal_tasks_node(
+            {
+                "user_id": USER_ID,
+                "thread_id": "thread-1",
+                "task_tree": next_phase_tree(),
+                "planning_mode": "next_phase",
+                "phase_request_id": request_id,
+            }
+        )
+    )
+
+    assert result == {"task_persistence_status": "succeeded"}
+    update_values = list(session.executed_updates[-1].compile().params.values())
+    persisted_tree = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and "planning_context" in value
+    )
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "phase_generation_state"
+    )
+    assert persisted_tree["planning_context"]["next_action_client_node_id"] == "phase_02_outline"
+    assert envelope["history"][request_id]["status"] == "confirmed"
+    assert "task_tree" not in envelope
+    assert session.task_rows_inserted == 3
+
+
 class FakePersistSession:
-    def __init__(self, *, raise_on_add_all: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        raise_on_add_all: bool = False,
+        thread: AgentThread | None = None,
+    ) -> None:
         self.raise_on_add_all = raise_on_add_all
+        self.thread = thread
         self.add_all_calls = 0
         self.executed_updates = []
         self.conflict_safe_inserts = []
@@ -205,6 +348,9 @@ class FakePersistSession:
 
     async def execute(self, statement):
         if isinstance(statement, Select):
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is AgentThread:
+                return FakeScalarResult(self.thread)
             return FakeScalarResult(list(self.persisted_tasks.values()))
         if isinstance(statement, Update):
             self.executed_updates.append(statement)
@@ -236,6 +382,9 @@ class FakeScalarResult:
 
     def scalars(self):
         return self
+
+    def scalar_one_or_none(self):
+        return self.rows
 
     def all(self):
         return self.rows

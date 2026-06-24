@@ -11,7 +11,8 @@ export const useSSE = () => {
     setNodeStatus,
     alignState,
     token,
-    setView
+    setView,
+    finishAgentRun
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
@@ -97,10 +98,10 @@ export const useSSE = () => {
         setAppState(status === 'success' ? 'SUCCESS' : 'PARTIAL_ERROR');
       });
 
-      es.addEventListener('done', (e) => {
+      es.addEventListener('done', async (e) => {
         lastEventIdRef.current = e.lastEventId;
         setAppState('SUCCESS');
-        setView('board');
+        await finishAgentRun();
         es.close();
         if (eventSourceRef.current === es) {
           eventSourceRef.current = null;
@@ -157,5 +158,5 @@ export const useSSE = () => {
         reconnectTimerRef.current = null;
       }
     };
-  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token, setView]);
+  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token, setView, finishAgentRun]);
 };

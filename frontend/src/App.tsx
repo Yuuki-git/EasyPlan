@@ -17,7 +17,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const App: React.FC = () => {
-  const { appState, error, theme, view } = useAppStore();
+  const { appState, error, theme, view, previewMode } = useAppStore();
   
   // Initialize SSE listener
   useSSE();
@@ -30,11 +30,13 @@ const App: React.FC = () => {
     }
   }, [theme]);
 
+  const currentView = previewMode === 'next_phase' ? 'input' : view;
+
   return (
     <>
       <AuthModal />
       <AnimatePresence>
-        {view === 'input' ? (
+        {currentView === 'input' ? (
           <motion.main 
             key="input-view"
             initial={{ opacity: 0, x: -20 }}

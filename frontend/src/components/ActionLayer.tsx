@@ -4,9 +4,17 @@ import { useAppStore } from '../store/useAppStore';
 import { Command } from 'lucide-react';
 
 export const ActionLayer: React.FC = () => {
-  const { appState, reset, confirmPlan } = useAppStore();
+  const { appState, reset, confirmPlan, previewMode, cancelPlanPreview } = useAppStore();
 
   const isVisible = appState === 'PENDING' || appState === 'THINKING';
+
+  const handleCancel = () => {
+    if (previewMode === 'next_phase') {
+      cancelPlanPreview();
+    } else {
+      reset();
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -20,7 +28,7 @@ export const ActionLayer: React.FC = () => {
           <div className="flex items-center gap-8 pointer-events-auto">
             {appState === 'THINKING' ? (
               <button
-                onClick={reset}
+                onClick={handleCancel}
                 className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
               >
                 <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
@@ -31,7 +39,7 @@ export const ActionLayer: React.FC = () => {
             ) : (
               <>
                 <button
-                  onClick={reset}
+                  onClick={handleCancel}
                   className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
                 >
                   <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
