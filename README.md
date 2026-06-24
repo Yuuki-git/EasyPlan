@@ -1,13 +1,13 @@
-# EasyPlan 🪐 - 意图驱动的 AI 规划系统 (v1.2.3)
+# EasyPlan 🪐 - 意图驱动的 AI 规划系统 (v1.2.4-rc.1)
 
-> **Current:** v1.2.3 Intent Profiling & Dynamic Routing  
-> **Status:** Core pipeline implemented, eval expansion in progress
+> **Current:** v1.2.4-rc.1 Action Quality & Fallback
+> **Status:** RC acceptance completed. DeepSeek is the default and primary planning provider.
 
 **EasyPlan 是一个意图驱动的 AI 规划系统，它先识别用户目标类型，再选择合适的拆解策略，把模糊意图转化为可执行、可调整、可持续推进的任务地图。** 它不只是一个待办清单，而是一个懂得行为心理学的智能 Agent 伙伴。
 
 ```text
 [核心管线 Architecture Flow]
-Intent Capture → Intent Profile → Strategy Router → Planner → Validator → Task Board ⇌ Refine / Fog Unlock
+Intent Capture → Intent Profile → Strategy Router → Planner (w/ Action Quality) → Runtime Validator → Task Board
 ```
 
 [English](./README_EN.md) | [快速开始](#-快速开始) | [技术架构](#-技术架构)
@@ -21,23 +21,26 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 - **保留人类意志**：坚持“人在回路（HITL）”设计。AI 负责繁琐的规划，您保留最终的点击确认权。
 - **极致的确定性**：引入工业级“断点续传”同步技术，确保在不稳定的网络环境下，您的计划也能精准、不重复地同步到外部工具。
 
-## ✨ 功能特性 (v1.2.3)
+## ✨ 功能特性 (v1.2.4)
 
 - **Spotlight 极简捕获**：全应用以一个动态输入框为中心，支持模糊口语意图录入。
 - **Agent 智能拆解**：基于 **LangGraph** 实现多步推理，根据意图画像动态选择破冰、时间盒、情境聚合或探索决策策略。
-- **对话式微调 (Refine)**：对计划不满意？直接用自然语言告诉 AI，它会即时重构计划差异 (Diff)。
-- **生长式 UI (Fluid Motion)**：界面采用“平衡极简主义”，护眼羊皮纸主题，任务树随规划进度丝滑生长。
-- **原生任务闭环**：内置对标专业 Todo 应用的手帐面板，支持双击行内编辑与跨视图流转，打造“规划 -> 拆解 -> 执行”的沉浸式体验。
+- **任务质量护栏 (Action Quality)**：内置 Runtime Validator，强制要求生成明确的 `done_criteria`（完成标准）和 `start_hint`（启动提示），拦截假大空的废话任务。
+- **对话式微调 (Refine)**：对计划不满意？直接用自然语言告诉 AI，它会结合结构化的错误反馈即时重构。
+- **生长式 UI (Fluid Motion)**：界面采用“平衡极简主义”，护眼羊皮纸主题，辅助信息优雅折叠，任务树随规划进度丝滑生长。
 - **企业级安全基座**：多租户数据隔离与基于 JWT 的严格鉴权。
 
-## 📊 评测基准 (Planning Eval - Xiaomi Mimo API)
+## 📊 评测基准 (Planning Eval)
 EasyPlan 采用**评测集驱动 (Eval Driven)** 的方式进行大模型调优。
+- **主验收模型 (Primary Provider)**: DeepSeek (v1.2.4 满分通关)
+- **可选兼容 Provider**: OpenAI / Xiaomi MiMo（不纳入当前发布验收）
 - **Core Cases**: 32 条核心用例
 - **Intent Classification Accuracy**: 100.00%
-- **JSON Parse Success Rate**: 100.00%
-- **Strategy Compliance Rate**: 93.75%
-- **Horizon Accuracy**: 96.875%
-- **Overall Pass Rate**: 93.75%
+- **JSON Parse Success Rate**: 100.00% (含强力 JSON Repair 兜底机制)
+- **Strategy Compliance Rate**: 100.00%
+- **Horizon Accuracy**: 100.00%
+- **Action Quality Pass Rate**: 100.00%
+- **Overall Pass Rate**: 100.00%
 
 ## 🛠️ 技术架构
 
@@ -126,18 +129,10 @@ docker-compose logs -f backend | grep "initialized"
 
 ## 📅 路线图 (Roadmap)
 
-### 🔜 v1.2.3 (意图画像与动态路由 - *当前开发重点*)
-- **评测集驱动**：以 `planning_cases.jsonl` 为基准，自动化测试大模型的拆解质量。
-- **意图画像与路由**：引入 `Intent → Profile → Strategy` 管线，根据时间跨度、模糊程度等动态切换 Prompt。
-- **重塑破冰法则**：仅长周期、高阻力目标强制低门槛破冰；短冲刺任务禁用“打开软件”等低价值动作。
-- **轻量级策略校验**：Validator 不仅校验 JSON 合法性，更校验策略红线（如禁止长周期目标排满全周期）。
-
----
-
-## 📄 开源协议
-本项目基于 **MIT 协议** 开源。
-�。
-- **轻量级策略校验**：Validator 不仅校验 JSON 合法性，更校验策略红线（如禁止长周期目标排满全周期）。
+### 🔜 v1.2.5 (三层规划与执行领航员 - *当前开发重点*)
+- **条件触发路线图 (Conditional Roadmap)**：路线图不再全局标配，仅在“长周期目标”和“探索决策”时展示高层面包屑导航。
+- **阶段进度感知 (Phase Progress)**：让用户明确感知当前阶段进度与解锁条件。
+- **下一步行动高亮 (Next Action)**：视觉上强化当前最应执行的单个任务，彻底消除用户的选择困难。
 
 ---
 

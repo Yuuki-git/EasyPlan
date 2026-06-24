@@ -2,9 +2,10 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.task import Task
 from app.models.thread import AgentThread
 
 
@@ -59,6 +60,29 @@ class AgentThreadRepository:
         thread.status = "running"
         thread.updated_at = datetime.now(timezone.utc)
         await self.session.commit()
+
+    async def delete_thread_for_user(self, *, user_id: UUID, thread_id: str) -> bool:
+        thread = await self.get_thread_for_user(user_id=user_id, thread_id=thread_id)
+        if thread is None:
+            return False
+        try:
+            await self.session.execute(
+                delete(Task).where(
+                    Task.user_id == user_id,
+                    Task.thread_id == thread_id,
+                )
+            )
+            await self.session.execute(
+                delete(AgentThread).where(
+                    AgentThread.user_id == user_id,
+                    AgentThread.thread_id == thread_id,
+                )
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return True
 
 
 def thread_to_snapshot_payload(thread: AgentThread) -> dict[str, Any]:

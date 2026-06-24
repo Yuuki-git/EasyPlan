@@ -486,7 +486,7 @@ def create_planner_client(
     model: str | None = None,
     usage_sink: UsageSink | None = None,
 ) -> OpenAIPlannerClient | DeepSeekPlannerClient | XiaomiMiMoPlannerClient:
-    selected_provider = (provider or os.getenv("EASYPLAN_LLM_PROVIDER", "openai")).strip().lower()
+    selected_provider = (provider or os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek")).strip().lower()
     if selected_provider == "openai":
         return OpenAIPlannerClient(model=model, usage_sink=usage_sink)
     if selected_provider == "deepseek":

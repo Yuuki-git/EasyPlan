@@ -140,12 +140,13 @@ export const DynamicInput: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ delay: 0.3 }}
-            className="absolute -bottom-12 left-2 flex gap-3"
+            className="absolute top-[calc(100%+1rem)] left-0 flex flex-wrap gap-2 w-full pr-4"
           >
             {[
-              "策划周末短途旅行",
-              "写完毕业论文初稿",
-              "制定健身计划"
+              "🛒 下班顺路拿快递和买菜",
+              "💻 今晚把年终总结 PPT 肝完",
+              "🤔 不知道要不要转行做产品经理",
+              "📚 想考过日语 N3，零基础"
             ].map((prompt, idx) => (
               <button
                 key={idx}

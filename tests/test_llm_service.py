@@ -341,3 +341,9 @@ def test_planner_factory_supports_openai_deepseek_and_xiaomi_mimo():
     assert isinstance(create_planner_client(provider="deepseek"), DeepSeekPlannerClient)
     assert isinstance(create_planner_client(provider="xiaomi"), XiaomiMiMoPlannerClient)
     assert isinstance(create_planner_client(provider="xiaomi_mimo"), XiaomiMiMoPlannerClient)
+
+
+def test_planner_factory_defaults_to_deepseek(monkeypatch):
+    monkeypatch.delenv("EASYPLAN_LLM_PROVIDER", raising=False)
+
+    assert isinstance(create_planner_client(), DeepSeekPlannerClient)

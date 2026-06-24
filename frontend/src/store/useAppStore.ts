@@ -10,6 +10,33 @@ const generateUUID = () => {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 };
 
+type MutableTaskStatus = 'completed' | 'active';
+
+const TASK_STATUS_OVERRIDE_TTL_MS = 10000;
+const taskStatusOverrides = new Map<string, { status: MutableTaskStatus; pending: boolean; updatedAt: number }>();
+
+const applyTaskStatusOverrides = (tasks: TaskResponse[], fetchStartedAt: number) => {
+  const now = Date.now();
+
+  return tasks.map((task) => {
+    const override = taskStatusOverrides.get(task.id);
+    if (!override) return task;
+
+    if (task.status === override.status) {
+      taskStatusOverrides.delete(task.id);
+      return task;
+    }
+
+    const isRecent = now - override.updatedAt < TASK_STATUS_OVERRIDE_TTL_MS;
+    if (override.pending || override.updatedAt >= fetchStartedAt || isRecent) {
+      return { ...task, status: override.status };
+    }
+
+    taskStatusOverrides.delete(task.id);
+    return task;
+  });
+};
+
 export type AppState = 
   | 'INITIAL' 
   | 'THINKING' 
@@ -70,10 +97,12 @@ interface AppStore {
   fetchTasks: (bucket?: 'planned' | 'my_day') => Promise<void>;
   updateTaskStatus: (taskId: string, status: 'completed' | 'active') => Promise<void>;
   updateTaskDetails: (taskId: string, updates: { title?: string; description?: string | null; estimated_minutes?: number | null }) => Promise<void>;
-  createManualTask: (title: string) => Promise<void>;
+  createManualTask: (title: string, options?: { thread_id?: string | null }) => Promise<void>;
   toggleTaskInMyDay: (taskId: string, currentState: boolean) => Promise<void>;
   generateNextPhasePlan: () => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
+  startNewIntent: () => void;
+  deleteThread: (threadId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -150,21 +179,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   
   setError: (error) => set({ error, appState: error ? 'ERROR' : 'INITIAL' }),
   
-  reset: () => set({
-    intent: '',
-    appState: 'INITIAL',
-    threadId: null,
-    syncRequestId: null,
-    reasoningLogs: [],
-    taskTree: null,
-    nodeStatuses: {},
-    error: null,
-    showAuthModal: false,
-    pendingIntent: null,
-    view: 'input',
-    boardTasks: null,
-    boardError: null
-  }),
+  reset: () => {
+    taskStatusOverrides.clear();
+    set({
+      intent: '',
+      appState: 'INITIAL',
+      threadId: null,
+      syncRequestId: null,
+      reasoningLogs: [],
+      taskTree: null,
+      nodeStatuses: {},
+      error: null,
+      showAuthModal: false,
+      pendingIntent: null,
+      view: 'input',
+      boardTasks: null,
+      boardError: null
+    });
+  },
 
   fetchTasks: async (bucket) => {
     const targetBucket = bucket || get().currentViewBucket;
@@ -173,6 +205,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({ boardError: null });
     try {
+      const fetchStartedAt = Date.now();
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${token}`
       };
@@ -187,7 +220,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (!response.ok) throw new Error('Failed to fetch tasks');
       const tasks = await response.json();
-      set({ boardTasks: tasks });
+      set({ boardTasks: applyTaskStatusOverrides(tasks, fetchStartedAt) });
     } catch (err) {
       console.error("Fetch tasks failed", err);
       set({ boardError: "获取任务失败，请重试" });
@@ -196,7 +229,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateTaskStatus: async (taskId: string, status: 'completed' | 'active') => {
     const { token, boardTasks } = get();
-    if (!token) return;
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+
+    const taskToRollback = boardTasks?.find(t => t.id === taskId);
+    const originalStatus = taskToRollback ? taskToRollback.status : (status === 'completed' ? 'active' : 'completed');
+    taskStatusOverrides.set(taskId, { status, pending: true, updatedAt: Date.now() });
+
+    // Optimistic UI sync (task level)
+    set({
+      boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status } : t)
+    });
+
+    const rollback = () => {
+      taskStatusOverrides.delete(taskId);
+      set((state) => ({
+        boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, status: originalStatus } : t),
+        boardError: '任务状态同步失败，请稍后重试'
+      }));
+    };
 
     try {
       const headers: Record<string, string> = {
@@ -208,25 +261,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers,
         body: JSON.stringify({ status })
       });
-      
-      // P1 Fix: Global Auth Recovery
+
       if (isUnauthorizedResponse(response)) {
+        taskStatusOverrides.delete(taskId);
         get().setToken(null);
         set({ showAuthModal: true });
-        return;
+        throw new Error('Authentication required');
       }
 
       if (!response.ok) throw new Error('Failed to update task status');
-      
+
       const updatedTask = await response.json();
-      
-      // Optimistic/Post-update UI sync
-      set({
-        boardTasks: (boardTasks || []).map(t => t.id === taskId ? { ...t, status: updatedTask.status } : t)
-      });
+      const serverStatus = updatedTask.status === 'completed' || updatedTask.status === 'active' ? updatedTask.status : status;
+      taskStatusOverrides.set(taskId, { status: serverStatus, pending: false, updatedAt: Date.now() });
+      set((state) => ({
+        boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
+      }));
     } catch (err) {
-      console.error("Update task status failed", err);
-      throw err; // allow component to revert visual state
+      if ((err as Error).message !== 'Authentication required') {
+        console.error("Update task status failed", err);
+        rollback();
+      }
+      throw err;
     }
   },
 
@@ -276,10 +332,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  createManualTask: async (title: string) => {
-    const { token, currentViewBucket, boardTasks } = get();
+  createManualTask: async (title: string, options?: { thread_id?: string | null }) => {
+    const { token, currentViewBucket, boardTasks, selectedProjectId } = get();
     if (!token) return;
     const shouldAddToMyDay = currentViewBucket === 'my_day';
+    const targetThreadId = options?.thread_id !== undefined ? options.thread_id : selectedProjectId;
 
     try {
       const headers: Record<string, string> = {
@@ -292,7 +349,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         body: JSON.stringify({
           title,
           view_bucket: shouldAddToMyDay ? 'planned' : currentViewBucket,
-          is_in_my_day: shouldAddToMyDay
+          is_in_my_day: shouldAddToMyDay,
+          thread_id: targetThreadId
         })
       });
       
@@ -393,6 +451,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error("Delete task failed", err);
       // Revert optimistic update on error
       set({ boardTasks: originalTasks });
+      throw err;
+    }
+  },
+
+  startNewIntent: () => {
+    set({
+      appState: 'INITIAL',
+      view: 'input',
+      intent: '',
+      threadId: null,
+      syncRequestId: null,
+      reasoningLogs: [],
+      error: null,
+      pendingIntent: null,
+      selectedProjectId: null,
+    });
+    setTimeout(() => {
+      set({ boardTasks: null, taskTree: null, nodeStatuses: {} });
+    }, 500);
+  },
+
+  deleteThread: async (threadId: string) => {
+    const { token, boardTasks, selectedProjectId } = get();
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/threads/${threadId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true });
+        return;
+      }
+      
+      if (!response.ok) throw new Error('Failed to delete plan');
+      set({
+        boardTasks: (boardTasks || []).filter(t => t.thread_id !== threadId),
+        selectedProjectId: selectedProjectId === threadId ? null : selectedProjectId
+      });
+    } catch (err) {
+      console.error("Delete plan failed", err);
       throw err;
     }
   },

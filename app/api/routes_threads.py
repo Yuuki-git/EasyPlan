@@ -95,3 +95,15 @@ async def confirm_thread(
         request_id=payload.request_id,
         status="accepted",
     )
+
+
+@router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_thread(
+    thread_id: Annotated[str, Path(min_length=1)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
+) -> None:
+    deleted = await repository.delete_thread_for_user(user_id=current_user.id, thread_id=thread_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return None
