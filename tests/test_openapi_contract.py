@@ -19,6 +19,10 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "get" in schema["paths"]["/api/threads/{thread_id}/events"]
     assert "/api/threads/{thread_id}/confirm" in schema["paths"]
     assert "post" in schema["paths"]["/api/threads/{thread_id}/confirm"]
+    assert "/api/threads/{thread_id}/phases/next" in schema["paths"]
+    assert "post" in schema["paths"]["/api/threads/{thread_id}/phases/next"]
+    assert "/api/threads/{thread_id}/phases/next/cancel" in schema["paths"]
+    assert "delete" in schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]
     assert "/api/tasks" in schema["paths"]
     assert "get" in schema["paths"]["/api/tasks"]
     assert "post" in schema["paths"]["/api/tasks"]
@@ -45,9 +49,12 @@ def test_openapi_contract_requires_timezone_on_mutating_planner_calls():
 
     intent_params = _parameter_names(schema["paths"]["/api/intents"]["post"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
+    next_phase_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next"]["post"])
+    next_phase_cancel_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"])
 
     assert "X-User-Timezone" in intent_params
     assert "X-User-Timezone" in confirm_params
+    assert "X-User-Timezone" in next_phase_params
 
 
 def test_openapi_contract_requires_authorization_on_thread_workflow():
@@ -60,6 +67,10 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     thread_delete_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}"]["delete"])
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
+    next_phase_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next"]["post"])
+    next_phase_cancel_params = _parameter_names(
+        schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]
+    )
     tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
     task_create_params = _parameter_names(schema["paths"]["/api/tasks"]["post"])
     task_patch_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["patch"])
@@ -70,6 +81,8 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     assert "Authorization" in thread_delete_params
     assert "Authorization" in events_params
     assert "Authorization" in confirm_params
+    assert "Authorization" in next_phase_params
+    assert "Authorization" in next_phase_cancel_params
     assert "Authorization" in tasks_params
     assert "Authorization" in task_create_params
     assert "Authorization" in task_patch_params
@@ -101,6 +114,25 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     assert task_create["properties"]["is_in_my_day"]["default"] is False
     assert "view_bucket" in task_update["properties"]
     assert "is_in_my_day" in task_update["properties"]
+
+
+def test_openapi_contract_exposes_phase_planning_contract():
+    schema = create_app().openapi()
+
+    task_properties = schema["components"]["schemas"]["TaskResponse"]["properties"]
+    tree_schema_name = next(
+        name
+        for name in ("TaskTree", "TaskTree-Output")
+        if name in schema["components"]["schemas"]
+    )
+    tree_properties = schema["components"]["schemas"][tree_schema_name]["properties"]
+
+    assert {"source", "phase_id", "phase_order"}.issubset(task_properties)
+    assert "planning_context" in tree_properties
+    assert "NextPhaseRequest" in schema["components"]["schemas"]
+    assert "NextPhaseResponse" in schema["components"]["schemas"]
+    cancel_response = schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]["responses"]["200"]
+    assert cancel_response["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ThreadSnapshot"
 
 
 def test_openapi_contract_documents_sse_token_query_fallback():

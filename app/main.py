@@ -41,7 +41,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
-        version="1.2.2",
+        version="1.2.5",
         description=(
             "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, "
             "and Async Queue SSE event streams."
@@ -102,7 +102,7 @@ def _log_missing_environment() -> None:
     if not (os.getenv("EASYPLAN_JWT_SECRET") or os.getenv("JWT_SECRET_KEY")):
         required_vars.append("EASYPLAN_JWT_SECRET or JWT_SECRET_KEY")
     missing = [var for var in required_vars if " or " in var or not os.getenv(var)]
-    model_provider = os.getenv("EASYPLAN_LLM_PROVIDER", "openai").strip().lower()
+    model_provider = os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek").strip().lower()
     missing.extend(_missing_provider_keys(model_provider))
     if missing:
         logger.warning("missing_environment_variables", extra={"missing": missing})

@@ -11,6 +11,7 @@ from app.agents.nodes import (
     RuleBasedIntentProfilerClient,
     RuleBasedPlannerClient,
     failed_validation_node,
+    finalize_phase_rejection_node,
     intent_profiler_node_factory,
     persist_internal_tasks_node,
     planner_node_factory,
@@ -35,6 +36,8 @@ async def human_review_node(state: AgentState, config: RunnableConfig) -> AgentS
                 "user_id": state["user_id"],
                 "thread_id": state["thread_id"],
                 "task_tree": state.get("task_tree"),
+                "planning_mode": state.get("planning_mode", "initial"),
+                "phase_request_id": state.get("phase_request_id"),
                 "allowed_actions": ["approve", "edit", "refine", "reject"],
             }
         )
@@ -55,6 +58,8 @@ async def human_review_node(state: AgentState, config: RunnableConfig) -> AgentS
             "validation_status": "needs_replan",
         }
     if action == "reject":
+        if state.get("planning_mode") == "next_phase":
+            return {"human_decision": decision}
         return {
             "human_decision": decision,
             "error": {"code": "PLAN_REJECTED", "message": decision.get("reason", "rejected")},
@@ -72,10 +77,16 @@ def route_after_human_review(state: AgentState) -> str:
     if action == "edit":
         return "validator"
     if action == "reject":
+        if state.get("planning_mode") == "next_phase":
+            return "cancel_phase"
         return "end"
     if action == "approve":
         return "persist_tasks"
     return "end"
+
+
+def route_from_start(state: AgentState) -> str:
+    return "planner" if state.get("planning_mode") == "next_phase" else "intent_profiler"
 
 
 def build_task_graph(
@@ -98,9 +109,14 @@ def build_task_graph(
     graph.add_node("validator", task_tree_validator_node)
     graph.add_node("human_review", human_review_node)
     graph.add_node("persist_tasks", persist_internal_tasks_node)
+    graph.add_node("cancel_phase", finalize_phase_rejection_node)
     graph.add_node("failed_validation", failed_validation_node)
 
-    graph.add_edge(START, "intent_profiler")
+    graph.add_conditional_edges(
+        START,
+        route_from_start,
+        {"intent_profiler": "intent_profiler", "planner": "planner"},
+    )
     graph.add_edge("intent_profiler", "planner")
     graph.add_edge("planner", "validator")
     graph.add_conditional_edges(
@@ -119,10 +135,12 @@ def build_task_graph(
             "planner": "planner",
             "validator": "validator",
             "persist_tasks": "persist_tasks",
+            "cancel_phase": "cancel_phase",
             "end": END,
         },
     )
     graph.add_edge("persist_tasks", END)
+    graph.add_edge("cancel_phase", END)
     graph.add_edge("failed_validation", END)
 
     return graph.compile(checkpointer=checkpoint_saver)

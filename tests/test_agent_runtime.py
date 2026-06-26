@@ -1,7 +1,9 @@
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy.sql import Select, Update
 
 from app.services.agent_runtime import AgentRuntime
 
@@ -41,6 +43,30 @@ class FailingAsyncGraph:
         )
 
 
+class NextPhaseInterruptGraph:
+    def __init__(self, request_id: str) -> None:
+        self.request_id = request_id
+        self.inputs: list[Any] = []
+
+    async def astream(self, input_value, config):
+        self.inputs.append((input_value, config))
+        yield {
+            "__interrupt__": [
+                type(
+                    "Interrupt",
+                    (),
+                    {
+                        "value": {
+                            "task_tree": {"summary": "proposed phase"},
+                            "planning_mode": "next_phase",
+                            "phase_request_id": self.request_id,
+                        }
+                    },
+                )()
+            ]
+        }
+
+
 def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
     graph = AsyncStreamGraph()
     runtime = AgentRuntime(graph_factory=lambda **_: graph)
@@ -69,6 +95,7 @@ def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
 
     assert graph.inputs[0][0]["user_id"] == "11111111-1111-1111-1111-111111111111"
     assert graph.inputs[0][0]["thread_id"] == "thread-1"
+    assert graph.inputs[0][0]["planning_mode"] == "initial"
     assert "event: reasoning" in "".join(events)
     assert "event: plan_ready" in "".join(events)
 
@@ -185,6 +212,104 @@ def test_agent_runtime_resume_without_cached_selection_uses_factory_default():
     assert created_planners[0] == {"provider": None, "model": None}
 
 
+def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypatch):
+    request_id = "22222222-2222-2222-2222-222222222222"
+    graph = NextPhaseInterruptGraph(request_id)
+    created_planners = []
+
+    def planner_client_factory(*, provider, model):
+        created_planners.append({"provider": provider, "model": model})
+        return object()
+
+    committed_tree = {"summary": "committed phase"}
+    session = _patch_async_session(
+        monkeypatch,
+        thread=SimpleNamespace(
+            interrupt_payload={
+                "type": "phase_generation_state",
+                "request_id": request_id,
+                "status": "running",
+                "history": {},
+            }
+        ),
+    )
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: graph,
+        planner_client_factory=planner_client_factory,
+    )
+
+    asyncio.run(
+        runtime.run_next_phase(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            request_id=request_id,
+            intent_text="学习日语 N3",
+            committed_task_tree=committed_tree,
+            current_phase_task_summary="1/1 AI actions completed",
+        )
+    )
+
+    assert created_planners == [{"provider": "deepseek", "model": None}]
+    assert graph.inputs[0][0]["planning_mode"] == "next_phase"
+    assert graph.inputs[0][0]["committed_task_tree"] == committed_tree
+    update_statement = next(statement for statement in session.statements if isinstance(statement, Update))
+    update_values = list(update_statement.compile().params.values())
+    assert committed_tree not in update_values
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "next_phase_review"
+    )
+    assert envelope["status"] == "awaiting_confirmation"
+    assert envelope["task_tree"] == {"summary": "proposed phase"}
+
+
+def test_next_phase_runtime_failure_releases_lease_without_overwriting_tree(monkeypatch):
+    request_id = "22222222-2222-2222-2222-222222222222"
+    session = _patch_async_session(
+        monkeypatch,
+        thread=SimpleNamespace(
+            interrupt_payload={
+                "type": "phase_generation_state",
+                "request_id": request_id,
+                "status": "running",
+                "history": {},
+            }
+        ),
+    )
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: FailingAsyncGraph(),
+        planner_client_factory=lambda **_: object(),
+    )
+
+    asyncio.run(
+        runtime.run_next_phase(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            request_id=request_id,
+            intent_text="学习日语 N3",
+            committed_task_tree={"summary": "committed phase"},
+            current_phase_task_summary="1/1 AI actions completed",
+        )
+    )
+
+    update_statement = next(statement for statement in session.statements if isinstance(statement, Update))
+    params = update_statement.compile().params
+    assert "succeeded" in params.values()
+    assert request_id in params.values() or any(
+        isinstance(value, dict) and value.get("request_id") == request_id
+        for value in params.values()
+    )
+    assert not any(
+        isinstance(value, dict) and value.get("summary") == "committed phase"
+        for value in params.values()
+    )
+    event = asyncio.run(
+        _next_event(runtime.stream_thread_events(user_id="user-1", thread_id="thread-1"))
+    )
+    assert "event: agent_error" in event
+
+
 def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
     runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
     runtime._append_event("thread-1", "reasoning", {"message": "first"})
@@ -242,15 +367,30 @@ def test_agent_runtime_stream_closes_on_agent_error_event():
 
 
 class FakeAsyncSession:
-    def __init__(self) -> None:
+    def __init__(self, *, thread=None) -> None:
+        self.thread = thread
         self.statements = []
         self.commits = 0
+        self.rollbacks = 0
 
     async def execute(self, statement):
         self.statements.append(statement)
+        if isinstance(statement, Select):
+            return FakeScalarResult(self.thread)
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class FakeScalarResult:
+    def __init__(self, value) -> None:
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
 
 
 class FakeAsyncSessionContext:
@@ -264,8 +404,8 @@ class FakeAsyncSessionContext:
         return False
 
 
-def _patch_async_session(monkeypatch):
-    session = FakeAsyncSession()
+def _patch_async_session(monkeypatch, *, thread=None):
+    session = FakeAsyncSession(thread=thread)
 
     def fake_async_session():
         return FakeAsyncSessionContext(session)

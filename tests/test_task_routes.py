@@ -162,7 +162,9 @@ def test_get_tasks_returns_action_quality_fields_from_metadata_without_mutating_
         view_bucket="planned",
         title="Draft outline",
         metadata_={
-            "source": "planner",
+            "source": "ai",
+            "phase_id": "phase_01",
+            "phase_order": 1,
             "done_criteria": "Outline includes problem, solution, and next step.",
             "start_hint": "Reuse the meeting notes.",
             "fallback_action": "Write just the three section titles.",
@@ -177,7 +179,10 @@ def test_get_tasks_returns_action_quality_fields_from_metadata_without_mutating_
     assert payload["done_criteria"] == "Outline includes problem, solution, and next step."
     assert payload["start_hint"] == "Reuse the meeting notes."
     assert payload["fallback_action"] == "Write just the three section titles."
-    assert repository.tasks[task.id].metadata_["source"] == "planner"
+    assert payload["source"] == "ai"
+    assert payload["phase_id"] == "phase_01"
+    assert payload["phase_order"] == 1
+    assert repository.tasks[task.id].metadata_["source"] == "ai"
 
 
 def test_get_tasks_returns_null_action_quality_fields_for_legacy_metadata():
@@ -193,6 +198,8 @@ def test_get_tasks_returns_null_action_quality_fields_for_legacy_metadata():
     assert payload["done_criteria"] is None
     assert payload["start_hint"] is None
     assert payload["fallback_action"] is None
+    assert payload["phase_id"] is None
+    assert payload["phase_order"] is None
 
 
 def test_get_tasks_returns_empty_array_for_authenticated_user_with_no_tasks():

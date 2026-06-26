@@ -4,8 +4,15 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.task import Task
+from app.api.schemas import TaskTree
+from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.phase_planning import (
+    calculate_phase_progress,
+    choose_next_action,
+    complete_final_phase,
+    is_ai_phase_action,
+)
 
 
 class TaskRepository:
@@ -129,18 +136,38 @@ class TaskRepository:
         task_id: UUID,
         changes: dict[str, Any],
     ) -> Task | None:
-        result = await self.session.execute(
-            select(Task).where(
-                Task.user_id == user_id,
-                Task.id == task_id,
+        try:
+            result = await self.session.execute(
+                select(Task)
+                .where(
+                    Task.user_id == user_id,
+                    Task.id == task_id,
+                )
+                .with_for_update()
             )
-        )
-        task = result.scalar_one_or_none()
-        if task is None:
-            return None
-        for field, value in changes.items():
-            setattr(task, field, value)
-        await self.session.commit()
+            task = result.scalar_one_or_none()
+            if task is None:
+                return None
+
+            previous_status = task.status
+            for field, value in changes.items():
+                setattr(task, field, value)
+
+            phase_id = _phase_id_for_ai_action(task)
+            if (
+                phase_id is not None
+                and "status" in changes
+                and task.status != previous_status
+            ):
+                await self._recalculate_thread_phase_state(
+                    user_id=user_id,
+                    thread_id=task.thread_id,
+                )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
         await self.session.refresh(task)
         return task
 
@@ -151,17 +178,106 @@ class TaskRepository:
         task_id: UUID,
     ) -> bool:
         try:
+            task_result = await self.session.execute(
+                select(Task)
+                .where(
+                    Task.user_id == user_id,
+                    Task.id == task_id,
+                )
+                .with_for_update()
+            )
+            task = task_result.scalar_one_or_none()
+            if task is None:
+                return False
+
+            phase_id = _phase_id_for_ai_action(task)
             result = await self.session.execute(
                 delete(Task).where(
                     Task.user_id == user_id,
                     Task.id == task_id,
                 )
             )
+            if result.rowcount <= 0:
+                return False
+            if phase_id is not None:
+                await self._recalculate_thread_phase_state(
+                    user_id=user_id,
+                    thread_id=task.thread_id,
+                )
             await self.session.commit()
         except Exception:
             await self.session.rollback()
             raise
-        return result.rowcount > 0
+        return True
+
+    async def _recalculate_thread_phase_state(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: str,
+    ) -> None:
+        thread_result = await self.session.execute(
+            select(AgentThread)
+            .where(
+                AgentThread.user_id == user_id,
+                AgentThread.thread_id == thread_id,
+            )
+            .with_for_update()
+        )
+        thread = thread_result.scalar_one_or_none()
+        if thread is None or not thread.task_tree:
+            return
+
+        tree = TaskTree.model_validate(thread.task_tree)
+        context = tree.planning_context
+        if context is None or context.current_phase is None:
+            return
+
+        tasks = await self._load_thread_tasks(user_id=user_id, thread_id=thread_id)
+        dependencies = await self._load_dependencies(tasks)
+        current_phase_id = context.current_phase.phase_id
+        progress = calculate_phase_progress(tasks, current_phase_id)
+        next_task = None
+        if not progress.is_complete:
+            next_task = choose_next_action(tasks, dependencies, current_phase_id)
+        context.next_action_client_node_id = (
+            next_task.client_node_id if next_task is not None else None
+        )
+
+        current_index = next(
+            index
+            for index, phase in enumerate(context.roadmap)
+            if phase.phase_id == current_phase_id
+        )
+        if progress.is_complete and current_index == len(context.roadmap) - 1:
+            tree.planning_context = complete_final_phase(context)
+        thread.task_tree = tree.model_dump(mode="json")
+
+    async def _load_thread_tasks(self, *, user_id: UUID, thread_id: str) -> list[Task]:
+        result = await self.session.execute(
+            select(Task).where(
+                Task.user_id == user_id,
+                Task.thread_id == thread_id,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def _load_dependencies(
+        self,
+        tasks: list[Task],
+    ) -> dict[UUID, set[UUID]]:
+        task_ids = [task.id for task in tasks]
+        if not task_ids:
+            return {}
+        result = await self.session.execute(
+            select(TaskDependency).where(TaskDependency.task_id.in_(task_ids))
+        )
+        dependencies: dict[UUID, set[UUID]] = {}
+        for dependency in result.scalars().all():
+            dependencies.setdefault(dependency.task_id, set()).add(
+                dependency.depends_on_task_id
+            )
+        return dependencies
 
     async def _next_sort_order(
         self,
@@ -186,3 +302,11 @@ def _normalize_create_bucket(*, view_bucket: str, is_in_my_day: bool) -> tuple[s
     if view_bucket == "my_day":
         return "planned", True
     return view_bucket, is_in_my_day
+
+
+def _phase_id_for_ai_action(task: Task) -> str | None:
+    metadata = task.metadata_ if isinstance(task.metadata_, dict) else {}
+    phase_id = metadata.get("phase_id")
+    if not isinstance(phase_id, str):
+        return None
+    return phase_id if is_ai_phase_action(task, phase_id) else None

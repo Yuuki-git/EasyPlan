@@ -6,10 +6,16 @@ from typing import Any
 
 from langgraph.types import Command
 
-from app.agents.graph import build_task_graph, create_graph_config, route_after_human_review
+from app.agents.graph import (
+    build_task_graph,
+    create_graph_config,
+    route_after_human_review,
+    route_from_start,
+)
 from app.agents.nodes import (
     IntentProfilerClient,
     PlannerClient,
+    _validate_task_tree,
     build_planner_prompt,
     task_tree_validator_node,
 )
@@ -62,6 +68,45 @@ def valid_plan(title: str = "Open paper document") -> dict[str, Any]:
         "summary": "Paper draft starter plan",
         "assumptions": [],
     }
+
+
+def phase_plan(*, current_order: int = 1) -> dict[str, Any]:
+    plan = valid_plan(f"Complete phase {current_order} action")
+    plan["root"]["client_node_id"] = f"phase_{current_order:02d}_root"
+    plan["root"]["children"][0]["client_node_id"] = f"phase_{current_order:02d}_action_01"
+    plan["root"]["children"][0].update(
+        {
+            "done_criteria": f"Complete the phase {current_order} deliverable.",
+            "start_hint": "Open the saved working document.",
+            "fallback_action": "Complete only the first checklist item.",
+        }
+    )
+    roadmap = []
+    for order in range(1, 4):
+        status = "completed" if order < current_order else "current" if order == current_order else "planned"
+        roadmap.append(
+            {
+                "phase_id": f"phase_{order:02d}",
+                "order": order,
+                "title": f"Phase {order}",
+                "objective": f"Objective {order}",
+                "status": status,
+            }
+        )
+    plan["planning_context"] = {
+        "schema_version": 1,
+        "intent_type": "long_term_growth",
+        "time_horizon": "months",
+        "roadmap": roadmap,
+        "current_phase": {
+            "phase_id": f"phase_{current_order:02d}",
+            "title": f"Phase {current_order}",
+            "objective": f"Objective {current_order}",
+            "completion_rule": "all_ai_actions_completed",
+        },
+        "next_action_client_node_id": f"phase_{current_order:02d}_action_01",
+    }
+    return plan
 
 
 def plan_with_slow_first_action() -> dict[str, Any]:
@@ -268,7 +313,7 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "训练计划" in long_term_prompt
     assert "summary 写成“Phase 1 启动计划”" in long_term_prompt
     assert "assumptions 必须是 []" in long_term_prompt
-    assert "不要输出 roadmap" in long_term_prompt
+    assert "Roadmap 只能写入 planning_context.roadmap" in long_term_prompt
     assert "short_term_delivery 禁止" in prompt
     assert "想一想" in prompt
     assert "搜集资料但没有明确产出" in prompt
@@ -277,6 +322,7 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "每个琐事再拆成多个子任务" in context_prompt
     assert "2 个以上零散事项" in context_prompt
     assert "root.children 必须使用 group 节点" in context_prompt
+    assert "同一地点、工具或时间场景的事项必须放入同一个 Group" in context_prompt
     assert "优先使用 Group" in context_prompt
     assert "不要直接输出多个散乱顶层 Action" in context_prompt
     assert "root.children 顶层必须全部是 group 节点" in context_prompt
@@ -345,6 +391,70 @@ def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():
 
     assert "用户意图不够明确" in prompt
     assert "short_term_delivery" not in prompt
+
+
+def test_initial_long_term_prompt_requires_roadmap_but_short_term_does_not():
+    long_prompt = build_planner_prompt(
+        "学习日语 N3",
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+            "confidence_score": 0.95,
+        },
+    )
+    short_prompt = build_planner_prompt(
+        "今天完成初稿",
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.95,
+        },
+    )
+
+    assert "3-5 个 Roadmap 阶段" in long_prompt
+    assert "planning_context 必须为 null" in short_prompt
+
+
+def test_phase_planning_feature_flag_can_restore_legacy_output(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_PHASE_PLANNING_ENABLED", "false")
+
+    prompt = build_planner_prompt(
+        "学习日语 N3",
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+    )
+
+    assert "功能开关已关闭" in prompt
+    assert "planning_context 必须为 null" in prompt
+
+
+def test_next_phase_prompt_locks_completed_phases_and_profile():
+    prompt = build_planner_prompt(
+        "学习日语 N3",
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+        planning_mode="next_phase",
+        committed_task_tree=phase_plan(current_order=1),
+        current_phase_task_summary="1/1 AI actions completed",
+    )
+
+    assert "completed 阶段必须逐字段保持不变" in prompt
+    assert "intent_type 和 time_horizon 必须保持不变" in prompt
+    assert "只能展开一个新的 current phase" in prompt
+    assert "1/1 AI actions completed" in prompt
+
+
+def test_next_phase_validator_rejects_completed_phase_mutation():
+    committed = phase_plan(current_order=2)
+    proposed = phase_plan(current_order=3)
+    proposed["planning_context"]["roadmap"][0]["objective"] = "Mutated completed phase"
+
+    errors = _validate_task_tree(
+        proposed,
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+        planning_mode="next_phase",
+        committed_task_tree=committed,
+    )
+
+    assert any("completed phase" in error for error in errors)
 
 
 def test_validator_does_not_reject_large_action_estimate_globally():
@@ -713,6 +823,66 @@ def test_graph_starts_with_intent_profiler_before_planner_without_prompt_injecti
     assert profiler.inputs == ["Finish the business plan by 4pm"]
     assert len(planner.prompts) == 1
     assert "时间盒法则" in planner.prompts[0]
+
+
+def test_route_from_start_skips_profile_for_next_phase():
+    assert route_from_start({"planning_mode": "next_phase"}) == "planner"
+    assert route_from_start({"planning_mode": "initial"}) == "intent_profiler"
+    assert route_from_start({}) == "intent_profiler"
+
+
+def test_next_phase_graph_skips_profiler_and_interrupt_carries_request_identity():
+    planner = CapturingPlanner([phase_plan(current_order=2)])
+    profiler = CapturingIntentProfiler(
+        {
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.9,
+        }
+    )
+    graph = build_task_graph(
+        planner=planner,
+        intent_profiler=profiler,
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(user_id="user_1", thread_id="thread_phase")
+
+    chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": "user_1",
+                    "thread_id": "thread_phase",
+                    "intent_text": "Learn Japanese N3",
+                    "intent_profile": {
+                        "intent_type": "long_term_growth",
+                        "time_horizon": "months",
+                        "confidence_score": 0.95,
+                    },
+                    "planning_mode": "next_phase",
+                    "phase_request_id": "11111111-1111-1111-1111-111111111111",
+                    "committed_task_tree": phase_plan(current_order=1),
+                    "current_phase_task_summary": "1/1 AI actions completed",
+                },
+                config,
+            )
+        )
+    )
+
+    assert "planner" in chunks[0]
+    assert profiler.inputs == []
+    interrupt_payload = chunks[-1]["__interrupt__"][0].value
+    assert interrupt_payload["planning_mode"] == "next_phase"
+    assert interrupt_payload["phase_request_id"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_route_after_human_review_rejects_next_phase_through_cancellation_node():
+    state = {
+        "planning_mode": "next_phase",
+        "human_decision": {"action": "reject"},
+    }
+
+    assert route_after_human_review(state) == "cancel_phase"
 
 
 def test_graph_auto_replans_when_validator_finds_large_leaf_task():

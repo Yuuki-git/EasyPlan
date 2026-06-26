@@ -1,22 +1,28 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Sparkles, Trash2, Folder } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
+import { PlanningOverview } from './PlanningOverview';
+import { selectPlanningView } from '../store/planningState';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
   const { currentViewBucket, setCurrentViewBucket, boardTasks, selectedProjectId, setSelectedProjectId } = useAppStore();
 
   const projects = useMemo(() => {
     if (!boardTasks) return [];
-    const projectMap = new Map<string, { id: string; title: string }>();
+    const projectMap = new Map<string, { id: string; title: string; source?: string }>();
     boardTasks.forEach(task => {
       if (task.parent_task_id === null && task.thread_id) {
-        projectMap.set(task.thread_id, {
-          id: task.thread_id,
-          title: task.title
-        });
+        const existing = projectMap.get(task.thread_id);
+        if (!existing || (existing.source === 'manual' && task.source === 'ai')) {
+          projectMap.set(task.thread_id, {
+            id: task.thread_id,
+            title: task.title,
+            source: task.source
+          });
+        }
       }
     });
     return Array.from(projectMap.values());
@@ -483,10 +489,16 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, generateNextPhasePlan } = useAppStore();
+  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, taskTree } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
+
+  const planningView = useMemo(() => {
+    if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return null;
+    if (currentViewBucket !== 'planned' || !selectedProjectId) return null;
+    return selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
+  }, [taskTree, boardTasks, currentViewBucket, selectedProjectId]);
 
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;
@@ -512,15 +524,20 @@ export const TaskBoard: React.FC = () => {
       return root;
     } else {
       // Planned: Reconstruct tree
+      let tasksToRender = boardTasks;
+      if (planningView) {
+        tasksToRender = planningView.currentTasks;
+      }
+
       const taskMap = new Map<string, TreeNode>();
       
-      boardTasks.forEach(t => {
+      tasksToRender.forEach(t => {
         taskMap.set(t.id, { ...t, children: [] });
       });
 
       const rootChildren: TreeNode[] = [];
 
-      [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
+      [...tasksToRender].sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
         const node = taskMap.get(t.id)!;
         if (t.parent_task_id && taskMap.has(t.parent_task_id)) {
           taskMap.get(t.parent_task_id)!.children!.push(node);
@@ -549,20 +566,6 @@ export const TaskBoard: React.FC = () => {
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket, selectedProjectId]);
-
-  const showFogOfWar = useMemo(() => {
-    if (currentViewBucket !== 'planned' || !boardTasks) return false;
-    
-    const relevantTasks = selectedProjectId 
-      ? boardTasks.filter(t => t.thread_id === selectedProjectId)
-      : boardTasks;
-      
-    const actions = relevantTasks.filter(t => t.node_type === 'action');
-    
-    if (actions.length === 0) return false;
-    
-    return actions.every(t => t.status === 'completed');
   }, [boardTasks, currentViewBucket, selectedProjectId]);
 
   if (boardError) {
@@ -605,11 +608,6 @@ export const TaskBoard: React.FC = () => {
     useAppStore.getState().startNewIntent();
   };
 
-  const handleGenerateNextPhase = async () => {
-    if (isGenerating) return;
-    await generateNextPhasePlan();
-  };
-
   return (
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
@@ -646,6 +644,10 @@ export const TaskBoard: React.FC = () => {
         
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
+            {currentViewBucket === 'planned' && selectedProjectId && (
+              <PlanningOverview />
+            )}
+
             {isEmpty ? (
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
                 <p className="text-muted-foreground/60 text-lg">
@@ -665,33 +667,33 @@ export const TaskBoard: React.FC = () => {
               <BoardTaskNode node={displayTree} />
             )}
             
+            {planningView && planningView.historicalPhases.length > 0 && (
+              <div className="mt-12 space-y-4">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
+                {planningView.historicalPhases.map((hist, index) => (
+                  <details key={hist.phase.phase_id} className="border border-muted/50 rounded-xl overflow-hidden bg-background/50 group">
+                    <summary className="px-4 py-3 bg-muted/10 text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none outline-none flex items-center justify-between transition-colors">
+                      <span>Phase {index + 1}: {hist.phase.title}</span>
+                      <ChevronDown size={16} className="opacity-50 group-open:rotate-180 transition-transform" />
+                    </summary>
+                    <div className="p-4 space-y-2 border-t border-muted/30">
+                      {hist.tasks.map(task => (
+                        <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/10 border border-transparent opacity-70">
+                          <CheckCircle2 size={16} className="text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground line-through">{task.title}</span>
+                        </div>
+                      ))}
+                      {hist.tasks.length === 0 && (
+                        <div className="text-sm text-muted-foreground/50 py-2">No tasks found for this phase.</div>
+                      )}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+
             <InlineTaskInput />
             
-            {false && showFogOfWar && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="mt-12 flex justify-center"
-              >
-                <button 
-                  onClick={handleGenerateNextPhase}
-                  disabled={isGenerating}
-                  className="group relative px-6 py-3 rounded-full overflow-hidden transition-all hover:scale-105 active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
-                >
-                  <div className="absolute inset-0 bg-foreground/5 opacity-50 group-hover:opacity-100 transition-opacity" />
-                  <motion.div 
-                    animate={{ 
-                      boxShadow: ['0px 0px 0px 0px rgba(168, 85, 247, 0)', '0px 0px 20px 2px rgba(168, 85, 247, 0.3)', '0px 0px 0px 0px rgba(168, 85, 247, 0)'] 
-                    }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute inset-0 rounded-full border border-purple-500/30" 
-                  />
-                  <span className="relative text-sm font-medium text-purple-500/80 group-hover:text-purple-400 transition-colors flex items-center gap-2">
-                    <Sparkles size={18} /> {isGenerating ? '正在生成下一阶段计划...' : '当前阶段已完成，让 AI 生成下一阶段计划'}
-                  </span>
-                </button>
-              </motion.div>
-            )}
           </div>
         </main>
       </div>

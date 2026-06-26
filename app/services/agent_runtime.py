@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.agents.graph import build_task_graph, create_graph_config, resume_with_human_input
 from app.api.sse import format_sse_event
@@ -86,6 +86,7 @@ class AgentRuntime:
             "selected_provider": selected_provider,
             "planner_provider": planner_provider,
             "planner_model": planner_model,
+            "planning_mode": "initial",
         }
         try:
             interrupted = False
@@ -99,6 +100,67 @@ class AgentRuntime:
         except Exception:
             logger.exception("agent_thread_run_failed", extra={"thread_id": thread_id, "user_id": user_id})
             self._append_error(thread_id, code="AGENT_RUN_FAILED", message=SAFE_PLANNING_ERROR_MESSAGE)
+
+    async def run_next_phase(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        request_id: str,
+        intent_text: str,
+        committed_task_tree: dict[str, Any],
+        current_phase_task_summary: str,
+    ) -> None:
+        with self._lock:
+            self._planner_selection[thread_id] = ("deepseek", None)
+        graph = self._build_graph(planner_provider="deepseek", planner_model=None)
+        config = create_graph_config(user_id=user_id, thread_id=thread_id)
+        planning_context = committed_task_tree.get("planning_context") or {}
+        initial_state = {
+            "user_id": user_id,
+            "thread_id": thread_id,
+            "intent_text": intent_text,
+            "intent_profile": {
+                "intent_type": planning_context.get("intent_type"),
+                "time_horizon": planning_context.get("time_horizon"),
+                "confidence_score": 1.0,
+            },
+            "selected_provider": "native",
+            "planning_mode": "next_phase",
+            "phase_request_id": request_id,
+            "committed_task_tree": committed_task_tree,
+            "current_phase_task_summary": current_phase_task_summary,
+        }
+        try:
+            interrupted = False
+            emitted_terminal = False
+            async for chunk in graph.astream(initial_state, config):
+                interrupted = interrupted or "__interrupt__" in chunk
+                emitted_terminal = emitted_terminal or "failed_validation" in chunk
+                await self._append_chunk(user_id=user_id, thread_id=thread_id, chunk=chunk)
+            if not interrupted and not emitted_terminal:
+                self._append_done(thread_id, status="completed")
+        except Exception:
+            logger.exception(
+                "agent_next_phase_run_failed",
+                extra={"thread_id": thread_id, "user_id": user_id, "request_id": request_id},
+            )
+            try:
+                await self._release_phase_failure(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    request_id=request_id,
+                )
+            except Exception:
+                logger.exception(
+                    "agent_next_phase_failure_release_failed",
+                    extra={"thread_id": thread_id, "user_id": user_id, "request_id": request_id},
+                )
+            self._append_error(
+                thread_id,
+                code="NEXT_PHASE_RUN_FAILED",
+                message=SAFE_PLANNING_ERROR_MESSAGE,
+            )
 
     async def resume_thread(
         self,
@@ -198,6 +260,18 @@ class AgentRuntime:
                 )
             except Exception:
                 logger.exception("agent_thread_interrupt_persist_failed", extra={"thread_id": thread_id, "user_id": user_id})
+                if interrupt_payload.get("planning_mode") == "next_phase":
+                    try:
+                        await self._release_phase_failure(
+                            user_id=user_id,
+                            thread_id=thread_id,
+                            request_id=str(interrupt_payload.get("phase_request_id", "")),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "agent_next_phase_interrupt_release_failed",
+                            extra={"thread_id": thread_id, "user_id": user_id},
+                        )
                 self._append_error(thread_id, code="AGENT_INTERRUPT_PERSIST_FAILED", message=SAFE_PLANNING_ERROR_MESSAGE)
             self._append_event(
                 thread_id,
@@ -283,6 +357,71 @@ class AgentRuntime:
         now = datetime.now(timezone.utc)
         awaitable_session = async_session()
         async with awaitable_session as session:
+            update_values: dict[str, Any] = {
+                "status": "awaiting_confirmation",
+                "current_node": "human_review",
+                "interrupted_at": now,
+                "updated_at": now,
+            }
+            if interrupt_payload.get("planning_mode") == "next_phase":
+                request_id = str(interrupt_payload.get("phase_request_id") or "")
+                result = await session.execute(
+                    select(AgentThread).where(
+                        AgentThread.user_id == UUID(user_id),
+                        AgentThread.thread_id == thread_id,
+                    )
+                )
+                thread = result.scalar_one_or_none()
+                existing_payload = (
+                    thread.interrupt_payload
+                    if thread is not None and isinstance(thread.interrupt_payload, dict)
+                    else {}
+                )
+                update_values["interrupt_payload"] = {
+                    "type": "next_phase_review",
+                    "request_id": request_id,
+                    "status": "awaiting_confirmation",
+                    "task_tree": interrupt_payload.get("task_tree"),
+                    "history": dict(existing_payload.get("history") or {}),
+                }
+            else:
+                update_values.update(
+                    task_tree=interrupt_payload.get("task_tree"),
+                    interrupt_payload=interrupt_payload,
+                )
+            await session.execute(
+                update(AgentThread)
+                .where(
+                    AgentThread.user_id == UUID(user_id),
+                    AgentThread.thread_id == thread_id,
+                )
+                .values(**update_values)
+            )
+            await session.commit()
+
+    async def _release_phase_failure(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        request_id: str,
+    ) -> None:
+        from app.db.session import async_session
+
+        now = datetime.now(timezone.utc)
+        async with async_session() as session:
+            result = await session.execute(
+                select(AgentThread).where(
+                    AgentThread.user_id == UUID(user_id),
+                    AgentThread.thread_id == thread_id,
+                )
+            )
+            thread = result.scalar_one_or_none()
+            current_payload = (
+                thread.interrupt_payload
+                if thread is not None and isinstance(thread.interrupt_payload, dict)
+                else {}
+            )
             await session.execute(
                 update(AgentThread)
                 .where(
@@ -290,11 +429,18 @@ class AgentRuntime:
                     AgentThread.thread_id == thread_id,
                 )
                 .values(
-                    status="awaiting_confirmation",
-                    current_node="human_review",
-                    task_tree=interrupt_payload.get("task_tree"),
-                    interrupt_payload=interrupt_payload,
-                    interrupted_at=now,
+                    status="succeeded",
+                    current_node="next_phase_failed",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    interrupt_payload={
+                        "type": "phase_generation_state",
+                        "request_id": request_id,
+                        "status": "failed",
+                        "history": dict(current_payload.get("history") or {}),
+                    },
+                    error_code="NEXT_PHASE_RUN_FAILED",
+                    error_message=SAFE_PLANNING_ERROR_MESSAGE,
                     updated_at=now,
                 )
             )

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * This file is manually generated based on docs/openapi.json
  * Updated for v1.1.0 (Auth + Multi-planner + Microsoft To Do)
@@ -48,6 +47,75 @@ export interface OAuthStartResponse {
   expires_at: string;
 }
 
+export type RoadmapStatus = 'planned' | 'current' | 'completed';
+
+export interface RoadmapPhase {
+  phase_id: string;
+  order: number;
+  title: string;
+  objective: string;
+  status: RoadmapStatus;
+}
+
+export interface CurrentPhase {
+  phase_id: string;
+  title: string;
+  objective: string;
+  completion_rule: 'all_ai_actions_completed';
+}
+
+export interface PlanningContext {
+  schema_version: 1;
+  intent_type: 'long_term_growth' | 'exploration_decision';
+  time_horizon: 'minutes' | 'hours' | 'days' | 'weeks' | 'months';
+  roadmap: RoadmapPhase[];
+  current_phase: CurrentPhase | null;
+  next_action_client_node_id: string | null;
+}
+
+export interface NextPhaseRequest {
+  request_id: string;
+}
+
+export interface NextPhaseResponse {
+  thread_id: string;
+  request_id: string;
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled';
+  events_url: string;
+}
+
+export interface PhaseHistoryItem {
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled' | 'failed';
+  updated_at: string;
+}
+
+export interface TaskTreeReviewEnvelope {
+  type: 'task_tree_review';
+  user_id: string;
+  thread_id: string;
+  task_tree: TaskTree;
+  planning_mode?: 'initial' | 'next_phase';
+  phase_request_id?: string | null;
+  allowed_actions?: string[];
+}
+
+export interface PhaseGenerationEnvelope {
+  type: 'phase_generation_state';
+  request_id: string;
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled' | 'failed';
+  history?: Record<string, PhaseHistoryItem>;
+}
+
+export interface NextPhaseReviewEnvelope {
+  type: 'next_phase_review';
+  request_id: string;
+  status: 'awaiting_confirmation';
+  task_tree: TaskTree;
+  history?: Record<string, PhaseHistoryItem>;
+}
+
+export type InterruptPayload = TaskTreeReviewEnvelope | PhaseGenerationEnvelope | NextPhaseReviewEnvelope;
+
 export interface TaskNode {
   client_node_id: string;
   title: string;
@@ -66,6 +134,7 @@ export interface TaskTree {
   root: TaskNode;
   summary: string;
   assumptions?: string[];
+  planning_context?: PlanningContext | null;
 }
 
 export interface ThreadSnapshot {
@@ -75,8 +144,8 @@ export interface ThreadSnapshot {
   last_event_id: string | null;
   server_time: string;
   intent_text: string;
-  task_tree?: any | null;
-  interrupt_payload?: any | null;
+  task_tree?: TaskTree | null;
+  interrupt_payload?: InterruptPayload | null;
   latest_checkpoint_id?: string | null;
 }
 
@@ -114,6 +183,9 @@ export interface TaskResponse {
   done_criteria?: string | null;
   start_hint?: string | null;
   fallback_action?: string | null;
+  source?: 'ai' | 'manual';
+  phase_id?: string | null;
+  phase_order?: number | null;
 }
 
 export interface TaskUpdateRequest {
@@ -124,17 +196,14 @@ export interface TaskUpdateRequest {
   estimated_minutes?: number | null;
   sort_order?: number | null;
   is_in_my_day?: boolean;
-  done_criteria?: string | null;
-  start_hint?: string | null;
-  fallback_action?: string | null;
 }
 
 export interface ValidationError {
   loc: (string | number)[];
   msg: string;
   type: string;
-  input?: any;
-  ctx?: Record<string, any>;
+  input?: unknown;
+  ctx?: Record<string, unknown>;
 }
 
 export interface HTTPValidationError {

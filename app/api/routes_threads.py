@@ -7,10 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import AuthUser, get_current_user, get_user_for_sse
 from app.api.dependencies import get_user_timezone
-from app.api.schemas import ConfirmationRequest, ConfirmationResponse, ThreadSnapshot
+from app.api.schemas import (
+    ConfirmationRequest,
+    ConfirmationResponse,
+    NextPhaseRequest,
+    NextPhaseResponse,
+    ThreadSnapshot,
+)
 from app.db.session import get_db
 from app.services.agent_runtime import AgentRuntime, agent_runtime
-from app.services.thread_repository import AgentThreadRepository, thread_to_snapshot_payload
+from app.services.phase_planning import phase_planning_enabled
+from app.services.thread_repository import (
+    AgentThreadRepository,
+    ThreadStateConflictError,
+    thread_to_snapshot_payload,
+)
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
@@ -23,6 +34,16 @@ def get_thread_repository(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> AgentThreadRepository:
     return AgentThreadRepository(session)
+
+
+def _thread_conflict_http_exception(error: ThreadStateConflictError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error_code": error.code,
+            "message": error.message,
+        },
+    )
 
 
 @router.get("/{thread_id}", response_model=ThreadSnapshot)
@@ -83,7 +104,10 @@ async def confirm_thread(
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    await repository.mark_confirmation_accepted(thread=thread, request_id=payload.request_id)
+    try:
+        await repository.mark_confirmation_accepted(thread=thread, request_id=payload.request_id)
+    except ThreadStateConflictError as error:
+        raise _thread_conflict_http_exception(error) from error
     background_tasks.add_task(
         runtime.resume_thread,
         user_id=str(current_user.id),
@@ -94,6 +118,77 @@ async def confirm_thread(
         thread_id=thread_id,
         request_id=payload.request_id,
         status="accepted",
+    )
+
+
+@router.delete(
+    "/{thread_id}/phases/next/cancel",
+    response_model=ThreadSnapshot,
+)
+async def cancel_next_phase_preview(
+    thread_id: Annotated[str, Path(min_length=1)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
+) -> ThreadSnapshot:
+    thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    try:
+        thread = await repository.cancel_pending_preview(thread=thread)
+    except ThreadStateConflictError as error:
+        raise _thread_conflict_http_exception(error) from error
+    return ThreadSnapshot(**thread_to_snapshot_payload(thread))
+
+
+@router.post(
+    "/{thread_id}/phases/next",
+    response_model=NextPhaseResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_next_phase(
+    thread_id: Annotated[str, Path(min_length=1)],
+    payload: NextPhaseRequest,
+    background_tasks: BackgroundTasks,
+    user_timezone: Annotated[ZoneInfo, Depends(get_user_timezone)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
+    runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
+) -> NextPhaseResponse:
+    if not phase_planning_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    result = await repository.start_next_phase_generation(
+        user_id=current_user.id,
+        thread_id=thread_id,
+        request_id=payload.request_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    if result.error_code:
+        detail: dict[str, object] = {
+            "error_code": result.error_code,
+            "message": result.error_message or "Unable to start next phase",
+        }
+        if result.remaining_ai_actions is not None:
+            detail["remaining_ai_actions"] = result.remaining_ai_actions
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    request_id = str(payload.request_id)
+    if result.should_schedule:
+        background_tasks.add_task(
+            runtime.run_next_phase,
+            user_id=str(current_user.id),
+            thread_id=thread_id,
+            request_id=request_id,
+            intent_text=result.thread.intent_text,
+            committed_task_tree=result.thread.task_tree,
+            current_phase_task_summary=result.current_phase_task_summary,
+        )
+    return NextPhaseResponse(
+        thread_id=thread_id,
+        request_id=payload.request_id,
+        status=result.status,
+        events_url=f"/api/threads/{thread_id}/events",
     )
 
 

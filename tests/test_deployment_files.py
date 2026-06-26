@@ -41,6 +41,9 @@ def test_compose_defines_pgvector_backend_frontend_and_healthchecks():
 def test_env_examples_default_planner_to_deepseek():
     backend_env = (ROOT / ".env.example").read_text(encoding="utf-8")
     frontend_env = (ROOT / "frontend" / ".env.example").read_text(encoding="utf-8")
+    main_source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
 
     assert "EASYPLAN_LLM_PROVIDER=deepseek" in backend_env
+    assert "EASYPLAN_PHASE_PLANNING_ENABLED=true" in backend_env
     assert "VITE_PLANNER_PROVIDER=deepseek" in frontend_env
+    assert 'os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek")' in main_source
