@@ -119,7 +119,7 @@ interface AppStore {
 export const useAppStore = create<AppStore>((set, get) => ({
   intent: '',
   appState: 'INITIAL',
-  threadId: null,
+  threadId: localStorage.getItem('easyplan_thread_id') || null,
   syncRequestId: null,
   reasoningLogs: [],
   taskTree: null,
@@ -133,17 +133,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: 'input',
   currentViewBucket: 'planned', // Default to planned after transition
-  selectedProjectId: null,
+  selectedProjectId: localStorage.getItem('easyplan_selected_project_id') || null,
   boardTasks: null,
   boardError: null,
   previewMode: (localStorage.getItem('easyplan_preview_mode') as PreviewMode) || null,
-  phaseRequestId: null,
+  phaseRequestId: localStorage.getItem('easyplan_phase_request_id') || null,
   isPhaseRequestPending: false,
 
   setIntent: (intent) => set({ intent }),
   setPreferredProvider: (preferredProvider) => set({ preferredProvider }),
   setAppState: (appState) => set({ appState }),
-  setThreadId: (threadId) => set({ threadId }),
+  setThreadId: (threadId) => {
+    set({ threadId });
+    if (threadId) {
+      localStorage.setItem('easyplan_thread_id', threadId);
+    } else {
+      localStorage.removeItem('easyplan_thread_id');
+    }
+  },
   setToken: (token) => {
     if (token) {
       localStorage.setItem('auth_token', token);
@@ -163,15 +170,39 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => {
     set({ view });
     if (view === 'board') {
-      set({ currentViewBucket: 'planned', selectedProjectId: null });
-      get().fetchTasks('planned');
+      const { selectedProjectId } = get();
+      if (!selectedProjectId) {
+        set({ currentViewBucket: 'planned', selectedProjectId: null });
+        get().fetchTasks('planned');
+      } else {
+        set({ currentViewBucket: 'planned' });
+        get().fetchTasks('planned');
+      }
     }
   },
   setCurrentViewBucket: (bucket) => {
     set({ currentViewBucket: bucket });
     get().fetchTasks(bucket);
   },
-  setSelectedProjectId: (projectId) => set({ selectedProjectId: projectId }),
+  setSelectedProjectId: (projectId) => {
+    set({ selectedProjectId: projectId });
+    if (projectId) {
+      localStorage.setItem('easyplan_selected_project_id', projectId);
+      get().alignState(projectId);
+    } else {
+      localStorage.removeItem('easyplan_selected_project_id');
+      set({
+        threadId: null,
+        taskTree: null,
+        previewMode: null,
+        phaseRequestId: null,
+        appState: 'INITIAL',
+      });
+      localStorage.removeItem('easyplan_thread_id');
+      localStorage.removeItem('easyplan_preview_mode');
+      localStorage.removeItem('easyplan_phase_request_id');
+    }
+  },
   
   generateSyncId: () => set({ syncRequestId: generateUUID() }),
   
@@ -206,16 +237,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
       previewMode: null,
       phaseRequestId: null,
     });
+    localStorage.removeItem('easyplan_thread_id');
+    localStorage.removeItem('easyplan_preview_mode');
+    localStorage.removeItem('easyplan_phase_request_id');
   },
 
   finishAgentRun: async () => {
     const { view, previewMode, selectedProjectId, fetchTasks, loadProjectSnapshot } = get();
     if (previewMode === 'next_phase' && selectedProjectId) {
-      set({ currentViewBucket: 'planned' });
+      set({
+        view: 'board',
+        previewMode: null,
+        phaseRequestId: null,
+        currentViewBucket: 'planned'
+      });
+      localStorage.removeItem('easyplan_preview_mode');
+      localStorage.removeItem('easyplan_phase_request_id');
       await fetchTasks('planned');
       await loadProjectSnapshot(selectedProjectId);
-      set({ previewMode: null, phaseRequestId: null });
-      localStorage.removeItem('easyplan_preview_mode');
     } else {
       if (view === 'board') {
         set({ currentViewBucket: 'planned', selectedProjectId: null });
@@ -247,24 +286,51 @@ export const useAppStore = create<AppStore>((set, get) => ({
   cancelPlanPreview: async () => {
     const { token, selectedProjectId } = get();
     if (!token || !selectedProjectId) return;
+
+    set({ error: null });
     try {
-      await fetch(`/api/threads/${selectedProjectId}/phases/next/cancel`, {
+      const response = await fetch(`/api/threads/${selectedProjectId}/phases/next/cancel`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true, error: '登录已失效，请重新登录' });
+        return;
+      }
+
+      if (!response.ok) {
+        let msg = '取消下一阶段预览失败';
+        try {
+          const errData = await response.json();
+          if (errData.detail) msg = errData.detail;
+        } catch {
+          // ignore JSON parse error
+        }
+        throw new Error(msg);
+      }
+
+      const snapshot = await response.json();
+
+      set({
+        view: 'board',
+        previewMode: null,
+        phaseRequestId: null,
+        appState: 'INITIAL',
+        taskTree: snapshot.task_tree || null,
+        threadId: snapshot.thread_id,
+        intent: snapshot.intent_text,
+      });
+      localStorage.removeItem('easyplan_preview_mode');
+      localStorage.removeItem('easyplan_phase_request_id');
+      get().fetchTasks();
     } catch (err) {
       console.error('cancelPlanPreview error:', err);
+      set({ error: (err as Error).message });
     }
-    set({
-      view: 'board',
-      previewMode: null,
-      phaseRequestId: null,
-      appState: 'INITIAL',
-    });
-    localStorage.removeItem('easyplan_preview_mode');
-    get().fetchTasks();
   },
 
   fetchTasks: async (bucket) => {
@@ -548,7 +614,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       error: null,
       pendingIntent: null,
       selectedProjectId: null,
+      previewMode: null,
+      phaseRequestId: null,
     });
+    localStorage.removeItem('easyplan_selected_project_id');
+    localStorage.removeItem('easyplan_thread_id');
+    localStorage.removeItem('easyplan_preview_mode');
+    localStorage.removeItem('easyplan_phase_request_id');
     setTimeout(() => {
       set({ boardTasks: null, taskTree: null, nodeStatuses: {} });
     }, 500);
@@ -570,9 +642,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
       
       if (!response.ok) throw new Error('Failed to delete plan');
+
+      const isCurrentProject = selectedProjectId === threadId;
+      if (isCurrentProject) {
+        localStorage.removeItem('easyplan_selected_project_id');
+        localStorage.removeItem('easyplan_preview_mode');
+        localStorage.removeItem('easyplan_phase_request_id');
+      }
+      if (threadId === get().threadId) {
+        localStorage.removeItem('easyplan_thread_id');
+      }
+
       set({
         boardTasks: (boardTasks || []).filter(t => t.thread_id !== threadId),
-        selectedProjectId: selectedProjectId === threadId ? null : selectedProjectId
+        selectedProjectId: isCurrentProject ? null : selectedProjectId,
+        threadId: threadId === get().threadId ? null : get().threadId,
+        previewMode: isCurrentProject ? null : get().previewMode,
+        phaseRequestId: isCurrentProject ? null : get().phaseRequestId,
       });
     } catch (err) {
       console.error("Delete plan failed", err);
@@ -619,7 +705,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         view: 'input',
         appState: 'THINKING'
       });
+      localStorage.setItem('easyplan_thread_id', selectedProjectId);
       localStorage.setItem('easyplan_preview_mode', 'next_phase');
+      localStorage.setItem('easyplan_phase_request_id', requestId);
     } catch (err) {
       console.error("Generate next phase plan failed", err);
     } finally {
@@ -662,6 +750,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       
       const data = await response.json();
       set({ intent: intentText, threadId: data.thread_id, pendingIntent: null });
+      if (data.thread_id) {
+        localStorage.setItem('easyplan_thread_id', data.thread_id);
+      }
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });
     }
@@ -679,18 +770,52 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (!response.ok) throw new Error('Failed to align state');
       const snapshot = await response.json();
       
-      const savedPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
       const isPending = snapshot.status === 'awaiting_confirmation';
-      if (!isPending) {
+      const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
+
+      let savedPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
+      if (isPending) {
+        if (isNextPhasePreview) {
+          savedPreviewMode = 'next_phase';
+          localStorage.setItem('easyplan_preview_mode', 'next_phase');
+        } else if (!savedPreviewMode) {
+          savedPreviewMode = 'initial';
+          localStorage.setItem('easyplan_preview_mode', 'initial');
+        }
+      } else {
         localStorage.removeItem('easyplan_preview_mode');
+        savedPreviewMode = null;
       }
+
+      const recoveredPhaseRequestId = (isPending && isNextPhasePreview)
+        ? (snapshot.interrupt_payload?.request_id || null)
+        : null;
+
+      if (recoveredPhaseRequestId) {
+        localStorage.setItem('easyplan_phase_request_id', recoveredPhaseRequestId);
+      } else if (!isPending) {
+        localStorage.removeItem('easyplan_phase_request_id');
+      }
+
+      if (snapshot.thread_id) {
+        localStorage.setItem('easyplan_thread_id', snapshot.thread_id);
+      }
+
+      const taskTree = isPending && snapshot.interrupt_payload?.task_tree
+        ? snapshot.interrupt_payload.task_tree
+        : (snapshot.task_tree || null);
+
+      const targetAppState = isPending ? 'PENDING' : (taskTree ? 'INITIAL' : 'THINKING');
+      const targetView = ((taskTree || isNextPhasePreview) && get().selectedProjectId) ? 'board' : get().view;
 
       set({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
-        taskTree: snapshot.task_tree,
-        appState: isPending ? 'PENDING' : 'THINKING',
-        previewMode: isPending && savedPreviewMode ? savedPreviewMode : null,
+        taskTree: taskTree,
+        appState: targetAppState,
+        view: targetView,
+        previewMode: savedPreviewMode,
+        phaseRequestId: recoveredPhaseRequestId || localStorage.getItem('easyplan_phase_request_id') || null,
       });
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });
@@ -733,15 +858,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   confirmPlan: async () => {
-    const { threadId, token, syncRequestId } = get();
+    const { threadId, token, syncRequestId, phaseRequestId, previewMode } = get();
     if (!threadId) return;
+
+    const { appState } = get();
+    if (appState === 'SYNCING') return;
 
     set({ appState: 'SYNCING', error: null });
     
-    // Generate request ID if it doesn't exist yet
-    const requestId = syncRequestId || generateUUID();
-    if (!syncRequestId) {
-      set({ syncRequestId: requestId });
+    let requestId: string;
+    if (previewMode === 'next_phase') {
+      if (!phaseRequestId) {
+        set({ error: '预览已过期/请求不匹配，请重新生成下一阶段', appState: 'ERROR' });
+        return;
+      }
+      requestId = phaseRequestId;
+    } else {
+      requestId = syncRequestId || generateUUID();
+      if (!syncRequestId) {
+        set({ syncRequestId: requestId });
+      }
     }
 
     try {
@@ -760,8 +896,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
         })
       });
 
-      if (!response.ok) throw new Error('Failed to confirm plan');
-      
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null);
+        set({ showAuthModal: true, appState: 'PENDING', error: '登录已失效，请重新登录' });
+        return;
+      }
+
+      if (response.status === 409) {
+        set({
+          error: '预览已过期/请求不匹配，请重新生成下一阶段',
+          appState: 'PENDING'
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        let msg = 'Failed to confirm plan';
+        try {
+          const errData = await response.json();
+          if (errData.detail) msg = errData.detail;
+        } catch {
+          // ignore JSON parse error
+        }
+        throw new Error(msg);
+      }
+
       // Success transition is now handled by SSE 'done' event
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });

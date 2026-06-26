@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * This file is manually generated based on docs/openapi.json
  * Updated for v1.1.0 (Auth + Multi-planner + Microsoft To Do)
@@ -85,13 +84,37 @@ export interface NextPhaseResponse {
   events_url: string;
 }
 
+export interface PhaseHistoryItem {
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled' | 'failed';
+  updated_at: string;
+}
+
+export interface TaskTreeReviewEnvelope {
+  type: 'task_tree_review';
+  user_id: string;
+  thread_id: string;
+  task_tree: TaskTree;
+  planning_mode?: 'initial' | 'next_phase';
+  phase_request_id?: string | null;
+  allowed_actions?: string[];
+}
+
+export interface PhaseGenerationEnvelope {
+  type: 'phase_generation_state';
+  request_id: string;
+  status: 'running' | 'awaiting_confirmation' | 'confirmed' | 'cancelled' | 'failed';
+  history?: Record<string, PhaseHistoryItem>;
+}
+
 export interface NextPhaseReviewEnvelope {
   type: 'next_phase_review';
   request_id: string;
   status: 'awaiting_confirmation';
   task_tree: TaskTree;
-  history?: any[];
+  history?: Record<string, PhaseHistoryItem>;
 }
+
+export type InterruptPayload = TaskTreeReviewEnvelope | PhaseGenerationEnvelope | NextPhaseReviewEnvelope;
 
 export interface TaskNode {
   client_node_id: string;
@@ -122,7 +145,7 @@ export interface ThreadSnapshot {
   server_time: string;
   intent_text: string;
   task_tree?: TaskTree | null;
-  interrupt_payload?: any | NextPhaseReviewEnvelope | null;
+  interrupt_payload?: InterruptPayload | null;
   latest_checkpoint_id?: string | null;
 }
 
@@ -179,8 +202,8 @@ export interface ValidationError {
   loc: (string | number)[];
   msg: string;
   type: string;
-  input?: any;
-  ctx?: Record<string, any>;
+  input?: unknown;
+  ctx?: Record<string, unknown>;
 }
 
 export interface HTTPValidationError {

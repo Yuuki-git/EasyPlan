@@ -12,13 +12,17 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
 
   const projects = useMemo(() => {
     if (!boardTasks) return [];
-    const projectMap = new Map<string, { id: string; title: string }>();
+    const projectMap = new Map<string, { id: string; title: string; source?: string }>();
     boardTasks.forEach(task => {
       if (task.parent_task_id === null && task.thread_id) {
-        projectMap.set(task.thread_id, {
-          id: task.thread_id,
-          title: task.title
-        });
+        const existing = projectMap.get(task.thread_id);
+        if (!existing || (existing.source === 'manual' && task.source === 'ai')) {
+          projectMap.set(task.thread_id, {
+            id: task.thread_id,
+            title: task.title,
+            source: task.source
+          });
+        }
       }
     });
     return Array.from(projectMap.values());

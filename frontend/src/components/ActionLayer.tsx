@@ -56,7 +56,9 @@ export const ActionLayer: React.FC = () => {
                     <Command size={10} />
                     <span>ENTER</span>
                   </div>
-                  <span className="text-sm font-medium">确认并保存</span>
+                  <span className="text-sm font-medium">
+                    {previewMode === 'next_phase' ? '追加到当前计划' : '确认并保存'}
+                  </span>
                 </button>
               </>
             )}

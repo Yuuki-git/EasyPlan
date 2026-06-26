@@ -21,6 +21,8 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "post" in schema["paths"]["/api/threads/{thread_id}/confirm"]
     assert "/api/threads/{thread_id}/phases/next" in schema["paths"]
     assert "post" in schema["paths"]["/api/threads/{thread_id}/phases/next"]
+    assert "/api/threads/{thread_id}/phases/next/cancel" in schema["paths"]
+    assert "delete" in schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]
     assert "/api/tasks" in schema["paths"]
     assert "get" in schema["paths"]["/api/tasks"]
     assert "post" in schema["paths"]["/api/tasks"]
@@ -48,6 +50,7 @@ def test_openapi_contract_requires_timezone_on_mutating_planner_calls():
     intent_params = _parameter_names(schema["paths"]["/api/intents"]["post"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
     next_phase_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next"]["post"])
+    next_phase_cancel_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"])
 
     assert "X-User-Timezone" in intent_params
     assert "X-User-Timezone" in confirm_params
@@ -65,6 +68,9 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     confirm_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/confirm"]["post"])
     next_phase_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/phases/next"]["post"])
+    next_phase_cancel_params = _parameter_names(
+        schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]
+    )
     tasks_params = _parameter_names(schema["paths"]["/api/tasks"]["get"])
     task_create_params = _parameter_names(schema["paths"]["/api/tasks"]["post"])
     task_patch_params = _parameter_names(schema["paths"]["/api/tasks/{task_id}"]["patch"])
@@ -76,6 +82,7 @@ def test_openapi_contract_requires_authorization_on_thread_workflow():
     assert "Authorization" in events_params
     assert "Authorization" in confirm_params
     assert "Authorization" in next_phase_params
+    assert "Authorization" in next_phase_cancel_params
     assert "Authorization" in tasks_params
     assert "Authorization" in task_create_params
     assert "Authorization" in task_patch_params
@@ -124,6 +131,8 @@ def test_openapi_contract_exposes_phase_planning_contract():
     assert "planning_context" in tree_properties
     assert "NextPhaseRequest" in schema["components"]["schemas"]
     assert "NextPhaseResponse" in schema["components"]["schemas"]
+    cancel_response = schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]["responses"]["200"]
+    assert cancel_response["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ThreadSnapshot"
 
 
 def test_openapi_contract_documents_sse_token_query_fallback():

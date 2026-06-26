@@ -23,6 +23,13 @@ class PhaseGenerationStart:
     remaining_ai_actions: int | None = None
 
 
+class ThreadStateConflictError(RuntimeError):
+    def __init__(self, *, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class AgentThreadRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -71,9 +78,61 @@ class AgentThreadRepository:
         return result.scalar_one_or_none()
 
     async def mark_confirmation_accepted(self, *, thread: AgentThread, request_id: str) -> None:
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else None
+        if payload and payload.get("type") == "next_phase_review":
+            expected_request_id = str(payload.get("request_id") or "")
+            if expected_request_id != request_id:
+                raise ThreadStateConflictError(
+                    code="REQUEST_ID_MISMATCH",
+                    message="Next-phase preview request_id does not match the current pending preview",
+                )
+            if payload.get("status") != "awaiting_confirmation":
+                raise ThreadStateConflictError(
+                    code="PREVIEW_ALREADY_CONFIRMED",
+                    message="This next-phase preview has already been confirmed or cancelled",
+                )
+            thread.interrupt_payload = {
+                **payload,
+                "status": "confirming",
+            }
         thread.status = "running"
         thread.updated_at = datetime.now(timezone.utc)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def cancel_pending_preview(self, *, thread: AgentThread) -> AgentThread:
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else None
+        if not payload or payload.get("type") != "next_phase_review":
+            raise ThreadStateConflictError(
+                code="NO_PENDING_PREVIEW",
+                message="Thread has no pending preview to cancel",
+            )
+        if payload.get("status") != "awaiting_confirmation":
+            raise ThreadStateConflictError(
+                code="PREVIEW_ALREADY_CONFIRMED",
+                message="This next-phase preview has already been confirmed or cancelled",
+            )
+
+        now = datetime.now(timezone.utc)
+        thread.status = "succeeded"
+        thread.current_node = "persist_internal_tasks"
+        thread.interrupt_payload = _cancelled_phase_envelope(
+            payload,
+            request_id=str(payload.get("request_id") or ""),
+            now=now,
+        )
+        thread.lease_owner = None
+        thread.lease_expires_at = None
+        thread.updated_at = now
+        try:
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return thread
 
     async def start_next_phase_generation(
         self,
@@ -109,14 +168,17 @@ class AgentThreadRepository:
                 should_schedule=False,
             )
         history_entry = history.get(request_id_text)
-        if isinstance(history_entry, dict) and history_entry.get("status") in {
-            "confirmed",
-            "cancelled",
-        }:
+        if isinstance(history_entry, dict) and history_entry.get("status") == "confirmed":
             return PhaseGenerationStart(
                 thread=thread,
                 status=str(history_entry["status"]),
                 should_schedule=False,
+            )
+        if isinstance(history_entry, dict) and history_entry.get("status") == "cancelled":
+            return _phase_generation_conflict(
+                thread,
+                code="REQUEST_CANCELLED",
+                message="This next-phase request was cancelled. Generate a new request_id before trying again",
             )
 
         if (
@@ -265,3 +327,22 @@ def _lease_is_active(expires_at: datetime, now: datetime) -> bool:
         else expires_at.astimezone(timezone.utc)
     )
     return normalized_expires_at > now
+
+
+def _cancelled_phase_envelope(
+    payload: dict[str, Any],
+    *,
+    request_id: str,
+    now: datetime,
+) -> dict[str, Any]:
+    history = dict(payload.get("history") or {})
+    history[request_id] = {
+        "status": "cancelled",
+        "cancelled_at": now.isoformat(),
+    }
+    return {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "cancelled",
+        "history": history,
+    }
