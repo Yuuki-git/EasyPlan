@@ -285,6 +285,15 @@ class AgentRuntime:
             return
         if "failed_validation" in chunk:
             error = chunk["failed_validation"].get("error", {})
+            logger.warning(
+                "agent_validation_failed",
+                extra={
+                    "thread_id": thread_id,
+                    "user_id": user_id,
+                    "error_code": error.get("code", "TASK_TREE_VALIDATION_FAILED"),
+                    "raw_message": error.get("message"),
+                },
+            )
             self._append_error(
                 thread_id,
                 code=error.get("code", "TASK_TREE_VALIDATION_FAILED"),
@@ -475,6 +484,8 @@ def _is_terminal_event(event: str) -> bool:
 def _safe_sse_error_message(message: Any) -> str:
     if not isinstance(message, str) or not message.strip():
         return SAFE_PLANNING_ERROR_MESSAGE
+    if "错误代码:" in message:
+        return message
     lowered = message.lower()
     sensitive_markers = (
         "validation error",
@@ -484,6 +495,14 @@ def _safe_sse_error_message(message: Any) -> str:
         "pydantic",
         "sql",
         "database",
+        "planning_context",
+        "intentprofile",
+        "committed_task_tree",
+        "current_phase",
+        "roadmap",
+        "phase planning",
+        "next_phase requires",
+        "must match intentprofile",
     )
     if any(marker in lowered for marker in sensitive_markers):
         return SAFE_PLANNING_ERROR_MESSAGE

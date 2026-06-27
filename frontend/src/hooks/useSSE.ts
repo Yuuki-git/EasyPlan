@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { createRunEventTracker } from '../lib/runEvents';
+import { getFriendlyErrorMessage } from '../lib/errorHelper';
 
 export const useSSE = () => {
   const {
@@ -191,11 +192,13 @@ export const useSSE = () => {
         }
         clearStallTimer();
         lastEventIdRef.current = e.lastEventId;
+        setAppState('ERROR');
         try {
           const data = JSON.parse(e.data);
-          setError(data.message || data.code || 'An error occurred');
+          const rawMsg = data.message || data.code || 'An error occurred';
+          setError(getFriendlyErrorMessage(rawMsg));
         } catch {
-          setError(e.data);
+          setError(getFriendlyErrorMessage(e.data));
         }
         es.close();
         if (eventSourceRef.current === es) {

@@ -528,7 +528,12 @@ def planner_node_factory(planner: PlannerClient):
             current_phase_task_summary=state.get("current_phase_task_summary"),
         )
         reasoning_sink = ListReasoningSink()
-        task_tree = await _call_planner(planner, prompt, reasoning_sink)
+        task_tree = _normalize_task_tree_phase_contract(
+            await _call_planner(planner, prompt, reasoning_sink),
+            intent_profile=state.get("intent_profile"),
+            planning_mode=state.get("planning_mode", "initial"),
+            committed_task_tree=state.get("committed_task_tree"),
+        )
         next_state: AgentState = {
             **state,
             "task_tree": task_tree,
@@ -560,6 +565,60 @@ async def _call_planner(
     if "reasoning_sink" in parameters:
         return await planner.create_plan(prompt, reasoning_sink=reasoning_sink)
     return await planner.create_plan(prompt)
+
+
+def _normalize_task_tree_phase_contract(
+    task_tree: dict[str, Any],
+    *,
+    intent_profile: dict[str, Any] | None,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> dict[str, Any]:
+    parsed = TaskTree.model_validate(task_tree)
+    context = parsed.planning_context
+    if context is None:
+        return parsed.model_dump(mode="json")
+
+    expected_intent_type, expected_horizon = _expected_phase_contract_identity(
+        intent_profile=intent_profile,
+        planning_mode=planning_mode,
+        committed_task_tree=committed_task_tree,
+    )
+    if expected_intent_type is None or expected_horizon is None:
+        return parsed.model_dump(mode="json")
+    if context.intent_type == expected_intent_type and context.time_horizon == expected_horizon:
+        return parsed.model_dump(mode="json")
+
+    normalized_context = context.model_copy(
+        update={
+            "intent_type": expected_intent_type,
+            "time_horizon": expected_horizon,
+        }
+    )
+    return parsed.model_copy(update={"planning_context": normalized_context}).model_dump(mode="json")
+
+
+def _expected_phase_contract_identity(
+    *,
+    intent_profile: dict[str, Any] | None,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if planning_mode == "next_phase" and committed_task_tree is not None:
+        try:
+            committed_context = TaskTree.model_validate(committed_task_tree).planning_context
+        except ValidationError:
+            committed_context = None
+        if committed_context is not None:
+            return committed_context.intent_type, committed_context.time_horizon
+
+    intent_type = _intent_type_from_profile(intent_profile)
+    time_horizon = (intent_profile or {}).get("time_horizon")
+    if intent_type not in {"long_term_growth", "exploration_decision"}:
+        return None, None
+    if not isinstance(time_horizon, str):
+        return None, None
+    return intent_type, time_horizon
 
 
 async def task_tree_validator_node(state: AgentState) -> AgentState:

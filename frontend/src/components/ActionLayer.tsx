@@ -15,10 +15,12 @@ export const ActionLayer: React.FC = () => {
     returnToCommittedPlan,
     submitIntent,
     generateNextPhasePlan,
-    intent
+    intent,
+    startNewIntent,
+    error
   } = useAppStore();
 
-  const isVisible = appState === 'PENDING' || appState === 'THINKING' || isRunStalled;
+  const isVisible = appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || isRunStalled;
 
   const handleCancel = () => {
     if (previewMode === 'next_phase') {
@@ -46,7 +48,39 @@ export const ActionLayer: React.FC = () => {
           className="fixed bottom-0 left-0 w-full pb-12 pt-24 bg-gradient-to-t from-background via-background/90 to-transparent flex justify-center pointer-events-none z-40"
         >
           <div className="flex flex-col items-center gap-4 pointer-events-auto max-w-xl w-full px-4">
-            {isRunStalled ? (
+            {appState === 'ERROR' ? (
+              <motion.div
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                className="flex flex-col items-center gap-4 p-5 rounded-2xl border border-red-500/30 bg-red-500/5 backdrop-blur-md w-full shadow-lg"
+              >
+                <div className="flex items-center gap-2 text-red-400">
+                  <AlertTriangle size={18} />
+                  <span className="text-sm font-medium">{error || '这次规划没有顺利完成，请重试一次'}</span>
+                </div>
+                <div className="flex items-center gap-4 w-full justify-center">
+                  <button
+                    onClick={handleRetry}
+                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-red-500/50 hover:border-red-500 rounded-full bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-all shadow-sm"
+                  >
+                    <RotateCw size={14} />
+                    重试本次生成
+                  </button>
+                  <button
+                    onClick={returnToCommittedPlan}
+                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                  >
+                    返回当前计划
+                  </button>
+                  <button
+                    onClick={startNewIntent}
+                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                  >
+                    播种新想法
+                  </button>
+                </div>
+              </motion.div>
+            ) : isRunStalled ? (
               <motion.div
                 initial={{ scale: 0.95 }}
                 animate={{ scale: 1 }}

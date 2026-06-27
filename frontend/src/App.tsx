@@ -55,7 +55,7 @@ const App: React.FC = () => {
               <TaskTreeRoot />
 
               <AnimatePresence>
-                {error && (
+                {error && appState !== 'ERROR' && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

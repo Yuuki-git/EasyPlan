@@ -17,6 +17,7 @@ from app.agents.nodes import (
     PlannerClient,
     _validate_task_tree,
     build_planner_prompt,
+    planner_node_factory,
     task_tree_validator_node,
 )
 from app.services.checkpoint_service import TenantAwareMemorySaver
@@ -172,6 +173,94 @@ def exploration_plan_that_assumes_execution_decision() -> dict[str, Any]:
     plan["root"]["children"][0]["title"] = "报名产品经理系统课程"
     plan["root"]["children"][0]["description"] = "直接开始长期学习计划。"
     plan["root"]["children"][0]["estimated_minutes"] = 60
+    return plan
+
+
+def valid_exploration_phase_plan(*, time_horizon: str = "days") -> dict[str, Any]:
+    return {
+        "root": {
+            "client_node_id": "root",
+            "title": "产品经理方向探索",
+            "description": "围绕是否转行产品经理做低成本探索。",
+            "verb": "探索",
+            "estimated_minutes": 0,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "task-1",
+                    "title": "列出转行产品经理的 3 个核心担忧",
+                    "description": "写下阻碍判断的关键问题。",
+                    "verb": "列出",
+                    "estimated_minutes": 15,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "done_criteria": "写出 3 条具体担忧并保存到笔记。",
+                    "start_hint": "打开笔记，新建一页写上“转行担忧”。",
+                    "fallback_action": None,
+                    "children": [],
+                },
+                {
+                    "client_node_id": "task-2",
+                    "title": "找 3 个产品经理 JD 并标出共同要求",
+                    "description": "收集岗位样本，核对真实要求。",
+                    "verb": "标出",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": ["task-1"],
+                    "done_criteria": "保存 3 个 JD 链接并标出至少 3 条共同要求。",
+                    "start_hint": "打开招聘网站，搜索“产品经理”。",
+                    "fallback_action": "如果没精力找 3 个，就先保存 1 个 JD。",
+                    "children": [],
+                },
+                {
+                    "client_node_id": "task-3",
+                    "title": "用一页纸比较转行与不转行的成本收益",
+                    "description": "把探索结果汇总成当前判断依据。",
+                    "verb": "比较",
+                    "estimated_minutes": 30,
+                    "node_type": "action",
+                    "depends_on": ["task-2"],
+                    "done_criteria": "写出一页对比，包含至少 3 条收益和 3 条成本。",
+                    "start_hint": "在笔记中分成“转行/不转行”两列。",
+                    "fallback_action": "如果做不完一页纸，就先各写 1 条收益和 1 条成本。",
+                    "children": [],
+                },
+            ],
+        },
+        "summary": "当前判断：这个方向值得先做低成本探索，但暂不建议立刻执行转行。接下来先收集信息，再形成判断。",
+        "assumptions": [],
+        "planning_context": {
+            "schema_version": 1,
+            "intent_type": "exploration_decision",
+            "time_horizon": time_horizon,
+            "roadmap": [
+                {"phase_id": "phase_01", "order": 1, "title": "问题澄清", "objective": "明确担忧与判断标准", "status": "current"},
+                {"phase_id": "phase_02", "order": 2, "title": "信息收集", "objective": "补齐岗位与现实信息", "status": "planned"},
+                {"phase_id": "phase_03", "order": 3, "title": "形成判断", "objective": "比较成本收益后做阶段性决定", "status": "planned"},
+            ],
+            "current_phase": {
+                "phase_id": "phase_01",
+                "title": "问题澄清",
+                "objective": "明确担忧与判断标准",
+                "completion_rule": "all_ai_actions_completed",
+            },
+            "next_action_client_node_id": "task-1",
+        },
+    }
+
+
+def exploration_phase_plan_with_execution_bias(*, time_horizon: str = "weeks") -> dict[str, Any]:
+    plan = valid_exploration_phase_plan(time_horizon=time_horizon)
+    plan["root"]["title"] = "转行产品经理执行计划"
+    plan["root"]["children"][0]["title"] = "制定 6 个月转行产品经理学习计划"
+    plan["root"]["children"][0]["description"] = "直接开始长期执行路线。"
+    plan["root"]["children"][0]["verb"] = "制定"
+    plan["root"]["children"][0]["estimated_minutes"] = 45
+    plan["root"]["children"][0]["done_criteria"] = "写出 6 个月学习计划。"
+    plan["root"]["children"][0]["start_hint"] = "打开笔记开始列 6 个月安排。"
+    plan["root"]["children"][0]["fallback_action"] = "如果做不完，就先列前 3 个月安排。"
+    plan["summary"] = "当前判断：应该直接开始转行执行。接下来进入长期学习计划。"
     return plan
 
 
@@ -835,6 +924,71 @@ def test_graph_starts_with_intent_profiler_before_planner_without_prompt_injecti
     assert profiler.inputs == ["Finish the business plan by 4pm"]
     assert len(planner.prompts) == 1
     assert "时间盒法则" in planner.prompts[0]
+
+
+def test_planner_node_normalizes_exploration_planning_context_to_intent_profile():
+    planner = CapturingPlanner([valid_exploration_phase_plan(time_horizon="weeks")])
+    planner_node = planner_node_factory(planner)
+
+    result = asyncio.run(
+        planner_node(
+            {
+                "user_id": "user_1",
+                "thread_id": "thread_exploration",
+                "intent_text": "我是否要考虑转行产品经理",
+                "intent_profile": {
+                    "intent_type": "exploration_decision",
+                    "time_horizon": "days",
+                    "confidence_score": 0.88,
+                },
+                "planning_mode": "initial",
+            }
+        )
+    )
+
+    context = result["task_tree"]["planning_context"]
+    assert context["intent_type"] == "exploration_decision"
+    assert context["time_horizon"] == "days"
+
+
+def test_exploration_replan_keeps_original_horizon_after_validator_retry():
+    planner = CapturingPlanner(
+        [
+            exploration_phase_plan_with_execution_bias(time_horizon="weeks"),
+            valid_exploration_phase_plan(time_horizon="weeks"),
+        ]
+    )
+    profiler = CapturingIntentProfiler(
+        {
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        }
+    )
+    graph = build_task_graph(
+        planner=planner,
+        intent_profiler=profiler,
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(user_id="user_1", thread_id="thread_exploration_retry")
+
+    chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": "user_1",
+                    "thread_id": "thread_exploration_retry",
+                    "intent_text": "我是否要考虑转行产品经理",
+                },
+                config,
+            )
+        )
+    )
+
+    assert len(planner.prompts) == 2
+    interrupt_payload = chunks[-1]["__interrupt__"][0].value
+    assert interrupt_payload["task_tree"]["planning_context"]["intent_type"] == "exploration_decision"
+    assert interrupt_payload["task_tree"]["planning_context"]["time_horizon"] == "days"
 
 
 def test_route_from_start_skips_profile_for_next_phase():

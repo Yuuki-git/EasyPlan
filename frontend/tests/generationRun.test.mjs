@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { loadTsModule } from './testHelpers/loadTsModule.mjs';
 
 const plain = (val) => JSON.parse(JSON.stringify(val));
 
@@ -277,6 +278,35 @@ async function runTests() {
     assert.equal(state.threadId, null);
     assert.equal(state.intent, '');
     assert.equal(state.taskTree, null);
+  }
+
+  // --- 测试场景 5: 错误呈现与契约错误友好文案转换 ---
+  {
+    const { getFriendlyErrorMessage } = loadTsModule('../../src/lib/errorHelper.ts');
+
+    // 契约/内部错误映射
+    assert.equal(
+      getFriendlyErrorMessage("planning_context time_horizon must match IntentProfile"),
+      "这次规划没有顺利完成，请重试一次"
+    );
+    assert.equal(
+      getFriendlyErrorMessage("TypeError: Cannot read properties of undefined"),
+      "这次规划没有顺利完成，请重试一次"
+    );
+    assert.equal(
+      getFriendlyErrorMessage("validation_error: invalid type"),
+      "这次规划没有顺利完成，请重试一次"
+    );
+
+    // 正常业务错误保留
+    assert.equal(
+      getFriendlyErrorMessage("余额不足，无法执行该操作"),
+      "余额不足，无法执行该操作"
+    );
+    assert.equal(
+      getFriendlyErrorMessage("预览已过期/请求不匹配，请重新生成下一阶段"),
+      "预览已过期/请求不匹配，请重新生成下一阶段"
+    );
   }
 
   console.log('generationRun tests passed');

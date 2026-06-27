@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from sqlalchemy.sql import Select, Update
 
-from app.services.agent_runtime import AgentRuntime
+from app.services.agent_runtime import AgentRuntime, SAFE_PLANNING_ERROR_MESSAGE
 
 
 class AsyncStreamGraph:
@@ -64,6 +64,18 @@ class NextPhaseInterruptGraph:
                     },
                 )()
             ]
+        }
+
+
+class ValidationFailureGraph:
+    async def astream(self, input_value, config):
+        yield {
+            "failed_validation": {
+                "error": {
+                    "code": "TASK_TREE_VALIDATION_FAILED",
+                    "message": "planning_context time_horizon must match IntentProfile",
+                }
+            }
         }
 
 
@@ -482,6 +494,30 @@ def test_agent_runtime_sanitizes_internal_graph_errors_in_sse(caplog):
     assert "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。" in event
     assert "validation error" not in event.lower()
     assert "estimated_minutes" not in event
+
+
+def test_runtime_sanitizes_internal_phase_contract_errors_before_sse_emit():
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: ValidationFailureGraph(),
+        planner_client_factory=lambda **_: object(),
+    )
+
+    asyncio.run(
+        runtime.run_new_thread(
+            user_id="00000000-0000-0000-0000-000000000001",
+            thread_id="thread_contract_error",
+            intent_text="我是否要考虑转行产品经理",
+            selected_provider="native",
+            planner_provider="deepseek",
+            planner_model=None,
+        )
+    )
+
+    event = runtime._events["thread_contract_error"][-1]
+    assert "event: agent_error" in event
+    assert SAFE_PLANNING_ERROR_MESSAGE in event
+    assert "planning_context time_horizon must match IntentProfile" not in event
+    assert "IntentProfile" not in event
 
 
 async def _collect_events(stream):
