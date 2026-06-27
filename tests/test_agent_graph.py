@@ -338,7 +338,8 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "不要在 summary、assumptions、title、description 或 verb 中写" in exploration_prompt
     assert "把用户原词改写为“方向A/选项A/当前选择”" in exploration_prompt
     assert "root.children 最多 5 个顶层任务" in exploration_prompt
-    assert "summary 写成“探索澄清计划”" in exploration_prompt
+    assert "summary 先给 1-2 句当前判断，再给探索路线总览" in exploration_prompt
+    assert "summary 可以写成“当前判断 + 探索澄清计划”" in exploration_prompt
     assert "assumptions 必须是 []" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
@@ -391,6 +392,17 @@ def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():
 
     assert "用户意图不够明确" in prompt
     assert "short_term_delivery" not in prompt
+
+
+def test_exploration_prompt_requires_judgment_first_summary_before_route():
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "先给 1-2 句当前判断" in prompt
+    assert "写入现有 task_tree.summary" in prompt
+    assert "再给探索路线" in prompt
 
 
 def test_initial_long_term_prompt_requires_roadmap_but_short_term_does_not():
@@ -911,3 +923,18 @@ def test_route_after_human_review_approve_persists_internal_tasks():
 
 async def _collect_astream(stream):
     return [chunk async for chunk in stream]
+
+
+def test_exploration_decision_prompt_requires_current_judgment_summary() -> None:
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert "先给 1-2 句当前判断" in prompt
+    assert "summary" in prompt
+    assert "不要直接生成长期执行计划" in prompt

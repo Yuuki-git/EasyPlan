@@ -31,7 +31,7 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
 
   const module = { exports: {} };
   const localStorageValues = new Map(Object.entries(initialLocalStorage));
-  
+
   if (!localStorageValues.has('auth_token')) {
     localStorageValues.set('auth_token', 'mock-token');
   }
@@ -112,7 +112,7 @@ async function runTests() {
     };
 
     const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
-    
+
     const state = useAppStore.getState();
     assert.equal(state.selectedProjectId, 'thread-committed');
     assert.equal(state.threadId, 'thread-committed');
@@ -121,7 +121,7 @@ async function runTests() {
 
     const updatedState = useAppStore.getState();
     assert.ok(fetchCalled);
-    
+
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'INITIAL');
     assert.equal(updatedState.taskTree.root.title, 'committed-root-task');
@@ -159,7 +159,7 @@ async function runTests() {
     };
 
     const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
-    
+
     const state = useAppStore.getState();
     assert.equal(state.selectedProjectId, 'thread-preview');
     assert.equal(state.threadId, 'thread-preview');
@@ -176,6 +176,51 @@ async function runTests() {
     assert.ok(updatedState.taskTree);
     assert.equal(updatedState.taskTree.root.title, 'preview-root-task');
     assert.equal(updatedState.previewMode, 'next_phase');
+  }
+
+  // --- 测试场景 3: next-phase running 状态刷新恢复 ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-running'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: 'thread-running',
+          status: 'running',
+          intent_text: 'my intent',
+          task_tree: null
+        })
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_selected_project_id': 'thread-running',
+      'easyplan_thread_id': 'thread-running',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-running',
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
+
+    const state = useAppStore.getState();
+    assert.equal(state.selectedProjectId, 'thread-running');
+    assert.equal(state.threadId, 'thread-running');
+    assert.equal(state.previewMode, 'next_phase');
+    assert.equal(state.phaseRequestId, 'req-running');
+
+    await state.alignState('thread-running');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+
+    assert.equal(updatedState.view, 'board');
+    assert.equal(updatedState.appState, 'THINKING');
+    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.previewMode, 'next_phase');
+    assert.equal(updatedState.phaseRequestId, 'req-running');
   }
 
   console.log('stateRestoration tests passed');

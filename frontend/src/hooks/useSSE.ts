@@ -1,23 +1,63 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { createRunEventTracker } from '../lib/runEvents';
 
 export const useSSE = () => {
-  const { 
-    threadId, 
-    addReasoningLog, 
-    setTaskTree, 
-    setAppState, 
-    setError, 
+  const {
+    threadId,
+    addReasoningLog,
+    setTaskTree,
+    setAppState,
+    setError,
     setNodeStatus,
     alignState,
     token,
     setView,
-    finishAgentRun
+    finishAgentRun,
+    phaseRequestId,
+    syncRequestId,
+    setRunStalled
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<string | null>(null);
   const prevThreadIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const trackerRef = useRef(createRunEventTracker());
+  const prevRequestIdRef = useRef<string | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const currentRequestId = phaseRequestId || syncRequestId || '';
+
+  if (currentRequestId !== prevRequestIdRef.current) {
+    lastEventIdRef.current = null;
+    trackerRef.current.reset();
+    prevRequestIdRef.current = currentRequestId;
+  }
+
+  const resetStallTimer = () => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+    }
+    const { appState } = useAppStore.getState();
+    if (appState === 'THINKING') {
+      stallTimerRef.current = setTimeout(() => {
+        setRunStalled(true);
+      }, 10000);
+    }
+  };
+
+  const clearStallTimer = () => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  };
+
+  const handleEventActivity = () => {
+    setRunStalled(false);
+    resetStallTimer();
+  };
 
   useEffect(() => {
     if (threadId !== prevThreadIdRef.current) {
@@ -57,6 +97,8 @@ export const useSSE = () => {
 
       if (!isMounted) return;
 
+      handleEventActivity();
+
       // 2. Setup EventSource with Last-Event-ID for recovery
       const url = new URL(`/api/threads/${activeThreadId}/events`, window.location.origin);
       if (lastEventIdRef.current) {
@@ -65,11 +107,15 @@ export const useSSE = () => {
       if (token) {
         url.searchParams.set('token', token);
       }
-      
+
       const es = new EventSource(url.toString());
       eventSourceRef.current = es;
 
       es.addEventListener('reasoning', (e) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        handleEventActivity();
         lastEventIdRef.current = e.lastEventId;
         try {
           const data = JSON.parse(e.data);
@@ -80,25 +126,43 @@ export const useSSE = () => {
       });
 
       es.addEventListener('plan_ready', (e) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        handleEventActivity();
         lastEventIdRef.current = e.lastEventId;
         const data = JSON.parse(e.data);
         setTaskTree(data.task_tree);
         setAppState('PENDING');
+        clearStallTimer();
       });
 
       es.addEventListener('sync_status', (e) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        handleEventActivity();
         lastEventIdRef.current = e.lastEventId;
         const { node_id, status } = JSON.parse(e.data);
         setNodeStatus(node_id, status);
       });
 
       es.addEventListener('sync_complete', (e) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        handleEventActivity();
         lastEventIdRef.current = e.lastEventId;
         const { status } = JSON.parse(e.data);
         setAppState(status === 'success' ? 'SUCCESS' : 'PARTIAL_ERROR');
+        clearStallTimer();
       });
 
       es.addEventListener('done', async (e) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        clearStallTimer();
         lastEventIdRef.current = e.lastEventId;
         setAppState('SUCCESS');
         await finishAgentRun();
@@ -115,12 +179,17 @@ export const useSSE = () => {
         if (eventSourceRef.current === es) {
           eventSourceRef.current = null;
         }
+        clearStallTimer();
         await alignState(activeThreadId);
         scheduleReconnect(250);
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       es.addEventListener('agent_error', (e: any) => {
+        if (!trackerRef.current.accept(e.lastEventId, activeThreadId, currentRequestId)) {
+          return;
+        }
+        clearStallTimer();
         lastEventIdRef.current = e.lastEventId;
         try {
           const data = JSON.parse(e.data);
@@ -141,7 +210,8 @@ export const useSSE = () => {
         console.warn('SSE Disconnected. Attempting to align and reconnect...');
         es.close();
         eventSourceRef.current = null;
-        scheduleReconnect(3000); // Exponential backoff could be better
+        clearStallTimer();
+        scheduleReconnect(3000);
       });
     }
 
@@ -157,6 +227,21 @@ export const useSSE = () => {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      clearStallTimer();
     };
-  }, [threadId, addReasoningLog, setTaskTree, setAppState, setError, setNodeStatus, alignState, token, setView, finishAgentRun]);
+  }, [
+    threadId,
+    addReasoningLog,
+    setTaskTree,
+    setAppState,
+    setError,
+    setNodeStatus,
+    alignState,
+    token,
+    setView,
+    finishAgentRun,
+    phaseRequestId,
+    syncRequestId,
+    setRunStalled
+  ]);
 };

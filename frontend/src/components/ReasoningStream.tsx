@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
 
 export const ReasoningStream: React.FC = () => {
-  const { reasoningLogs, appState } = useAppStore();
+  const { reasoningLogs, appState, isRunStalled } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom as logs arrive
@@ -16,7 +16,7 @@ export const ReasoningStream: React.FC = () => {
   if (appState !== 'THINKING' && reasoningLogs.length === 0) return null;
 
   return (
-    <div 
+    <div
       ref={scrollRef}
       className="w-full max-w-2xl mt-12 max-h-[40vh] overflow-y-auto px-2 space-y-4 mask-fade-out"
     >
@@ -36,12 +36,19 @@ export const ReasoningStream: React.FC = () => {
           </motion.div>
         ))}
       </AnimatePresence>
-      
+
       {appState === 'THINKING' && (
-        <div className="flex items-center gap-2 px-6 animate-pulse py-2">
-          <span className="text-xs font-mono text-muted-foreground/60 tracking-widest">
-            AI 正在思考...
-          </span>
+        <div className="flex items-center gap-2 px-6 py-2">
+          {isRunStalled ? (
+            <span className="text-xs font-mono text-amber-500/80 tracking-widest flex items-center gap-1.5">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+              生成可能已卡住，您可以选择重试或返回当前计划
+            </span>
+          ) : (
+            <span className="text-xs font-mono text-muted-foreground/60 tracking-widest animate-pulse">
+              AI 正在思考...
+            </span>
+          )}
         </div>
       )}
     </div>

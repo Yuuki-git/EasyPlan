@@ -38,7 +38,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
         <div className="flex items-center justify-between mb-8">
           <span className="font-medium text-foreground/80 tracking-wide px-2">我的手帐</span>
         </div>
-        
+
         <div className="space-y-1 mb-6">
           <button
             onClick={() => {
@@ -106,7 +106,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
   const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
-  
+
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
   const [isToggling, setIsToggling] = React.useState(false);
 
@@ -189,7 +189,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     if (editTitle.trim() !== node.title) updates.title = editTitle.trim();
     const nextDescription = editDescription.trim() || null;
     if (nextDescription !== (node.description || null)) updates.description = nextDescription;
-    
+
     const minutesVal = parseInt(editMinutes);
     if (!isNaN(minutesVal) && minutesVal !== node.estimated_minutes) {
       updates.estimated_minutes = minutesVal;
@@ -252,15 +252,15 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   // Action Node
   return (
-    <motion.div 
+    <motion.div
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
       className={clsx(
         "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
-        localCompleted 
-          ? "bg-muted/10 border-transparent" 
+        localCompleted
+          ? "bg-muted/10 border-transparent"
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
         isEditing && "cursor-default",
         isToggling && "cursor-wait",
@@ -353,7 +353,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
               </div>
             )}
             {(node.start_hint || node.fallback_action) && (
-              <details 
+              <details
                 className="mt-3 text-xs group/details outline-none"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -375,7 +375,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           </>
         )}
       </div>
-      
+
       <button
         onClick={handleToggleMyDay}
         className={clsx(
@@ -431,7 +431,7 @@ const InlineTaskInput: React.FC = () => {
       setIsAdding(false);
       return;
     }
-    
+
     const taskTitle = title.trim();
     setTitle(''); // Clear immediately for UX
     try {
@@ -451,9 +451,17 @@ const InlineTaskInput: React.FC = () => {
     }
   };
 
+  if (!selectedProjectId) {
+    return (
+      <div className="mt-8 text-center py-6 border border-dashed border-muted/30 rounded-xl bg-muted/5">
+        <span className="text-xs font-light text-muted-foreground/60">请先在侧边栏选择具体项目，以添加任务。</span>
+      </div>
+    );
+  }
+
   if (!isAdding) {
     return (
-      <button 
+      <button
         onClick={() => setIsAdding(true)}
         className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group w-full"
       >
@@ -466,7 +474,7 @@ const InlineTaskInput: React.FC = () => {
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       className="mt-8 flex items-center gap-3 p-2 rounded-xl border border-muted/50 bg-background focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-foreground/10 transition-all"
@@ -491,7 +499,7 @@ const InlineTaskInput: React.FC = () => {
 export const TaskBoard: React.FC = () => {
   const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, taskTree } = useAppStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
-  
+
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
 
   const planningView = useMemo(() => {
@@ -530,7 +538,7 @@ export const TaskBoard: React.FC = () => {
       }
 
       const taskMap = new Map<string, TreeNode>();
-      
+
       tasksToRender.forEach(t => {
         taskMap.set(t.id, { ...t, children: [] });
       });
@@ -570,7 +578,7 @@ export const TaskBoard: React.FC = () => {
 
   if (boardError) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 20 }}
@@ -578,8 +586,8 @@ export const TaskBoard: React.FC = () => {
         className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-4 z-40"
       >
         <p className="text-destructive font-medium">{boardError}</p>
-        <button 
-          onClick={() => fetchTasks()} 
+        <button
+          onClick={() => fetchTasks()}
           className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-md transition-colors"
         >
           重新加载
@@ -590,7 +598,7 @@ export const TaskBoard: React.FC = () => {
 
   if (!displayTree) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 20 }}
@@ -609,7 +617,7 @@ export const TaskBoard: React.FC = () => {
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
@@ -617,11 +625,11 @@ export const TaskBoard: React.FC = () => {
       className="fixed inset-0 bg-background flex z-40"
     >
       <Sidebar isOpen={sidebarOpen} toggle={() => setSidebarOpen(!sidebarOpen)} />
-      
+
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         <header className="h-16 border-b border-muted/20 flex items-center px-4 shrink-0 bg-background/80 backdrop-blur-sm z-10 justify-between">
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="text-muted-foreground hover:text-foreground transition-colors p-2 rounded-lg hover:bg-muted/20"
             >
@@ -631,9 +639,9 @@ export const TaskBoard: React.FC = () => {
               {currentViewBucket === 'my_day' ? '☀️ 我的一天' : '📅 计划中'}
             </h1>
           </div>
-          
+
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
@@ -641,7 +649,7 @@ export const TaskBoard: React.FC = () => {
             </button>
           </div>
         </header>
-        
+
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
             {currentViewBucket === 'planned' && selectedProjectId && (
@@ -651,7 +659,7 @@ export const TaskBoard: React.FC = () => {
             {isEmpty ? (
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
                 <p className="text-muted-foreground/60 text-lg">
-                  {currentViewBucket === 'planned' 
+                  {currentViewBucket === 'planned'
                     ? "您的专属空间空空如也。点击右上角，让 AI 为您分忧。"
                     : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
                 </p>
@@ -666,7 +674,7 @@ export const TaskBoard: React.FC = () => {
             ) : (
               <BoardTaskNode node={displayTree} />
             )}
-            
+
             {planningView && planningView.historicalPhases.length > 0 && (
               <div className="mt-12 space-y-4">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
@@ -693,7 +701,7 @@ export const TaskBoard: React.FC = () => {
             )}
 
             <InlineTaskInput />
-            
+
           </div>
         </main>
       </div>
