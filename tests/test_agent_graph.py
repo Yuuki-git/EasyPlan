@@ -228,7 +228,11 @@ def valid_exploration_phase_plan(*, time_horizon: str = "days") -> dict[str, Any
                 },
             ],
         },
-        "summary": "当前判断：这个方向值得先做低成本探索，但暂不建议立刻执行转行。接下来先收集信息，再形成判断。",
+        "summary": (
+            "当前判断：这个方向值得先做低成本探索，但暂不建议立刻执行转行。"
+            "判断依据：目前还缺少岗位现实要求、个人顾虑优先级和成本收益对比。"
+            "下一步探索：先澄清担忧、收集 JD，再用一页纸形成阶段性判断。"
+        ),
         "assumptions": [],
         "planning_context": {
             "schema_version": 1,
@@ -261,6 +265,12 @@ def exploration_phase_plan_with_execution_bias(*, time_horizon: str = "weeks") -
     plan["root"]["children"][0]["start_hint"] = "打开笔记开始列 6 个月安排。"
     plan["root"]["children"][0]["fallback_action"] = "如果做不完，就先列前 3 个月安排。"
     plan["summary"] = "当前判断：应该直接开始转行执行。接下来进入长期学习计划。"
+    return plan
+
+
+def exploration_phase_plan_without_answer_first() -> dict[str, Any]:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = "下一步探索：先收集 3 个 JD，再访谈从业者，最后比较转行成本收益。"
     return plan
 
 
@@ -427,8 +437,8 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "不要在 summary、assumptions、title、description 或 verb 中写" in exploration_prompt
     assert "把用户原词改写为“方向A/选项A/当前选择”" in exploration_prompt
     assert "root.children 最多 5 个顶层任务" in exploration_prompt
-    assert "summary 先给 1-2 句当前判断，再给探索路线总览" in exploration_prompt
-    assert "summary 可以写成“当前判断 + 探索澄清计划”" in exploration_prompt
+    assert "summary 必须写成“当前判断：... 判断依据：... 下一步探索：...”" in exploration_prompt
+    assert "summary 必须先回答问题，再说明依据和下一步探索" in exploration_prompt
     assert "assumptions 必须是 []" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
@@ -490,8 +500,11 @@ def test_exploration_prompt_requires_judgment_first_summary_before_route():
     )
 
     assert "先给 1-2 句当前判断" in prompt
-    assert "写入现有 task_tree.summary" in prompt
-    assert "再给探索路线" in prompt
+    assert "继续写入现有 task_tree.summary" in prompt
+    assert "当前判断：" in prompt
+    assert "判断依据：" in prompt
+    assert "下一步探索：" in prompt
+    assert "不要只给探索路线、不回答问题本身" in prompt
 
 
 def test_initial_long_term_prompt_requires_roadmap_but_short_term_does_not():
@@ -1092,3 +1105,38 @@ def test_exploration_decision_prompt_requires_current_judgment_summary() -> None
     assert "先给 1-2 句当前判断" in prompt
     assert "summary" in prompt
     assert "不要直接生成长期执行计划" in prompt
+    assert "当前判断：" in prompt
+    assert "判断依据：" in prompt
+    assert "下一步探索：" in prompt
+
+
+def test_validator_rejects_exploration_summary_that_only_lists_routes() -> None:
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": exploration_phase_plan_without_answer_first(),
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    joined_errors = "\n".join(result["validation_errors"])
+    assert "错误代码: EXPLORATION_ANSWER_MISSING" in joined_errors
+    assert "先回答当前判断，再给判断依据和下一步探索" in joined_errors
+    assert "不要只给探索路线" in joined_errors
+
+
+def test_validator_accepts_exploration_summary_with_judgment_basis_and_next_steps() -> None:
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": valid_exploration_phase_plan(),
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"

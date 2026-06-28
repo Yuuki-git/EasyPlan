@@ -72,7 +72,7 @@ class FakeThreadRepository:
     async def get_thread_for_user(self, *, user_id, thread_id):
         return self.threads.get((str(user_id), thread_id))
 
-    async def mark_confirmation_accepted(self, *, thread, request_id):
+    async def mark_confirmation_accepted(self, *, thread, request_id, action=None):
         payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
         if payload.get("type") == "next_phase_review":
             expected_request_id = payload.get("request_id")
@@ -90,6 +90,24 @@ class FakeThreadRepository:
                 **payload,
                 "status": "confirming",
             }
+            thread.current_node = "next_phase_planner"
+        elif payload.get("type") == "task_tree_review":
+            next_payload = {
+                **payload,
+                "request_id": request_id,
+            }
+            if action == "refine":
+                next_payload["status"] = "regenerating"
+                thread.current_node = "planner"
+            elif action == "edit":
+                next_payload["status"] = "editing"
+                thread.current_node = "validator"
+            elif action == "approve":
+                next_payload["status"] = "confirming"
+                thread.current_node = "persist_internal_tasks"
+            elif action == "reject":
+                next_payload["status"] = "cancelled"
+            thread.interrupt_payload = next_payload
         thread.status = "running"
 
     async def cancel_pending_preview(self, *, thread):
@@ -458,7 +476,7 @@ def test_cancel_next_phase_preview_returns_latest_snapshot():
     assert response.status_code == 200
     body = response.json()
     assert body["thread_id"] == thread.thread_id
-    assert body["status"] == "succeeded"
+    assert body["status"] == "cancelled"
     assert body["interrupt_payload"]["type"] == "phase_generation_state"
     assert body["interrupt_payload"]["request_id"] == "11111111-1111-1111-1111-111111111111"
     assert body["interrupt_payload"]["status"] == "cancelled"

@@ -258,7 +258,11 @@ def test_exploration_decision_does_not_require_five_minute_icebreaker():
                 },
             ],
         },
-        "summary": "澄清转行产品经理是否值得继续探索",
+        "summary": (
+            "当前判断：这个方向值得先继续澄清，但还不建议现在就做最终转行决定。"
+            "判断依据：目前还缺少岗位要求和个人成本收益对比。"
+            "下一步探索：先写下原因，再收集 JD 和现实信息。"
+        ),
         "assumptions": [],
     }
 
@@ -273,8 +277,59 @@ def test_exploration_decision_does_not_require_five_minute_icebreaker():
     )
 
     assert result.icebreaker_present is False
-    assert result.strategy_compliant is True
+    assert not any("<=5 minute first-step icebreaker" in error for error in result.strategy_errors)
+    assert not any("answer the question first" in error for error in result.strategy_errors)
     assert result.passed is True
+
+
+def test_exploration_decision_eval_rejects_route_only_summary_without_answer_first():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="我是否要考虑转行产品经理",
+        expected_intent_type="exploration_decision",
+        expected_horizon="days",
+        must_have_icebreaker=False,
+        max_nodes=6,
+        description="探索决策必须先回答当前判断，再给依据和下一步探索",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "转行产品经理探索",
+            "description": None,
+            "verb": "探索",
+            "estimated_minutes": 60,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "jd",
+                    "title": "找 3 个产品经理 JD",
+                    "description": "收集岗位要求。",
+                    "verb": "找",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+            ],
+        },
+        "summary": "下一步探索：先找 3 个 JD，再访谈从业者，最后比较转行成本收益。",
+        "assumptions": [],
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert result.strategy_compliant is False
+    assert any("answer the question first" in error for error in result.strategy_errors)
 
 
 def test_failure_diagnostics_include_actionable_eval_context():

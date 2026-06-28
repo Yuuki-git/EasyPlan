@@ -103,6 +103,40 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **时间表达降精度**：生成态优先显示“低投入 / 中投入 / 较重投入”等时间档位；正式进入看板后再展示 rounded 预计时长，避免伪精确。
 *   **信息架构澄清**：“全部计划”明确为跨项目聚合视图，“项目”保留为 thread 级长期容器；同一任务可同时存在于项目视图和“全部计划”视图中，但 Roadmap 与 Current Phase 只属于项目上下文。
 
+#### 🩹 v1.2.5.1: Generation Experience Patch (Closed / RC.1)
+*   **范围定位**：v1.2.5.1 只负责收口生成态稳定性与信息架构边界，不再增加新的核心功能。
+*   **已收口问题**：
+    *   `exploration_decision` 首屏先给“当前判断”，避免用户只看到 reasoning 却拿不到判断。
+    *   新 intent / retry / next phase preview 按单次 run 管理，不残留上一轮 reasoning。
+    *   SSE replay 去重、stalled 检测和“返回当前计划 / 取消本次生成”逃生口闭环。
+    *   “全部计划”与“项目”语义拆清，避免看起来像两套并列容器。
+    *   `exploration_decision` 场景下的 `time_horizon` 漂移与 raw validation error 暴露问题已专项修复。
+*   **后续处理**：仅保留非阻塞测试覆盖缺口进入 backlog，不再继续向 v1.2.5.1 混入新产品改动。
+
+#### 📍 v1.2.6: 总览层与回答层 (Portfolio Overview & Answer Layer)
+*   **全部计划升级为总览层**：
+    *   “全部计划”不再只是任务聚合流，而是所有计划的 portfolio overview。
+    *   展示计划标题、当前阶段摘要、下一步动作或最近任务，并支持点击进入对应项目。
+*   **探索决策回答层升级**：
+    *   `exploration_decision` 固定输出为“当前判断 -> 判断依据 -> 下一步探索”，先回答问题，再给路线。
+    *   当前判断必须是临时判断，不得伪装成最终结论。
+*   **重试语义收口**：
+    *   `Retry` 降级为异常恢复按钮，仅在失败、卡住或 SSE 中断时出现。
+    *   非异常场景如用户想换一种拆法，应提供“重新生成”而不是泛化 `Retry`。
+*   **生成态信息降噪**：
+    *   重新生成后默认只展示当前 run，旧 run 折叠成摘要，避免前端信息越堆越多。
+
+#### 📍 v1.2.7: 规划模型 2.0 (Planning Model Differentiation)
+*   **长期目标高层化**：
+    *   `long_term_growth` 继续使用 Roadmap，但 phase 必须更高层，只展开当前 phase，未来 phase 更像地图而不是任务列表。
+*   **短期目标模块化**：
+    *   `short_term_delivery` 不直接复用长期 Roadmap，改为 deliverables / workstreams / execution lanes。
+    *   核心目标是让短期目标强调交付结构，而不是伪装成长线阶段图。
+*   **探索决策路线独立化**：
+    *   `exploration_decision` 保留 decision route，但它是判断与验证路径，不应混成长线执行地图。
+*   **评测升级**：
+    *   后续 eval 不只检查“有没有 roadmap”，而是检查是否为对应 intent 采用了正确的规划模型。
+
 #### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
 *   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。
 

@@ -309,6 +309,66 @@ async function runTests() {
     );
   }
 
+  // --- 测试场景 6: 探索决策“先答后拆”摘要解析 ---
+  {
+    const { parseExplorationSummary } = loadTsModule('../../src/lib/explorationHelper.ts');
+
+    // 格式 1: 显式标记
+    const summary1 = "当前判断：可以考虑，但先做低成本验证。判断依据：目前转行门槛较高，且竞争大。下一步探索：调研3个成功案例。";
+    const res1 = parseExplorationSummary(summary1);
+    assert.equal(res1.judgment, "可以考虑，但先做低成本验证。");
+    assert.equal(res1.basis, "目前转行门槛较高，且竞争大。");
+    assert.equal(res1.exploration, "调研3个成功案例。");
+
+    // 格式 2: 纯段落（按句子拆分）
+    const summary2 = "进行低成本验证是值得的。因为目前市场竞争激烈，不确定因素多。建议开展澄清和调研。";
+    const res2 = parseExplorationSummary(summary2);
+    assert.equal(res2.judgment, "进行低成本验证是值得的。");
+    assert.equal(res2.basis, "因为目前市场竞争激烈，不确定因素多。");
+    assert.equal(res2.exploration, "建议开展澄清和调研。");
+  }
+
+  // --- 测试场景 7: refinePlan 清除上一轮运行临时状态与可见 reasoning ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url, options) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-refine/confirm'));
+      assert.equal(options.method, 'POST');
+      const body = JSON.parse(options.body);
+      assert.equal(body.action, 'refine');
+      assert.equal(body.feedback, 'more detailed plan');
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({})
+      };
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, {
+      'easyplan_thread_id': 'thread-refine'
+    });
+
+    // Preset some old run states
+    useAppStore.setState({
+      appState: 'PENDING',
+      reasoningLogs: ['old log 1', 'old log 2'],
+      taskTree: { root: { title: 'old root' } },
+      nodeStatuses: { 'node-1': 'success' },
+      error: 'some error'
+    });
+
+    await useAppStore.getState().refinePlan('more detailed plan');
+
+    const state = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(state.appState, 'THINKING');
+    assert.equal(state.error, null);
+    assert.equal(state.taskTree, null);
+    assert.deepEqual(plain(state.reasoningLogs), []);
+    assert.deepEqual(plain(state.nodeStatuses), {});
+  }
+
   console.log('generationRun tests passed');
 }
 

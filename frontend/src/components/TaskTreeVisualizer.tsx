@@ -2,16 +2,17 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TaskNode } from '../types/api';
 import { useAppStore } from '../store/useAppStore';
-import { 
-  ChevronRight, 
-  Circle, 
-  Clock, 
-  CheckCircle2, 
-  AlertCircle, 
-  RotateCcw, 
-  Loader2 
+import {
+  ChevronRight,
+  Circle,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { parseExplorationSummary } from '../lib/explorationHelper';
 
 interface TaskTreeVisualizerProps {
   node: TaskNode;
@@ -32,13 +33,13 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
   const renderStatus = () => {
     // Only show status icons after SYNCING has started
     if (appState === 'PENDING' || appState === 'INITIAL' || appState === 'THINKING') return null;
-    
+
     switch (status) {
       case 'success':
         return <CheckCircle2 size={14} className="text-green-500/80" />;
       case 'error':
         return (
-          <button 
+          <button
             onClick={(e) => {
               e.stopPropagation();
               retryNode(node.client_node_id);
@@ -63,10 +64,10 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
       whileInView={{ opacity: 1, x: 0 }}
       viewport={{ once: true, margin: "0px 0px -50px 0px" }} // Clip animation for non-visible nodes
       layout={isLargeTree ? "position" : true} // Use lighter "position-only" layout for large trees
-      transition={{ 
-        delay: depth * 0.1, 
-        duration: 0.5, 
-        ease: [0.22, 1, 0.36, 1] 
+      transition={{
+        delay: depth * 0.1,
+        duration: 0.5,
+        ease: [0.22, 1, 0.36, 1]
       }}
       className={clsx(
         "flex flex-col w-full relative task-tree-node",
@@ -78,13 +79,13 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
         <div className="absolute -left-4 top-0 bottom-0 w-[1px] bg-gradient-to-b from-muted via-muted/50 to-transparent" />
       )}
 
-      <div 
+      <div
         className={clsx("flex items-start gap-4 group", isGroup && "cursor-pointer")}
         onClick={() => {
           if (isGroup) setIsExpanded(!isExpanded);
         }}
       >
-        <div 
+        <div
           className={clsx(
             "mt-1.5 shrink-0 transition-transform duration-500",
             isGroup ? "text-accent-foreground" : "text-muted-foreground/40",
@@ -93,7 +94,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
           )}
         >
           {isGroup ? (
-            <motion.div 
+            <motion.div
               animate={{ rotate: isExpanded ? 90 : 0 }}
               transition={{ duration: 0.2 }}
               className="w-5 h-5 flex items-center justify-center rounded-sm bg-accent/20 border border-accent/30 group-hover:scale-110 transition-transform"
@@ -106,10 +107,10 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
             </div>
           )}
         </div>
-        
+
         <div className="flex-1 space-y-1.5 pb-2">
           <div className="flex items-center justify-between gap-4">
-            <h4 
+            <h4
               className={clsx(
                 "tracking-tight transition-colors",
                 isGroup ? "text-lg font-medium text-foreground" : "text-base font-normal text-foreground/80",
@@ -118,7 +119,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
             >
               {node.title}
             </h4>
-            
+
             <div className="flex items-center gap-3">
               {renderStatus()}
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 text-[9px] font-mono text-muted-foreground/60 border border-muted/20">
@@ -127,7 +128,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
               </div>
             </div>
           </div>
-          
+
           {node.description && (
             <p className={clsx(
               "text-xs font-light leading-relaxed max-w-lg transition-colors",
@@ -141,7 +142,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
 
       <AnimatePresence initial={false}>
         {hasChildren && isExpanded && (
-          <motion.div 
+          <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -158,6 +159,8 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
   );
 };
 
+
+
 export const TaskTreeRoot: React.FC = () => {
   const { taskTree, appState } = useAppStore();
 
@@ -165,18 +168,49 @@ export const TaskTreeRoot: React.FC = () => {
     return null;
   }
 
+  const isExploration = taskTree.planning_context?.intent_type === 'exploration_decision';
+  const explorationData = isExploration ? parseExplorationSummary(taskTree.summary) : null;
+
   return (
     <div className="w-full flex flex-col items-center mt-12 pb-40">
-      <div className="w-full max-w-xl px-2 mb-8">
-        <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
-          建议行动计划
-        </h3>
-        <p className="text-lg font-light text-foreground/80 leading-snug">
-          {taskTree.summary}
-        </p>
-      </div>
-      
+      {isExploration && explorationData ? (
+        <div className="w-full max-w-xl px-2 mb-10 space-y-6">
+          <div className="p-5 rounded-2xl border border-amber-500/20 bg-amber-500/5 backdrop-blur-md">
+            <h3 className="text-xs font-semibold text-amber-500 tracking-wider uppercase mb-2">当前判断 / Judgment</h3>
+            <p className="text-lg font-medium text-foreground leading-snug">
+              {explorationData.judgment}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <h3 className="text-xs font-semibold text-muted-foreground/50 tracking-wider uppercase">判断依据 / Basis</h3>
+            <p className="text-sm font-light text-muted-foreground leading-relaxed">
+              {explorationData.basis}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <h3 className="text-xs font-semibold text-muted-foreground/50 tracking-wider uppercase">下一步探索 / Next Steps</h3>
+            <p className="text-sm font-light text-muted-foreground leading-relaxed">
+              {explorationData.exploration}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="w-full max-w-xl px-2 mb-8">
+          <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
+            建议行动计划
+          </h3>
+          <p className="text-lg font-light text-foreground/80 leading-snug">
+            {taskTree.summary}
+          </p>
+        </div>
+      )}
+
       <div className="w-full max-w-xl px-2">
+        <h3 className="text-xs font-semibold text-muted-foreground/40 tracking-widest uppercase mb-4">
+          {isExploration ? '对应任务树 / Action Tree' : '计划步骤'}
+        </h3>
         <TaskTreeVisualizer node={taskTree.root} />
       </div>
 

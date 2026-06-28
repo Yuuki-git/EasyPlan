@@ -1,10 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
 import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskResponse } from '../types/api';
 import { PlanningOverview } from './PlanningOverview';
+import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
@@ -497,10 +498,61 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, taskTree } = useAppStore();
+  const {
+    currentViewBucket,
+    selectedProjectId,
+    boardTasks,
+    boardError,
+    fetchTasks,
+    appState,
+    taskTree,
+    loadProjectSnapshot
+  } = useAppStore();
+
+  useEffect(() => {
+    if (boardTasks === null) {
+      const bootstrap = async () => {
+        try {
+          if (selectedProjectId === null) {
+            useAppStore.setState({ taskTree: null });
+            await fetchTasks('planned');
+          } else {
+            useAppStore.setState({ taskTree: null });
+            await loadProjectSnapshot(selectedProjectId);
+            await fetchTasks('planned');
+          }
+        } catch (err) {
+          const errMsg = (err as Error).message;
+          const boardError = errMsg === 'Failed to load project snapshot' || errMsg === 'Failed to load task board'
+            ? '加载项目看板失败，请重试'
+            : errMsg;
+          useAppStore.setState({ boardError });
+        }
+      };
+      bootstrap();
+    }
+  }, [boardTasks, selectedProjectId, fetchTasks, loadProjectSnapshot]);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
 
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
+
+  const projects = useMemo(() => {
+    if (!boardTasks) return [];
+    const projectMap = new Map<string, { id: string; title: string; source?: string }>();
+    boardTasks.forEach(task => {
+      if (task.parent_task_id === null && task.thread_id) {
+        const existing = projectMap.get(task.thread_id);
+        if (!existing || (existing.source === 'manual' && task.source === 'ai')) {
+          projectMap.set(task.thread_id, {
+            id: task.thread_id,
+            title: task.title,
+            source: task.source
+          });
+        }
+      }
+    });
+    return Array.from(projectMap.values());
+  }, [boardTasks]);
 
   const planningView = useMemo(() => {
     if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return null;
@@ -587,7 +639,7 @@ export const TaskBoard: React.FC = () => {
       >
         <p className="text-destructive font-medium">{boardError}</p>
         <button
-          onClick={() => fetchTasks()}
+          onClick={() => useAppStore.setState({ boardError: null, boardTasks: null })}
           className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-md transition-colors"
         >
           重新加载
@@ -652,55 +704,62 @@ export const TaskBoard: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
-            {currentViewBucket === 'planned' && selectedProjectId && (
-              <PlanningOverview />
-            )}
-
-            {isEmpty ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-                <p className="text-muted-foreground/60 text-lg">
-                  {currentViewBucket === 'planned'
-                    ? "您的专属空间空空如也。点击右上角，让 AI 为您分忧。"
-                    : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
-                </p>
-                {currentViewBucket === 'planned' && (
-                  <button
-                    onClick={handleNewPlan}
-                    className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
-                  >
-                    {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
-                  </button>                )}
-              </div>
+            {currentViewBucket === 'planned' && selectedProjectId === null ? (
+              <PortfolioOverview projects={projects} />
             ) : (
-              <BoardTaskNode node={displayTree} />
-            )}
+              <>
+                {currentViewBucket === 'planned' && selectedProjectId && (
+                  <PlanningOverview />
+                )}
 
-            {planningView && planningView.historicalPhases.length > 0 && (
-              <div className="mt-12 space-y-4">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
-                {planningView.historicalPhases.map((hist, index) => (
-                  <details key={hist.phase.phase_id} className="border border-muted/50 rounded-xl overflow-hidden bg-background/50 group">
-                    <summary className="px-4 py-3 bg-muted/10 text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none outline-none flex items-center justify-between transition-colors">
-                      <span>Phase {index + 1}: {hist.phase.title}</span>
-                      <ChevronDown size={16} className="opacity-50 group-open:rotate-180 transition-transform" />
-                    </summary>
-                    <div className="p-4 space-y-2 border-t border-muted/30">
-                      {hist.tasks.map(task => (
-                        <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/10 border border-transparent opacity-70">
-                          <CheckCircle2 size={16} className="text-muted-foreground" />
-                          <span className="text-sm text-muted-foreground line-through">{task.title}</span>
+                {isEmpty ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+                    <p className="text-muted-foreground/60 text-lg">
+                      {currentViewBucket === 'planned'
+                        ? "您的专属 space 空空如也。点击右上角，让 AI 为您分忧。"
+                        : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
+                    </p>
+                    {currentViewBucket === 'planned' && (
+                      <button
+                        onClick={handleNewPlan}
+                        className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
+                      >
+                        {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <BoardTaskNode node={displayTree} />
+                )}
+
+                {planningView && planningView.historicalPhases.length > 0 && (
+                  <div className="mt-12 space-y-4">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
+                    {planningView.historicalPhases.map((hist, index) => (
+                      <details key={hist.phase.phase_id} className="border border-muted/50 rounded-xl overflow-hidden bg-background/50 group">
+                        <summary className="px-4 py-3 bg-muted/10 text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none outline-none flex items-center justify-between transition-colors">
+                          <span>Phase {index + 1}: {hist.phase.title}</span>
+                          <ChevronDown size={16} className="opacity-50 group-open:rotate-180 transition-transform" />
+                        </summary>
+                        <div className="p-4 space-y-2 border-t border-muted/30">
+                          {hist.tasks.map(task => (
+                            <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/10 border border-transparent opacity-70">
+                              <CheckCircle2 size={16} className="text-muted-foreground" />
+                              <span className="text-sm text-muted-foreground line-through">{task.title}</span>
+                            </div>
+                          ))}
+                          {hist.tasks.length === 0 && (
+                            <div className="text-sm text-muted-foreground/50 py-2">No tasks found for this phase.</div>
+                          )}
                         </div>
-                      ))}
-                      {hist.tasks.length === 0 && (
-                        <div className="text-sm text-muted-foreground/50 py-2">No tasks found for this phase.</div>
-                      )}
-                    </div>
-                  </details>
-                ))}
-              </div>
-            )}
+                      </details>
+                    ))}
+                  </div>
+                )}
 
-            <InlineTaskInput />
+                <InlineTaskInput />
+              </>
+            )}
 
           </div>
         </main>

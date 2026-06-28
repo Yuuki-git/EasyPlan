@@ -17,10 +17,11 @@ export const ActionLayer: React.FC = () => {
     generateNextPhasePlan,
     intent,
     startNewIntent,
-    error
+    error,
+    selectedProjectId
   } = useAppStore();
 
-  const isVisible = appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || isRunStalled;
+  const isVisible = appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || appState === 'SYNCING' || isRunStalled;
 
   const handleCancel = () => {
     if (previewMode === 'next_phase') {
@@ -66,12 +67,14 @@ export const ActionLayer: React.FC = () => {
                     <RotateCw size={14} />
                     重试本次生成
                   </button>
-                  <button
-                    onClick={returnToCommittedPlan}
-                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
-                  >
-                    返回当前计划
-                  </button>
+                  {selectedProjectId && (
+                    <button
+                      onClick={returnToCommittedPlan}
+                      className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                    >
+                      返回当前计划
+                    </button>
+                  )}
                   <button
                     onClick={startNewIntent}
                     className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
@@ -98,31 +101,36 @@ export const ActionLayer: React.FC = () => {
                     继续等待
                   </button>
                   <button
-                    onClick={handleRetry}
-                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-amber-500/50 hover:border-amber-500 rounded-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 transition-all shadow-sm"
-                  >
-                    <RotateCw size={14} />
-                    重试本次生成
-                  </button>
-                  <button
-                    onClick={returnToCommittedPlan}
+                    onClick={handleCancel}
                     className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
                   >
-                    返回当前计划
+                    取消本次生成
                   </button>
+                  {selectedProjectId && (
+                    <button
+                      onClick={returnToCommittedPlan}
+                      className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                    >
+                      返回当前计划
+                    </button>
+                  )}
                 </div>
               </motion.div>
             ) : (
               <div className="flex items-center gap-8 bg-background/50 backdrop-blur-md border border-muted px-6 py-3 rounded-full shadow-lg">
-                {appState === 'THINKING' ? (
+                {appState === 'THINKING' || appState === 'SYNCING' ? (
                   <>
-                    <button
-                      onClick={returnToCommittedPlan}
-                      className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
-                    >
-                      <span className="text-sm font-light">返回当前计划</span>
-                    </button>
-                    <div className="w-px h-4 bg-muted/60" />
+                    {selectedProjectId && (
+                      <>
+                        <button
+                          onClick={returnToCommittedPlan}
+                          className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                        >
+                          <span className="text-sm font-light">返回当前计划</span>
+                        </button>
+                        <div className="w-px h-4 bg-muted/60" />
+                      </>
+                    )}
                     <button
                       onClick={handleCancel}
                       className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
@@ -135,13 +143,17 @@ export const ActionLayer: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <button
-                      onClick={returnToCommittedPlan}
-                      className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
-                    >
-                      <span className="text-sm font-light">返回当前计划</span>
-                    </button>
-                    <div className="w-px h-4 bg-muted/60" />
+                    {selectedProjectId && (
+                      <>
+                        <button
+                          onClick={returnToCommittedPlan}
+                          className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                        >
+                          <span className="text-sm font-light">返回当前计划</span>
+                        </button>
+                        <div className="w-px h-4 bg-muted/60" />
+                      </>
+                    )}
                     <button
                       onClick={handleCancel}
                       className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
@@ -150,6 +162,13 @@ export const ActionLayer: React.FC = () => {
                         ESC
                       </div>
                       <span className="text-sm font-light">取消本次生成</span>
+                    </button>
+                    <div className="w-px h-4 bg-muted/60" />
+                    <button
+                      onClick={handleRetry}
+                      className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors font-medium text-amber-500/80 hover:text-amber-500"
+                    >
+                      <span>重新生成</span>
                     </button>
                     <div className="w-px h-4 bg-muted/60" />
                     <button

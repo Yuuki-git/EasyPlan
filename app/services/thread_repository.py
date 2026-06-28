@@ -77,7 +77,13 @@ class AgentThreadRepository:
         )
         return result.scalar_one_or_none()
 
-    async def mark_confirmation_accepted(self, *, thread: AgentThread, request_id: str) -> None:
+    async def mark_confirmation_accepted(
+        self,
+        *,
+        thread: AgentThread,
+        request_id: str,
+        action: str | None = None,
+    ) -> None:
         payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else None
         if payload and payload.get("type") == "next_phase_review":
             expected_request_id = str(payload.get("request_id") or "")
@@ -95,6 +101,24 @@ class AgentThreadRepository:
                 **payload,
                 "status": "confirming",
             }
+            thread.current_node = "next_phase_planner"
+        elif payload and payload.get("type") == "task_tree_review":
+            next_payload = {
+                **payload,
+                "request_id": request_id,
+            }
+            if action == "refine":
+                next_payload["status"] = "regenerating"
+                thread.current_node = "planner"
+            elif action == "edit":
+                next_payload["status"] = "editing"
+                thread.current_node = "validator"
+            elif action == "approve":
+                next_payload["status"] = "confirming"
+                thread.current_node = "persist_internal_tasks"
+            elif action == "reject":
+                next_payload["status"] = "cancelled"
+            thread.interrupt_payload = next_payload
         thread.status = "running"
         thread.updated_at = datetime.now(timezone.utc)
         try:
@@ -292,7 +316,7 @@ class AgentThreadRepository:
 def thread_to_snapshot_payload(thread: AgentThread) -> dict[str, Any]:
     return {
         "thread_id": thread.thread_id,
-        "status": thread.status,
+        "status": _snapshot_status(thread),
         "state_version": 0,
         "last_event_id": None,
         "server_time": datetime.now(timezone.utc),
@@ -318,6 +342,33 @@ def _phase_generation_conflict(
         error_message=message,
         remaining_ai_actions=remaining_ai_actions,
     )
+
+
+def _snapshot_status(thread: AgentThread) -> str:
+    payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+    payload_status = payload.get("status")
+    if isinstance(payload_status, str) and payload_status == "cancelled":
+        return "cancelled"
+    if isinstance(payload_status, str) and payload_status == "failed":
+        return "failed"
+    if thread.error_code:
+        return "failed"
+    if thread.status == "awaiting_confirmation":
+        return "awaiting_confirmation"
+    if _is_stalled_thread(thread):
+        return "stalled"
+    return thread.status
+
+
+def _is_stalled_thread(thread: AgentThread) -> bool:
+    payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+    if thread.status != "running":
+        return False
+    if payload.get("type") != "phase_generation_state" or payload.get("status") != "running":
+        return False
+    if thread.lease_expires_at is None:
+        return False
+    return not _lease_is_active(thread.lease_expires_at, datetime.now(timezone.utc))
 
 
 def _lease_is_active(expires_at: datetime, now: datetime) -> bool:

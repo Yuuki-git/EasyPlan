@@ -105,7 +105,11 @@ async def confirm_thread(
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     try:
-        await repository.mark_confirmation_accepted(thread=thread, request_id=payload.request_id)
+        await repository.mark_confirmation_accepted(
+            thread=thread,
+            request_id=payload.request_id,
+            action=payload.action.value,
+        )
     except ThreadStateConflictError as error:
         raise _thread_conflict_http_exception(error) from error
     background_tasks.add_task(

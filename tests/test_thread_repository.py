@@ -8,7 +8,7 @@ from sqlalchemy.sql import Select
 
 from app.models.task import Task
 from app.models.thread import AgentThread
-from app.services.thread_repository import AgentThreadRepository
+from app.services.thread_repository import AgentThreadRepository, thread_to_snapshot_payload
 
 
 def test_start_next_phase_generation_locks_thread_and_acquires_lease():
@@ -198,6 +198,34 @@ def test_mark_confirmation_accepted_binds_next_phase_request_id_and_marks_confir
     assert session.commit_count == 1
 
 
+def test_mark_confirmation_accepted_marks_initial_refine_as_regenerating() -> None:
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.status = "awaiting_confirmation"
+    thread.current_node = "human_review"
+    thread.interrupt_payload = {
+        "type": "task_tree_review",
+        "task_tree": {"summary": "preview"},
+        "allowed_actions": ["approve", "edit", "refine", "reject"],
+    }
+    session = FakeThreadSession([])
+    repository = AgentThreadRepository(session)
+
+    asyncio.run(
+        repository.mark_confirmation_accepted(
+            thread=thread,
+            request_id="req_refine_12345678",
+            action="refine",
+        )
+    )
+
+    assert thread.status == "running"
+    assert thread.current_node == "planner"
+    assert thread.interrupt_payload["request_id"] == "req_refine_12345678"
+    assert thread.interrupt_payload["status"] == "regenerating"
+    assert session.commit_count == 1
+
+
 def test_mark_confirmation_accepted_rejects_next_phase_request_id_mismatch():
     user_id = uuid4()
     thread = _phase_thread(user_id=user_id, thread_id="thread-1")
@@ -301,6 +329,58 @@ def test_cancel_pending_preview_rejects_when_no_pending_preview_exists():
 
     assert thread.task_tree == committed_task_tree
     assert session.commit_count == 0
+
+
+def test_thread_snapshot_payload_reports_cancelled_phase_preview() -> None:
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.status = "succeeded"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": "req-cancelled",
+        "status": "cancelled",
+        "history": {"req-cancelled": {"status": "cancelled"}},
+    }
+
+    payload = thread_to_snapshot_payload(thread)
+
+    assert payload["status"] == "cancelled"
+
+
+def test_thread_snapshot_payload_reports_failed_generation_state() -> None:
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.status = "succeeded"
+    thread.error_code = "NEXT_PHASE_RUN_FAILED"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": "req-failed",
+        "status": "failed",
+        "history": {"req-failed": {"status": "failed"}},
+    }
+
+    payload = thread_to_snapshot_payload(thread)
+
+    assert payload["status"] == "failed"
+
+
+def test_thread_snapshot_payload_reports_stalled_generation_when_lease_expires() -> None:
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.status = "running"
+    thread.current_node = "next_phase_planner"
+    thread.lease_owner = "req-stalled"
+    thread.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": "req-stalled",
+        "status": "running",
+        "history": {},
+    }
+
+    payload = thread_to_snapshot_payload(thread)
+
+    assert payload["status"] == "stalled"
 
 
 class FakeThreadSession:

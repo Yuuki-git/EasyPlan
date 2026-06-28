@@ -692,6 +692,7 @@ def collect_strategy_errors(
             errors.append("exploration_decision should not produce a long-term execution plan")
         if not any(term in text for term in EXPLORATION_DISCOVERY_TERMS):
             errors.append("exploration_decision lacks clarification, information gathering, experiment, or decision nodes")
+        errors.extend(exploration_summary_errors(task_tree.summary))
     return errors
 
 
@@ -704,6 +705,35 @@ def task_tree_text(task_tree: TaskTree) -> str:
             if value
         )
     return " ".join(parts)
+
+
+def exploration_summary_errors(summary: str) -> list[str]:
+    if not isinstance(summary, str):
+        return ["exploration_decision summary is missing"]
+    normalized = re.sub(r"\s+", "", summary)
+    current_index = normalized.find("当前判断：")
+    basis_index = normalized.find("判断依据：")
+    next_index = normalized.find("下一步探索：")
+    if min(current_index, basis_index, next_index) < 0:
+        return [
+            "exploration_decision summary must answer the question first with 当前判断 / 判断依据 / 下一步探索"
+        ]
+    if not (current_index <= basis_index <= next_index):
+        return [
+            "exploration_decision summary must keep 当前判断 before 判断依据 before 下一步探索"
+        ]
+    current_text = normalized[current_index + len("当前判断：") : basis_index]
+    basis_text = normalized[basis_index + len("判断依据：") : next_index]
+    next_text = normalized[next_index + len("下一步探索：") :]
+    if not current_text or not basis_text or not next_text:
+        return [
+            "exploration_decision summary must include non-empty 当前判断 / 判断依据 / 下一步探索 sections"
+        ]
+    if current_text.startswith(("下一步", "先", "然后", "再", "最后")):
+        return [
+            "exploration_decision summary must answer the question first instead of only listing routes"
+        ]
+    return []
 
 
 def top_level_looks_like_long_term_curriculum(task_tree: TaskTree) -> bool:

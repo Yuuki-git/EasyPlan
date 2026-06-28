@@ -265,7 +265,12 @@ context_checklist 必须：
 组：「手机处理」
 动作：「缴电费」""",
     "exploration_decision": """策略：这是探索决策型任务。
-先给 1-2 句当前判断，写入 TaskTree.summary，例如“可以考虑，但先做低成本验证”。
+先给 1-2 句当前判断，继续写入现有 task_tree.summary，例如“可以考虑，但先做低成本验证”。
+summary 必须严格按这个顺序输出三段：
+当前判断：先直接回答用户现在更适合继续探索、暂缓执行，还是暂不建议进入长期投入。
+判断依据：说明 1-2 条当前依据，例如信息缺口、成本收益、现实约束或风险点。
+下一步探索：再给信息收集、问题澄清、低成本验证和决策节点。
+不要只给探索路线、不回答问题本身。
 summary 必须是当前判断，不要只是“探索澄清计划”这类抽象标题。
 不要直接生成长期执行计划，也不要假设用户已经做出最终决定。
 不要假设用户已经决定。
@@ -276,9 +281,9 @@ summary 必须是当前判断，不要只是“探索澄清计划”这类抽象
 禁止直接生成完整转行计划、创业计划、长期学习计划。
 禁止直接生成长期执行计划或连续投入型任务。
 信息收集、小实验、决策节点任务建议生成 start_hint。
-先给 1-2 句当前判断，再给探索路线。
+先给 1-2 句当前判断，再给判断依据和下一步探索。
 当前判断必须先回答“现在更像值得继续探索，还是暂不建议立刻执行”，但不要把判断写成最终定论。
-这 1-2 句当前判断必须继续写入现有 task_tree.summary，不新增字段，不改 schema。
+这 1-2 句当前判断必须继续写入现有 task_tree.summary，不新增字段，不改 schema，不扩 API。
 
 exploration_decision 禁止：
 - 假设用户已经做出最终决定
@@ -289,8 +294,8 @@ exploration_decision 禁止：
 
 exploration_decision 输出措辞：
 - root.children 最多 5 个顶层任务。
-- summary 先给 1-2 句当前判断，再给探索路线总览；继续写入现有 task_tree.summary，不新增任何字段。
-- summary 可以写成“当前判断 + 探索澄清计划”，不要只写空泛标题；assumptions 必须是 []。
+- summary 必须写成“当前判断：... 判断依据：... 下一步探索：...”，继续写入现有 task_tree.summary，不新增任何字段。
+- summary 必须先回答问题，再说明依据和下一步探索；不要只给探索路线，也不要只写空泛标题；assumptions 必须是 []。
 - 不要在 summary、assumptions、title、description 或 verb 中写“执行计划”“学习计划”“路线图”“报名”“投递”“直接”“立即”。
 - 如果用户原文包含辞职、转行或创业，把用户原词改写为“方向A/选项A/当前选择”，保持探索口吻。
 - 任务标题应使用“澄清/列出/收集/访谈/比较/验证/决策记录”，不要使用“制定计划/开始执行/报名课程/投递岗位”。
@@ -1300,6 +1305,17 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
         return
 
     if intent_type == "exploration_decision":
+        if not _has_exploration_answer_first_summary(task_tree.summary):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="EXPLORATION_ANSWER_MISSING",
+                    intent_type=intent_type,
+                    failed_rule="exploration_decision 回答层契约",
+                    problem="summary 只给了探索路线，或没有先回答当前判断、判断依据和下一步探索。不要只给探索路线、不回答问题本身。",
+                    offender=task_tree.root,
+                    fix_suggestion="先回答当前判断，再给判断依据和下一步探索；继续写入现有 task_tree.summary，不新增字段。",
+                )
+            )
         if _contains_exploration_execution_language(task_tree):
             errors.append(
                 _format_validator_feedback(
@@ -1586,6 +1602,28 @@ def _contains_exploration_execution_language(task_tree: TaskTree) -> bool:
 def _contains_exploration_discovery_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
     return any(term in text for term in EXPLORATION_DISCOVERY_TERMS)
+
+
+def _has_exploration_answer_first_summary(summary: str) -> bool:
+    if not isinstance(summary, str):
+        return False
+    normalized = re.sub(r"\s+", "", summary)
+    current_index = normalized.find("当前判断：")
+    basis_index = normalized.find("判断依据：")
+    next_index = normalized.find("下一步探索：")
+    if min(current_index, basis_index, next_index) < 0:
+        return False
+    if not (current_index <= basis_index <= next_index):
+        return False
+    current_text = normalized[current_index + len("当前判断：") : basis_index]
+    basis_text = normalized[basis_index + len("判断依据：") : next_index]
+    next_text = normalized[next_index + len("下一步探索：") :]
+    if not current_text or not basis_text or not next_text:
+        return False
+    route_only_markers = ("下一步", "先", "然后", "再", "最后")
+    if current_text.startswith(route_only_markers):
+        return False
+    return True
 
 
 def _task_tree_text(task_tree: TaskTree) -> str:

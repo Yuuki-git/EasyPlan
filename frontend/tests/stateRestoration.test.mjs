@@ -223,6 +223,59 @@ async function runTests() {
     assert.equal(updatedState.phaseRequestId, 'req-running');
   }
 
+  // --- 测试场景 4: 全部计划 (Portfolio Overview) 视图刷新恢复 ---
+  {
+    const initialLocal = {
+      'easyplan_view': 'board',
+    };
+
+    const { useAppStore } = loadAppStoreModule(() => {}, initialLocal);
+
+    const state = useAppStore.getState();
+    assert.equal(state.view, 'board');
+    assert.equal(state.selectedProjectId, null);
+  }
+
+  // --- 测试场景 5: stalled status 刷新恢复 ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-stalled'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: 'thread-stalled',
+          status: 'stalled',
+          intent_text: 'my intent',
+          task_tree: null
+        })
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_selected_project_id': 'thread-stalled',
+      'easyplan_thread_id': 'thread-stalled',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-stalled',
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
+
+    const state = useAppStore.getState();
+    await state.alignState('thread-stalled');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(updatedState.view, 'board');
+    assert.equal(updatedState.appState, 'THINKING');
+    assert.equal(updatedState.isRunStalled, true);
+    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.previewMode, 'next_phase');
+    assert.equal(updatedState.phaseRequestId, 'req-stalled');
+  }
+
   console.log('stateRestoration tests passed');
 }
 
