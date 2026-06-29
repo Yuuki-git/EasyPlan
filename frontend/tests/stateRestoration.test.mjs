@@ -318,6 +318,43 @@ async function runTests() {
     assert.equal(updatedState.phaseRequestId, 'req-pending');
   }
 
+  // --- Scenario 7: stale persisted thread context should be cleared on 404 snapshot recovery ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-gone'));
+      return {
+        ok: false,
+        status: 404,
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'thread-gone',
+      'easyplan_thread_id': 'thread-gone',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-gone',
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);
+    await useAppStore.getState().alignState('thread-gone');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(updatedState.selectedProjectId, null, 'Stale selectedProjectId should be cleared');
+    assert.equal(updatedState.threadId, null, 'Stale threadId should be cleared');
+    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.previewMode, null, 'Stale preview mode should be cleared');
+    assert.equal(updatedState.phaseRequestId, null, 'Stale phase request id should be cleared');
+    assert.equal(updatedState.appState, 'INITIAL', 'Stale thread recovery should not leave the app in ERROR');
+    assert.equal(localStorageValues.has('easyplan_selected_project_id'), false);
+    assert.equal(localStorageValues.has('easyplan_thread_id'), false);
+    assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
+    assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
+  }
+
   console.log('stateRestoration tests passed');
 }
 

@@ -470,6 +470,41 @@ async function runTests() {
     assert.equal(useAppStore.getState().boardTasks, null, 'boardTasks should be cleared on setView');
   }
 
+  // --- Scenario 8: stale persisted project context should recover to the planned board ---
+  {
+    let tasksFetched = false;
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/stale-proj')) {
+        return { ok: false, status: 404 };
+      }
+      if (url.includes('/api/tasks')) {
+        tasksFetched = true;
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'stale-proj',
+      'easyplan_thread_id': 'stale-proj'
+    });
+
+    const { TaskBoard } = loadComponentModule('../src/components/TaskBoard.tsx', useAppStore);
+
+    TaskBoard({});
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const state = useAppStore.getState();
+    assert.ok(tasksFetched, 'Should fall back to loading planned tasks after stale project recovery');
+    assert.equal(state.selectedProjectId, null, 'Stale selectedProjectId should be cleared');
+    assert.equal(state.threadId, null, 'Stale threadId should be cleared');
+    assert.equal(state.boardError, null, 'Stale project recovery should not leave the board in an error state');
+    assert.deepEqual(state.boardTasks, [], 'Planned board should hydrate after stale project recovery');
+    assert.equal(localStorageValues.has('easyplan_selected_project_id'), false, 'Persisted stale project id should be removed');
+    assert.equal(localStorageValues.has('easyplan_thread_id'), false, 'Persisted stale thread id should be removed');
+  }
+
   console.log('boardRestoration integration tests passed');
 }
 

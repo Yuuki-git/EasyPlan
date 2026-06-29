@@ -124,6 +124,40 @@ interface AppStore {
   returnToCommittedPlan: () => Promise<void>;
 }
 
+type AppStoreSet = (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
+type AppStoreGet = () => AppStore;
+
+const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleThreadId: string) => {
+  const state = get();
+  const shouldClearSelectedProject = state.selectedProjectId === staleThreadId;
+  const shouldClearThread = state.threadId === staleThreadId;
+
+  set({
+    selectedProjectId: shouldClearSelectedProject ? null : state.selectedProjectId,
+    threadId: shouldClearThread ? null : state.threadId,
+    taskTree: null,
+    previewMode: null,
+    phaseRequestId: null,
+    appState: 'INITIAL',
+    error: null,
+    boardError: null,
+    currentViewBucket: 'planned',
+    isPhaseRequestPending: false,
+    isRunStalled: false,
+    reasoningLogs: [],
+    nodeStatuses: {},
+  });
+
+  if (shouldClearSelectedProject) {
+    localStorage.removeItem('easyplan_selected_project_id');
+  }
+  if (shouldClearThread) {
+    localStorage.removeItem('easyplan_thread_id');
+  }
+  localStorage.removeItem('easyplan_preview_mode');
+  localStorage.removeItem('easyplan_phase_request_id');
+};
+
 export const useAppStore = create<AppStore>((set, get) => ({
   intent: '',
   appState: 'INITIAL',
@@ -329,6 +363,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         get().setToken(null, false);
         set({ showAuthModal: true });
         throw new Error('请先登录以查看项目看板');
+      }
+
+      if (response.status === 404) {
+        const { selectedProjectId, threadId: activeThreadId } = get();
+        if (selectedProjectId === threadId || activeThreadId === threadId) {
+          clearRecoveredThreadContext(set, get, threadId);
+          return;
+        }
       }
 
       if (!response.ok) throw new Error('Failed to load project snapshot');
@@ -934,6 +976,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const response = await fetch(`/api/threads/${threadId}`, { headers });
+      if (response.status === 404) {
+        clearRecoveredThreadContext(set, get, threadId);
+        return;
+      }
       if (!response.ok) throw new Error('Failed to align state');
       const snapshot = await response.json();
 
@@ -1169,4 +1215,3 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   }
 }));
-
