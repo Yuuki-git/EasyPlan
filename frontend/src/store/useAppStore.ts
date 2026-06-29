@@ -985,6 +985,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       const isPending = snapshot.status === 'awaiting_confirmation';
       const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
+      const phaseGenerationStatus =
+        snapshot.interrupt_payload?.type === 'phase_generation_state'
+          ? snapshot.interrupt_payload.status
+          : null;
+      const hasTerminalPhaseGenerationState =
+        phaseGenerationStatus === 'confirmed'
+        || phaseGenerationStatus === 'cancelled'
+        || phaseGenerationStatus === 'failed';
 
       const localPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
       const localPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
@@ -993,6 +1001,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const shouldPreserveLocalNextPhase =
         localPreviewMode === 'next_phase' &&
         !!localPhaseRequestId &&
+        !hasTerminalPhaseGenerationState &&
         get().selectedProjectId === threadId;
 
       let savedPreviewMode: PreviewMode = null;

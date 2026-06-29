@@ -3,11 +3,14 @@ from copy import deepcopy
 from uuid import UUID
 
 import pytest
+from langgraph.types import Command
 from sqlalchemy.sql import Select, Update
 
+from app.agents.graph import build_task_graph, create_graph_config
 from app.agents.nodes import flatten_task_tree_for_persistence, persist_internal_tasks_node
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -319,6 +322,102 @@ def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(m
     assert session.task_rows_inserted == 3
 
 
+def test_graph_resume_approve_persists_next_phase_as_committed_plan(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="awaiting_confirmation",
+        current_node="human_review",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "awaiting_confirmation",
+            "task_tree": next_phase_tree(),
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    class StaticPlanner:
+        async def create_plan(self, prompt: str) -> dict:
+            return next_phase_tree()
+
+    graph = build_task_graph(
+        planner=StaticPlanner(),
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(user_id=USER_ID, thread_id="thread-1")
+
+    first_chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": USER_ID,
+                    "thread_id": "thread-1",
+                    "intent_text": "Write a paper",
+                    "intent_profile": {
+                        "intent_type": "long_term_growth",
+                        "time_horizon": "months",
+                        "confidence_score": 1.0,
+                    },
+                    "planning_mode": "next_phase",
+                    "phase_request_id": request_id,
+                    "committed_task_tree": committed_tree,
+                    "current_phase_task_summary": "1/1 AI actions completed",
+                },
+                config,
+            )
+        )
+    )
+
+    assert "__interrupt__" in first_chunks[-1]
+
+    second_chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                Command(resume={"action": "approve", "request_id": request_id}),
+                config,
+            )
+        )
+    )
+
+    assert "__interrupt__" not in second_chunks[-1]
+    update_values = list(session.executed_updates[-1].compile().params.values())
+    persisted_tree = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and "planning_context" in value
+    )
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "phase_generation_state"
+    )
+    assert persisted_tree["planning_context"]["current_phase"]["phase_id"] == "phase_02"
+    assert persisted_tree["planning_context"]["roadmap"][0]["status"] == "completed"
+    assert persisted_tree["planning_context"]["roadmap"][1]["status"] == "current"
+    assert envelope["status"] == "confirmed"
+    assert envelope["history"][request_id]["status"] == "confirmed"
+
+
 class FakePersistSession:
     def __init__(
         self,
@@ -407,6 +506,10 @@ class FakeTransaction:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+async def _collect_astream(stream):
+    return [chunk async for chunk in stream]
 
 
 def _compile_postgresql(statement) -> str:

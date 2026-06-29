@@ -355,6 +355,63 @@ async function runTests() {
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
   }
 
+  // --- Scenario 8: confirmed next-phase snapshot should clear stale local preview restore state ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-confirmed'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: 'thread-confirmed',
+          status: 'succeeded',
+          intent_text: 'my intent',
+          task_tree: {
+            root: { title: 'Phase 2 Root' },
+            planning_context: {
+              roadmap: [
+                { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
+                { phase_id: 'phase_02', order: 2, title: 'Phase 2', objective: 'Build', status: 'current' },
+              ],
+              current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
+            },
+          },
+          interrupt_payload: {
+            type: 'phase_generation_state',
+            request_id: 'req-confirmed',
+            status: 'confirmed',
+            history: {
+              'req-confirmed': { status: 'confirmed' },
+            },
+          },
+        }),
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'thread-confirmed',
+      'easyplan_thread_id': 'thread-confirmed',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-confirmed',
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);
+    await useAppStore.getState().alignState('thread-confirmed');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(updatedState.view, 'board');
+    assert.equal(updatedState.appState, 'INITIAL');
+    assert.equal(updatedState.previewMode, null, 'Confirmed snapshot should exit preview mode');
+    assert.equal(updatedState.phaseRequestId, null, 'Confirmed snapshot should clear stale phase request id');
+    assert.equal(updatedState.taskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
+    assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
+    assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
+  }
+
   console.log('stateRestoration tests passed');
 }
 
