@@ -626,7 +626,7 @@ export const TaskBoard: React.FC = () => {
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket, selectedProjectId]);
+  }, [boardTasks, currentViewBucket, selectedProjectId, planningView]);
 
   if (boardError) {
     return (
