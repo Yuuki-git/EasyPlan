@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { createRunEventTracker } from '../lib/runEvents';
 import { getFriendlyErrorMessage } from '../lib/errorHelper';
+import { reconcileSseCursor } from '../lib/sseCursor';
 
 export const useSSE = () => {
   const {
@@ -31,7 +32,6 @@ export const useSSE = () => {
   const currentRequestId = phaseRequestId || syncRequestId || '';
 
   if (currentRequestId !== prevRequestIdRef.current) {
-    lastEventIdRef.current = null;
     trackerRef.current.reset();
     prevRequestIdRef.current = currentRequestId;
   }
@@ -62,7 +62,11 @@ export const useSSE = () => {
 
   useEffect(() => {
     if (threadId !== prevThreadIdRef.current) {
-      lastEventIdRef.current = null;
+      lastEventIdRef.current = reconcileSseCursor({
+        previousThreadId: prevThreadIdRef.current,
+        nextThreadId: threadId,
+        currentLastEventId: lastEventIdRef.current,
+      });
       prevThreadIdRef.current = threadId;
     }
 
