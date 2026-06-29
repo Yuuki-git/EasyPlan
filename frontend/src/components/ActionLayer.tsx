@@ -21,7 +21,8 @@ export const ActionLayer: React.FC = () => {
     selectedProjectId
   } = useAppStore();
 
-  const isVisible = appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || appState === 'SYNCING' || isRunStalled;
+  const isVisible = (appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || appState === 'SYNCING' || isRunStalled)
+    && previewMode !== 'next_phase';
 
   const handleCancel = () => {
     if (previewMode === 'next_phase') {
@@ -180,7 +181,7 @@ export const ActionLayer: React.FC = () => {
                         <span>ENTER</span>
                       </div>
                       <span className="text-sm font-medium">
-                        {previewMode === 'next_phase' ? '追加到当前计划' : '确认并保存'}
+                        确认并保存
                       </span>
                     </button>
                   </>

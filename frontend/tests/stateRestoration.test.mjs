@@ -276,6 +276,48 @@ async function runTests() {
     assert.equal(updatedState.phaseRequestId, 'req-stalled');
   }
 
+  // --- 测试场景 6: next-phase pending (awaiting_confirmation) 状态刷新恢复到 board 内联态 ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-pending'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: 'thread-pending',
+          status: 'awaiting_confirmation',
+          intent_text: 'my intent',
+          interrupt_payload: {
+            type: 'next_phase_review',
+            request_id: 'req-pending',
+            task_tree: { root: { title: 'Pending Phase Title' } }
+          }
+        })
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_selected_project_id': 'thread-pending',
+      'easyplan_thread_id': 'thread-pending',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-pending',
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
+    const state = useAppStore.getState();
+    await state.alignState('thread-pending');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(updatedState.view, 'board', 'Pending next phase should restore view as board');
+    assert.equal(updatedState.appState, 'PENDING');
+    assert.deepEqual(updatedState.taskTree, { root: { title: 'Pending Phase Title' } });
+    assert.equal(updatedState.previewMode, 'next_phase');
+    assert.equal(updatedState.phaseRequestId, 'req-pending');
+  }
+
   console.log('stateRestoration tests passed');
 }
 

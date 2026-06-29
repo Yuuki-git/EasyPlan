@@ -827,11 +827,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPhaseRequestPending: true,
       isRunStalled: false,
       reasoningLogs: [],
-      taskTree: null,
       nodeStatuses: {},
       error: null,
-      phaseRequestId: requestId
+      phaseRequestId: requestId,
+      previewMode: 'next_phase',
+      appState: 'THINKING'
     });
+    localStorage.setItem('easyplan_view', 'board');
+    localStorage.setItem('easyplan_thread_id', selectedProjectId);
+    localStorage.setItem('easyplan_preview_mode', 'next_phase');
+    localStorage.setItem('easyplan_phase_request_id', requestId);
 
     try {
       const response = await fetch(`/api/threads/${selectedProjectId}/phases/next`, {
@@ -846,7 +851,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null);
-        set({ showAuthModal: true, isPhaseRequestPending: false });
+        set({
+          showAuthModal: true,
+          isPhaseRequestPending: false,
+          previewMode: null,
+          appState: 'INITIAL'
+        });
+        localStorage.removeItem('easyplan_preview_mode');
+        localStorage.removeItem('easyplan_phase_request_id');
         return;
       }
 
@@ -854,17 +866,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       set({
         threadId: selectedProjectId,
-        previewMode: 'next_phase',
-        phaseRequestId: requestId,
-        view: 'input',
-        appState: 'THINKING'
       });
-      localStorage.setItem('easyplan_view', 'input');
-      localStorage.setItem('easyplan_thread_id', selectedProjectId);
-      localStorage.setItem('easyplan_preview_mode', 'next_phase');
-      localStorage.setItem('easyplan_phase_request_id', requestId);
     } catch (err) {
       console.error("Generate next phase plan failed", err);
+      set({ error: (err as Error).message, appState: 'ERROR' });
     } finally {
       set({ isPhaseRequestPending: false });
     }
@@ -977,7 +982,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         targetAppState = 'PENDING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else if (isNextPhaseRunning || isStalled) {
-        taskTree = null;
+        taskTree = snapshot.task_tree || null;
         targetAppState = 'THINKING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else {

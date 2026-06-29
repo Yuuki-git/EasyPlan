@@ -162,7 +162,7 @@ async function runTests() {
     assert.equal(state.phaseRequestId, requestPayload.request_id);
     assert.equal(state.isRunStalled, false);
     assert.deepEqual(plain(state.reasoningLogs), []);
-    assert.equal(state.taskTree, null);
+    assert.deepEqual(plain(state.taskTree), { planning_context: {} });
     assert.deepEqual(plain(state.nodeStatuses), {});
     assert.equal(state.error, null);
   }
@@ -367,6 +367,53 @@ async function runTests() {
     assert.equal(state.taskTree, null);
     assert.deepEqual(plain(state.reasoningLogs), []);
     assert.deepEqual(plain(state.nodeStatuses), {});
+  }
+
+  // --- 测试场景 8: Unlock Phase N 后 view 仍是 board 且请求在路上时立刻进入 inline loading 状态 ---
+  {
+    let resolveFetch;
+    const fetchMock = async () => {
+      return new Promise((resolve) => {
+        resolveFetch = () => resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({})
+        });
+      });
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock);
+
+    // Setup initial state
+    useAppStore.setState({
+      selectedProjectId: 'proj-123',
+      taskTree: { planning_context: {} },
+      boardTasks: [],
+      view: 'board'
+    });
+
+    const promise = useAppStore.getState().generateNextPhasePlan();
+
+    // 显式等待微任务队列调度，允许异步 import 完成并运行首个 set 状态变更
+    await new Promise(resolve => setTimeout(resolve, 5));
+
+    // 校验请求在途（in-flight）时，状态已经同步变更为 next_phase 且为 THINKING 态，确保界面原地进入 loading
+    const midState = useAppStore.getState();
+    assert.equal(midState.view, 'board', 'Unlock Phase N should keep view as board during generation');
+    assert.equal(midState.previewMode, 'next_phase', 'Should enter next_phase previewMode immediately');
+    assert.equal(midState.appState, 'THINKING', 'Should enter THINKING state immediately for inline loading');
+    assert.equal(midState.isPhaseRequestPending, true);
+
+    // 允许请求返回
+    resolveFetch();
+    await promise;
+
+    // 校验完成后状态依然保持
+    const state = useAppStore.getState();
+    assert.equal(state.view, 'board', 'Unlock Phase N should keep view as board after generation completes');
+    assert.equal(state.previewMode, 'next_phase');
+    assert.equal(state.appState, 'THINKING');
+    assert.equal(state.isPhaseRequestPending, false);
   }
 
   console.log('generationRun tests passed');
