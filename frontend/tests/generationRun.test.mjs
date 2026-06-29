@@ -487,6 +487,55 @@ async function runTests() {
     assert.equal(finishedState.view, 'board');
   }
 
+  // --- 测试场景 8: finishAgentRun 在 next-phase confirm 完成前不应先清掉 preview ---
+  {
+    const { useAppStore, localStorageValues } = loadAppStoreModule(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({})
+    }), {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-confirm',
+      'easyplan_thread_id': 'proj-confirm',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-confirm',
+    });
+
+    let resolveSnapshot;
+    let resolveTasks;
+    const snapshotPromise = new Promise((resolve) => { resolveSnapshot = resolve; });
+    const tasksPromise = new Promise((resolve) => { resolveTasks = resolve; });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-confirm',
+      threadId: 'proj-confirm',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-confirm',
+      loadProjectSnapshot: async () => {
+        await snapshotPromise;
+      },
+      fetchTasks: async () => {
+        await tasksPromise;
+      },
+    });
+
+    const finishPromise = useAppStore.getState().finishAgentRun();
+
+    assert.equal(useAppStore.getState().previewMode, 'next_phase', 'preview should remain visible until committed data has reloaded');
+    assert.equal(localStorageValues.get('easyplan_preview_mode'), 'next_phase');
+
+    resolveSnapshot();
+    resolveTasks();
+    await finishPromise;
+
+    const finishedState = useAppStore.getState();
+    assert.equal(finishedState.previewMode, null, 'preview should clear after committed project data finishes loading');
+    assert.equal(finishedState.phaseRequestId, null);
+    assert.equal(localStorageValues.get('easyplan_preview_mode'), undefined);
+    assert.equal(localStorageValues.get('easyplan_phase_request_id'), undefined);
+  }
+
   console.log('generationRun tests passed');
 }
 

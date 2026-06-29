@@ -318,15 +318,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (previewMode === 'next_phase' && selectedProjectId) {
       set({
         view: 'board',
-        previewMode: null,
-        phaseRequestId: null,
         currentViewBucket: 'planned'
       });
       localStorage.setItem('easyplan_view', 'board');
+      await loadProjectSnapshot(selectedProjectId);
+      await fetchTasks('planned');
+      set({
+        previewMode: null,
+        phaseRequestId: null,
+      });
       localStorage.removeItem('easyplan_preview_mode');
       localStorage.removeItem('easyplan_phase_request_id');
-      await fetchTasks('planned');
-      await loadProjectSnapshot(selectedProjectId);
     } else {
       set({
         view: 'board',

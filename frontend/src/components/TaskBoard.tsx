@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
 import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
-import { TaskResponse } from '../types/api';
+import { TaskNode, TaskResponse } from '../types/api';
 import { PlanningOverview } from './PlanningOverview';
 import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
@@ -103,7 +103,37 @@ interface TreeNode extends TaskResponse {
   children?: TreeNode[];
 }
 
-const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
+function buildPreviewTree(node: TaskNode, threadId: string, sortOrder = 0, parentTaskId: string | null = null): TreeNode {
+  const previewId = `preview:${node.client_node_id}`;
+  return {
+    id: previewId,
+    user_id: '',
+    thread_id: threadId,
+    parent_task_id: parentTaskId,
+    client_node_id: node.client_node_id,
+    title: node.title,
+    description: node.description ?? null,
+    node_type: node.node_type,
+    status: 'active',
+    view_bucket: 'planned',
+    estimated_minutes: node.estimated_minutes,
+    sort_order: sortOrder,
+    is_in_my_day: false,
+    done_criteria: node.done_criteria ?? null,
+    start_hint: node.start_hint ?? null,
+    fallback_action: node.fallback_action ?? null,
+    source: 'ai',
+    phase_id: null,
+    phase_order: null,
+    children: (node.children || []).map((child, index) => buildPreviewTree(child, threadId, index, previewId)),
+  };
+}
+
+const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: boolean }> = ({
+  node,
+  depth = 0,
+  interactive = true,
+}) => {
   const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
@@ -137,7 +167,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isGroup || isEditing) return;
+    if (!interactive || isGroup || isEditing) return;
     if (isToggling) return;
 
     const nextCompleted = !localCompleted;
@@ -157,6 +187,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleToggleMyDay = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!interactive) return;
     try {
       await toggleTaskInMyDay(node.id, !!node.is_in_my_day);
     } catch (err) {
@@ -166,6 +197,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!interactive) return;
     try {
       await deleteTask(node.id);
     } catch (err) {
@@ -175,7 +207,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
+    if (!interactive || localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
     setIsEditing(true);
   };
 
@@ -243,7 +275,12 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         {hasChildren && (
           <div className="flex flex-col space-y-2">
             {node.children!.map(child => (
-              <BoardTaskNode key={child.id} node={child} depth={node.title === 'root_dummy' ? depth : depth + 1} />
+              <BoardTaskNode
+                key={child.id}
+                node={child}
+                depth={node.title === 'root_dummy' ? depth : depth + 1}
+                interactive={interactive}
+              />
             ))}
           </div>
         )}
@@ -260,6 +297,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
       exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
       className={clsx(
         "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
+        !interactive && "cursor-default",
         localCompleted
           ? "bg-muted/10 border-transparent"
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
@@ -267,8 +305,8 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         isToggling && "cursor-wait",
         depth > 0 && "ml-4"
       )}
-      onClick={handleToggle}
-      onDoubleClick={handleDoubleClick}
+      onClick={interactive ? handleToggle : undefined}
+      onDoubleClick={interactive ? handleDoubleClick : undefined}
     >
       <div className="mt-0.5 shrink-0">
         {localCompleted ? (
@@ -377,7 +415,8 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         )}
       </div>
 
-      <button
+      {interactive && (
+        <button
         onClick={handleToggleMyDay}
         className={clsx(
           "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
@@ -388,9 +427,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
       >
         <Sun size={16} />
-      </button>
+        </button>
+      )}
 
-      {!localCompleted && !isEditing && (
+      {interactive && !localCompleted && !isEditing && (
         <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
           <button
             onClick={(e) => {
@@ -506,7 +546,8 @@ export const TaskBoard: React.FC = () => {
     fetchTasks,
     appState,
     taskTree,
-    loadProjectSnapshot
+    loadProjectSnapshot,
+    previewMode
   } = useAppStore();
 
   useEffect(() => {
@@ -560,8 +601,19 @@ export const TaskBoard: React.FC = () => {
     return selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
   }, [taskTree, boardTasks, currentViewBucket, selectedProjectId]);
 
+  const previewTree = useMemo(() => {
+    if (currentViewBucket !== 'planned' || previewMode !== 'next_phase' || !selectedProjectId || !taskTree?.root) {
+      return null;
+    }
+    return buildPreviewTree(taskTree.root, selectedProjectId);
+  }, [currentViewBucket, previewMode, selectedProjectId, taskTree]);
+
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;
+
+    if (previewTree) {
+      return previewTree;
+    }
 
     if (currentViewBucket === 'my_day') {
       // Flat list
@@ -626,7 +678,7 @@ export const TaskBoard: React.FC = () => {
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket, selectedProjectId, planningView]);
+  }, [boardTasks, currentViewBucket, selectedProjectId, planningView, previewTree]);
 
   if (boardError) {
     return (
@@ -729,10 +781,10 @@ export const TaskBoard: React.FC = () => {
                     )}
                   </div>
                 ) : (
-                  <BoardTaskNode node={displayTree} />
+                  <BoardTaskNode node={displayTree} interactive={!previewTree} />
                 )}
 
-                {planningView && planningView.historicalPhases.length > 0 && (
+                {planningView && planningView.historicalPhases.length > 0 && previewMode !== 'next_phase' && (
                   <div className="mt-12 space-y-4">
                     <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
                     {planningView.historicalPhases.map((hist, index) => (
@@ -757,7 +809,7 @@ export const TaskBoard: React.FC = () => {
                   </div>
                 )}
 
-                <InlineTaskInput />
+                {previewMode !== 'next_phase' && <InlineTaskInput />}
               </>
             )}
 

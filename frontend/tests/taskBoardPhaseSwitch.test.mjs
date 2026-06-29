@@ -66,10 +66,17 @@ function loadAppStoreModule() {
         return {
           selectPlanningView: (taskTree, tasks, selectedProjectId) => {
             const phaseId = taskTree?.planning_context?.current_phase?.phase_id ?? null;
+            const threadTasks = tasks.filter((task) => task.thread_id === selectedProjectId);
+            const roadmap = taskTree?.planning_context?.roadmap ?? [];
             return {
               canUnlock: true,
-              currentTasks: tasks.filter((task) => task.thread_id === selectedProjectId && task.phase_id === phaseId),
-              historicalPhases: [],
+              currentTasks: threadTasks.filter((task) => task.phase_id === phaseId),
+              historicalPhases: roadmap
+                .filter((phase) => phase.status === 'completed')
+                .map((phase) => ({
+                  phase,
+                  tasks: threadTasks.filter((task) => task.phase_id === phase.phase_id),
+                })),
             };
           }
         };
@@ -181,10 +188,17 @@ function loadTaskBoard(useAppStoreInstance) {
         return {
           selectPlanningView: (taskTree, tasks, selectedProjectId) => {
             const phaseId = taskTree?.planning_context?.current_phase?.phase_id ?? null;
+            const threadTasks = tasks.filter((task) => task.thread_id === selectedProjectId);
+            const roadmap = taskTree?.planning_context?.roadmap ?? [];
             return {
               canUnlock: true,
-              currentTasks: tasks.filter((task) => task.thread_id === selectedProjectId && task.phase_id === phaseId),
-              historicalPhases: [],
+              currentTasks: threadTasks.filter((task) => task.phase_id === phaseId),
+              historicalPhases: roadmap
+                .filter((phase) => phase.status === 'completed')
+                .map((phase) => ({
+                  phase,
+                  tasks: threadTasks.filter((task) => task.phase_id === phase.phase_id),
+                })),
             };
           }
         };
@@ -257,6 +271,73 @@ const phase2Tree = {
     current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
   },
 };
+const previewPhaseTree = {
+  root: {
+    client_node_id: 'phase_02_root',
+    title: 'Phase 2 Preview',
+    description: null,
+    verb: 'Plan',
+    estimated_minutes: 30,
+    node_type: 'group',
+    children: [
+      {
+        client_node_id: 'phase_02_preview_action',
+        title: 'Phase 2 Preview Task',
+        description: 'Preview only until confirm',
+        verb: 'Draft',
+        estimated_minutes: 15,
+        node_type: 'action',
+        depends_on: [],
+        children: [],
+      },
+    ],
+  },
+  planning_context: {
+    roadmap: [
+      { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
+      { phase_id: 'phase_02', order: 2, title: 'Phase 2', objective: 'Build', status: 'current' },
+    ],
+    current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
+  },
+};
+const previewBoardTasks = [
+  {
+    id: 'project-root',
+    title: 'Project Title',
+    status: 'active',
+    parent_task_id: null,
+    thread_id: 'proj-1',
+    client_node_id: 'phase_01_root',
+    description: null,
+    node_type: 'group',
+    user_id: 'user-1',
+    view_bucket: 'planned',
+    estimated_minutes: 30,
+    sort_order: 0,
+    is_in_my_day: false,
+    phase_id: 'phase_01',
+    phase_order: 1,
+    source: 'ai',
+  },
+  {
+    id: 'phase1-preview-regression',
+    title: 'Committed Phase 1 Task',
+    status: 'active',
+    parent_task_id: 'project-root',
+    thread_id: 'proj-1',
+    client_node_id: 'phase_01_action_preview_regression',
+    description: null,
+    node_type: 'action',
+    user_id: 'user-1',
+    view_bucket: 'planned',
+    estimated_minutes: 5,
+    sort_order: 1,
+    is_in_my_day: false,
+    phase_id: 'phase_01',
+    phase_order: 1,
+    source: 'ai',
+  },
+];
 const boardTasks = [
   {
     id: 'phase1-task',
@@ -318,5 +399,29 @@ useAppStore.setState({
 
 const secondRender = render();
 assert.ok(findInVdom(secondRender, (node) => typeof node === 'string' && node.includes('Phase 2 Task')), 'Task board should switch to Phase 2 tasks when the current phase changes');
+
+useAppStore.setState({
+  selectedProjectId: 'proj-1',
+  boardTasks: previewBoardTasks,
+  taskTree: previewPhaseTree,
+  previewMode: 'next_phase',
+  appState: 'PENDING',
+});
+
+const previewRender = render();
+assert.ok(
+  findInVdom(previewRender, (node) => typeof node === 'string' && node.includes('Phase 2 Preview Task')),
+  'Task board should render next-phase preview tasks before the new phase is committed',
+);
+assert.equal(
+  findInVdom(previewRender, (node) => typeof node === 'string' && node.includes('Committed Phase 1 Task')),
+  null,
+  'Task board should not fall back to committed phase tasks while previewing the next phase',
+);
+assert.equal(
+  findInVdom(previewRender, (node) => typeof node === 'string' && node.includes('Phase History')),
+  null,
+  'Task board should hide committed phase history while next-phase preview is active',
+);
 
 console.log('taskBoardPhaseSwitch tests passed');
