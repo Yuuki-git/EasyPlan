@@ -987,8 +987,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
 
       const localPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
+      const localPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
       const isNextPhaseRunning = snapshot.status === 'running' && localPreviewMode === 'next_phase';
       const isStalled = snapshot.status === 'stalled';
+      const shouldPreserveLocalNextPhase =
+        localPreviewMode === 'next_phase' &&
+        !!localPhaseRequestId &&
+        get().selectedProjectId === threadId;
 
       let savedPreviewMode: PreviewMode = null;
       let recoveredPhaseRequestId: string | null = null;
@@ -1004,7 +1009,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       } else if (isNextPhaseRunning || (isStalled && localPreviewMode === 'next_phase')) {
         savedPreviewMode = 'next_phase';
-        recoveredPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
+        recoveredPhaseRequestId = localPhaseRequestId;
+      } else if (shouldPreserveLocalNextPhase) {
+        savedPreviewMode = 'next_phase';
+        recoveredPhaseRequestId = localPhaseRequestId;
       } else {
         localStorage.removeItem('easyplan_preview_mode');
         localStorage.removeItem('easyplan_phase_request_id');
@@ -1027,8 +1035,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         taskTree = snapshot.interrupt_payload?.task_tree || null;
         targetAppState = 'PENDING';
         targetView = get().selectedProjectId ? 'board' : get().view;
-      } else if (isNextPhaseRunning || isStalled) {
-        taskTree = snapshot.task_tree || null;
+      } else if (isNextPhaseRunning || isStalled || shouldPreserveLocalNextPhase) {
+        taskTree = snapshot.task_tree || get().taskTree || null;
         targetAppState = 'THINKING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else {

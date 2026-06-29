@@ -416,6 +416,77 @@ async function runTests() {
     assert.equal(state.isPhaseRequestPending, false);
   }
 
+  // --- Scenario 9: transient committed snapshots must not knock next-phase runs back to portfolio mode ---
+  {
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/proj-race')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-race',
+            status: 'succeeded',
+            intent_text: 'my intent',
+            task_tree: {
+              root: { title: 'Committed Phase 1' },
+              planning_context: {
+                roadmap: [],
+                current_phase: { phase_id: 'phase-1', title: 'Phase 1', objective: 'Finish phase 1' },
+              }
+            }
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([])
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-race',
+      'easyplan_thread_id': 'proj-race',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-race',
+    });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-race',
+      threadId: 'proj-race',
+      appState: 'THINKING',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-race',
+      boardTasks: [],
+      taskTree: { planning_context: {} }
+    });
+
+    await useAppStore.getState().alignState('proj-race');
+
+    const alignedState = useAppStore.getState();
+    assert.equal(alignedState.selectedProjectId, 'proj-race');
+    assert.equal(alignedState.previewMode, 'next_phase', 'alignState should preserve next_phase preview until the server snapshot catches up');
+    assert.equal(alignedState.phaseRequestId, 'req-race', 'alignState should preserve the in-flight phase request id');
+    assert.equal(alignedState.appState, 'THINKING', 'alignState should keep the inline loading state during the transition window');
+    assert.equal(localStorageValues.get('easyplan_preview_mode'), 'next_phase');
+    assert.equal(localStorageValues.get('easyplan_phase_request_id'), 'req-race');
+
+    await useAppStore.getState().finishAgentRun();
+
+    const finishedState = useAppStore.getState();
+    assert.equal(finishedState.selectedProjectId, 'proj-race', 'finishing a next-phase run should stay inside the current project');
+    assert.equal(finishedState.view, 'board');
+  }
+
   console.log('generationRun tests passed');
 }
 
