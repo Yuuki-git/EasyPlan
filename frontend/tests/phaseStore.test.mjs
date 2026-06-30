@@ -102,7 +102,7 @@ const { useAppStore } = loadAppStoreModule(fetchImpl);
 useAppStore.setState({
   token: 'token',
   selectedProjectId: 'thread-1',
-  taskTree: { planning_context: { roadmap: [] } },
+  committedTaskTree: { planning_context: { roadmap: [] } },
   boardTasks: [],
   isPhaseRequestPending: false
 });

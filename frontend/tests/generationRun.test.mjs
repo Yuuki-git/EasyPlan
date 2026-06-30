@@ -108,7 +108,8 @@ async function runTests() {
     // 先手动往 store 塞一些上轮脏数据
     useAppStore.setState({
       reasoningLogs: ['dirty log'],
-      taskTree: { root: {} },
+      committedTaskTree: { root: {} },
+      previewTaskTree: { root: {} },
       nodeStatuses: { 'node-1': 'success' },
       error: 'some error',
       isRunStalled: true
@@ -120,7 +121,8 @@ async function runTests() {
     assert.ok(fetchCalled);
     assert.equal(state.isRunStalled, false);
     assert.deepEqual(plain(state.reasoningLogs), []);
-    assert.equal(state.taskTree, null);
+    assert.equal(state.committedTaskTree, null);
+    assert.equal(state.previewTaskTree, null);
     assert.deepEqual(plain(state.nodeStatuses), {});
     assert.equal(state.error, null);
   }
@@ -144,7 +146,7 @@ async function runTests() {
     // 初始化有 project
     useAppStore.setState({
       selectedProjectId: 'proj-123',
-      taskTree: { planning_context: {} }, // 能够 unlock
+      committedTaskTree: { planning_context: {} }, // 能够 unlock
       boardTasks: [],
       reasoningLogs: ['dirty log'],
       nodeStatuses: { 'node-1': 'success' },
@@ -162,7 +164,8 @@ async function runTests() {
     assert.equal(state.phaseRequestId, requestPayload.request_id);
     assert.equal(state.isRunStalled, false);
     assert.deepEqual(plain(state.reasoningLogs), []);
-    assert.deepEqual(plain(state.taskTree), { planning_context: {} });
+    assert.deepEqual(plain(state.committedTaskTree), { planning_context: {} });
+    assert.equal(state.previewTaskTree, null);
     assert.deepEqual(plain(state.nodeStatuses), {});
     assert.equal(state.error, null);
   }
@@ -187,7 +190,7 @@ async function runTests() {
       threadId: 'thread-123',
       syncRequestId: 'old-sync-id',
       reasoningLogs: ['dirty log'],
-      taskTree: { root: {} },
+      previewTaskTree: { root: {} },
       nodeStatuses: { 'node-1': 'error', 'node-2': 'success' },
       error: 'some error',
       isRunStalled: true
@@ -202,7 +205,7 @@ async function runTests() {
     assert.equal(state.syncRequestId, requestPayload.request_id);
     assert.equal(state.isRunStalled, false);
     assert.deepEqual(plain(state.reasoningLogs), []);
-    assert.equal(state.taskTree, null);
+    assert.equal(state.previewTaskTree, null);
     assert.deepEqual(plain(state.nodeStatuses), { 'node-1': 'syncing' }); // 只有重试节点为 syncing，其余清空
     assert.equal(state.error, null);
   }
@@ -263,7 +266,8 @@ async function runTests() {
       error: 'some error',
       threadId: 'some-thread',
       intent: 'some intent',
-      taskTree: { root: {} }
+      committedTaskTree: { root: {} },
+      previewTaskTree: { root: {} }
     });
 
     await useAppStore.getState().returnToCommittedPlan();
@@ -277,7 +281,8 @@ async function runTests() {
     assert.equal(state.isRunStalled, false);
     assert.equal(state.threadId, null);
     assert.equal(state.intent, '');
-    assert.equal(state.taskTree, null);
+    assert.equal(state.committedTaskTree, null);
+    assert.equal(state.previewTaskTree, null);
   }
 
   // --- 测试场景 5: 错误呈现与契约错误友好文案转换 ---
@@ -353,7 +358,8 @@ async function runTests() {
     useAppStore.setState({
       appState: 'PENDING',
       reasoningLogs: ['old log 1', 'old log 2'],
-      taskTree: { root: { title: 'old root' } },
+      committedTaskTree: { root: { title: 'old root' } },
+      previewTaskTree: { root: { title: 'old root' } },
       nodeStatuses: { 'node-1': 'success' },
       error: 'some error'
     });
@@ -364,7 +370,7 @@ async function runTests() {
     assert.ok(fetchCalled);
     assert.equal(state.appState, 'THINKING');
     assert.equal(state.error, null);
-    assert.equal(state.taskTree, null);
+    assert.equal(state.previewTaskTree, null);
     assert.deepEqual(plain(state.reasoningLogs), []);
     assert.deepEqual(plain(state.nodeStatuses), {});
   }
@@ -387,7 +393,7 @@ async function runTests() {
     // Setup initial state
     useAppStore.setState({
       selectedProjectId: 'proj-123',
-      taskTree: { planning_context: {} },
+      committedTaskTree: { planning_context: {} },
       boardTasks: [],
       view: 'board'
     });
@@ -467,7 +473,8 @@ async function runTests() {
       previewMode: 'next_phase',
       phaseRequestId: 'req-race',
       boardTasks: [],
-      taskTree: { planning_context: {} }
+      committedTaskTree: { planning_context: {} },
+      previewTaskTree: { planning_context: {} }
     });
 
     await useAppStore.getState().alignState('proj-race');

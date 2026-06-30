@@ -124,7 +124,7 @@ async function runTests() {
 
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'INITIAL');
-    assert.equal(updatedState.taskTree.root.title, 'committed-root-task');
+    assert.equal(updatedState.committedTaskTree.root.title, 'committed-root-task');
   }
 
   // --- 测试场景 2: awaiting_confirmation preview 刷新恢复 ---
@@ -173,8 +173,8 @@ async function runTests() {
 
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'PENDING');
-    assert.ok(updatedState.taskTree);
-    assert.equal(updatedState.taskTree.root.title, 'preview-root-task');
+    assert.ok(updatedState.previewTaskTree);
+    assert.equal(updatedState.previewTaskTree.root.title, 'preview-root-task');
     assert.equal(updatedState.previewMode, 'next_phase');
   }
 
@@ -218,7 +218,7 @@ async function runTests() {
 
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'THINKING');
-    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.previewTaskTree, null);
     assert.equal(updatedState.previewMode, 'next_phase');
     assert.equal(updatedState.phaseRequestId, 'req-running');
   }
@@ -271,7 +271,7 @@ async function runTests() {
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'THINKING');
     assert.equal(updatedState.isRunStalled, true);
-    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.previewTaskTree, null);
     assert.equal(updatedState.previewMode, 'next_phase');
     assert.equal(updatedState.phaseRequestId, 'req-stalled');
   }
@@ -313,7 +313,7 @@ async function runTests() {
     assert.ok(fetchCalled);
     assert.equal(updatedState.view, 'board', 'Pending next phase should restore view as board');
     assert.equal(updatedState.appState, 'PENDING');
-    assert.deepEqual(updatedState.taskTree, { root: { title: 'Pending Phase Title' } });
+    assert.deepEqual(updatedState.previewTaskTree, { root: { title: 'Pending Phase Title' } });
     assert.equal(updatedState.previewMode, 'next_phase');
     assert.equal(updatedState.phaseRequestId, 'req-pending');
   }
@@ -345,7 +345,8 @@ async function runTests() {
     assert.ok(fetchCalled);
     assert.equal(updatedState.selectedProjectId, null, 'Stale selectedProjectId should be cleared');
     assert.equal(updatedState.threadId, null, 'Stale threadId should be cleared');
-    assert.equal(updatedState.taskTree, null);
+    assert.equal(updatedState.committedTaskTree, null);
+    assert.equal(updatedState.previewTaskTree, null);
     assert.equal(updatedState.previewMode, null, 'Stale preview mode should be cleared');
     assert.equal(updatedState.phaseRequestId, null, 'Stale phase request id should be cleared');
     assert.equal(updatedState.appState, 'INITIAL', 'Stale thread recovery should not leave the app in ERROR');
@@ -407,7 +408,7 @@ async function runTests() {
     assert.equal(updatedState.appState, 'INITIAL');
     assert.equal(updatedState.previewMode, null, 'Confirmed snapshot should exit preview mode');
     assert.equal(updatedState.phaseRequestId, null, 'Confirmed snapshot should clear stale phase request id');
-    assert.equal(updatedState.taskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
+    assert.equal(updatedState.committedTaskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
   }

@@ -7,7 +7,8 @@ import { RoadmapPhase, TaskNode } from '../types/api';
 
 export const PlanningOverview: React.FC = () => {
   const {
-    taskTree,
+    committedTaskTree,
+    previewTaskTree,
     boardTasks,
     selectedProjectId,
     generateNextPhasePlan,
@@ -27,11 +28,11 @@ export const PlanningOverview: React.FC = () => {
     return null;
   }
 
-  if (!taskTree || !boardTasks || !selectedProjectId) {
+  if (!committedTaskTree || !boardTasks || !selectedProjectId) {
     return null;
   }
 
-  const planningView = selectPlanningView(taskTree, boardTasks, selectedProjectId);
+  const planningView = selectPlanningView(committedTaskTree, boardTasks, selectedProjectId);
   if (!planningView) {
     return null;
   }
@@ -176,10 +177,10 @@ export const PlanningOverview: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-[10px] font-semibold px-2 py-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-full uppercase tracking-wider">下一阶段预览</span>
-                      <h4 className="font-semibold text-foreground text-sm line-clamp-1">{taskTree?.planning_context?.current_phase?.title || '新阶段'}</h4>
+                      <h4 className="font-semibold text-foreground text-sm line-clamp-1">{previewTaskTree?.planning_context?.current_phase?.title || '新阶段'}</h4>
                     </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{taskTree?.planning_context?.current_phase?.objective || '阶段规划已生成'}</p>
-                    {taskTree?.root && (
+                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{previewTaskTree?.planning_context?.current_phase?.objective || '阶段规划已生成'}</p>
+                    {previewTaskTree?.root && (
                       <div className="mb-1">
                         <h5 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">新增任务列表：</h5>
                         <ul className="text-[11px] text-foreground/80 space-y-0.5 max-h-24 overflow-y-auto pl-4 list-disc custom-scrollbar">
@@ -192,7 +193,7 @@ export const PlanningOverview: React.FC = () => {
                               }
                               return res;
                             };
-                            return collectTaskNodes(taskTree.root).map((node, i) => (
+                            return collectTaskNodes(previewTaskTree.root).map((node, i) => (
                               <li key={node.client_node_id || i} className="line-clamp-1">{node.title}</li>
                             ));
                           })()}

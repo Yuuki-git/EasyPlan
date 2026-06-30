@@ -20,7 +20,7 @@ interface TaskTreeVisualizerProps {
 }
 
 export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, depth = 0 }) => {
-  const { nodeStatuses, retryNode, appState, taskTree } = useAppStore();
+  const { nodeStatuses, retryNode, appState, previewTaskTree } = useAppStore();
   const [isExpanded, setIsExpanded] = useState(true);
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
@@ -28,7 +28,7 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
 
   // Performance Guard: Count total nodes to decide on layout complexity
   // In a real app, this could be a memoized selector in the store
-  const isLargeTree = (taskTree?.root ? 100 : 0) > 50; // Simplified check for demonstration
+  const isLargeTree = (previewTaskTree?.root ? 100 : 0) > 50; // Simplified check for demonstration
 
   const renderStatus = () => {
     // Only show status icons after SYNCING has started
@@ -162,14 +162,14 @@ export const TaskTreeVisualizer: React.FC<TaskTreeVisualizerProps> = ({ node, de
 
 
 export const TaskTreeRoot: React.FC = () => {
-  const { taskTree, appState } = useAppStore();
+  const { previewTaskTree, appState } = useAppStore();
 
-  if (!taskTree || (appState !== 'PENDING' && appState !== 'SYNCING' && appState !== 'SUCCESS' && appState !== 'PARTIAL_ERROR')) {
+  if (!previewTaskTree || (appState !== 'PENDING' && appState !== 'SYNCING' && appState !== 'SUCCESS' && appState !== 'PARTIAL_ERROR')) {
     return null;
   }
 
-  const isExploration = taskTree.planning_context?.intent_type === 'exploration_decision';
-  const explorationData = isExploration ? parseExplorationSummary(taskTree.summary) : null;
+  const isExploration = previewTaskTree.planning_context?.intent_type === 'exploration_decision';
+  const explorationData = isExploration ? parseExplorationSummary(previewTaskTree.summary) : null;
 
   return (
     <div className="w-full flex flex-col items-center mt-12 pb-40">
@@ -202,7 +202,7 @@ export const TaskTreeRoot: React.FC = () => {
             建议行动计划
           </h3>
           <p className="text-lg font-light text-foreground/80 leading-snug">
-            {taskTree.summary}
+            {previewTaskTree.summary}
           </p>
         </div>
       )}
@@ -211,7 +211,7 @@ export const TaskTreeRoot: React.FC = () => {
         <h3 className="text-xs font-semibold text-muted-foreground/40 tracking-widest uppercase mb-4">
           {isExploration ? '对应任务树 / Action Tree' : '计划步骤'}
         </h3>
-        <TaskTreeVisualizer node={taskTree.root} />
+        <TaskTreeVisualizer node={previewTaskTree.root} />
       </div>
 
       {/* "End of Plan" Decorator */}

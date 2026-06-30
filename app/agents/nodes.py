@@ -167,7 +167,8 @@ NEXT_PHASE_PROMPT = """下一阶段规划模式：
 4. 只能展开一个新的 current phase；TaskTree.root 只能包含该阶段任务。
 5. 只允许重写原 roadmap 的 planned 后缀，不得生成所有未来阶段的任务。
 6. 所有 Action 继续满足 Action Quality、Scope Horizon 和依赖规则。
-7. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+7. 新阶段 TaskTree.root 及其所有后代节点必须使用全新的 client_node_id，不得复用已提交计划中的任何 client_node_id。
+8. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
@@ -719,9 +720,35 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
         thread_id=state["thread_id"],
     )
     now = datetime.now(timezone.utc)
+    is_next_phase = state.get("planning_mode") == "next_phase"
+    phase_request_id = state.get("phase_request_id") if is_next_phase else None
+    if is_next_phase and not phase_request_id:
+        raise RuntimeError("phase_request_id is required for next-phase persistence")
     async with async_session() as session:
         async with session.begin():
-            await _persist_tasks_idempotently(session, tasks, dependencies)
+            phase_thread: AgentThread | None = None
+            if is_next_phase:
+                thread_result = await session.execute(
+                    select(AgentThread)
+                    .where(
+                        AgentThread.user_id == UUID(str(state["user_id"])),
+                        AgentThread.thread_id == state["thread_id"],
+                    )
+                    .with_for_update()
+                )
+                phase_thread = thread_result.scalar_one_or_none()
+                if phase_thread is None:
+                    raise RuntimeError("phase thread not found during persistence")
+                if _is_confirmed_phase_request(phase_thread, phase_request_id):
+                    return {"task_persistence_status": "succeeded"}
+                await _assert_next_phase_client_ids_are_new(session, tasks)
+
+            await _persist_tasks_idempotently(
+                session,
+                tasks,
+                dependencies,
+                require_new_task_ids=is_next_phase,
+            )
             task_tree = await _with_server_derived_next_action(
                 session,
                 task_tree=state["task_tree"],
@@ -735,27 +762,13 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 "completed_at": now,
                 "updated_at": now,
             }
-            if state.get("planning_mode") == "next_phase":
-                thread_result = await session.execute(
-                    select(AgentThread)
-                    .where(
-                        AgentThread.user_id == UUID(str(state["user_id"])),
-                        AgentThread.thread_id == state["thread_id"],
-                    )
-                    .with_for_update()
-                )
-                thread = thread_result.scalar_one_or_none()
-                if thread is None:
-                    raise RuntimeError("phase thread not found during persistence")
-                request_id = state.get("phase_request_id")
-                if not request_id:
-                    raise RuntimeError("phase_request_id is required for next-phase persistence")
+            if is_next_phase:
                 update_values.update(
                     lease_owner=None,
                     lease_expires_at=None,
                     interrupt_payload=_terminal_phase_envelope(
-                        thread.interrupt_payload,
-                        request_id=request_id,
+                        phase_thread.interrupt_payload,
+                        request_id=phase_request_id,
                         status="confirmed",
                         now=now,
                     ),
@@ -769,6 +782,18 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 .values(**update_values)
             )
     return {"task_persistence_status": "succeeded"}
+
+
+def _is_confirmed_phase_request(thread: AgentThread, request_id: str) -> bool:
+    payload = thread.interrupt_payload
+    if not isinstance(payload, dict):
+        return False
+    return (
+        payload.get("type") == "phase_generation_state"
+        and payload.get("request_id") == request_id
+        and payload.get("status") == "confirmed"
+        and (payload.get("history") or {}).get(request_id, {}).get("status") == "confirmed"
+    )
 
 
 async def _with_server_derived_next_action(
@@ -840,6 +865,8 @@ async def _persist_tasks_idempotently(
     session: Any,
     tasks: list[Task],
     dependencies: list[TaskDependency],
+    *,
+    require_new_task_ids: bool = False,
 ) -> None:
     tasks_by_generated_id = {task.id: task for task in tasks}
     client_id_by_generated_id = {
@@ -862,11 +889,12 @@ async def _persist_tasks_idempotently(
             for task in task_layers[depth]
         ]
         if rows:
-            await session.execute(
-                insert(Task.__table__)
-                .values(rows)
-                .on_conflict_do_nothing(index_elements=["thread_id", "client_node_id"])
-            )
+            statement = insert(Task.__table__).values(rows)
+            if not require_new_task_ids:
+                statement = statement.on_conflict_do_nothing(
+                    index_elements=["thread_id", "client_node_id"]
+                )
+            await session.execute(statement)
         actual_task_id_by_client_id.update(
             await _load_task_ids_by_client_node_id(
                 session,
@@ -886,6 +914,24 @@ async def _persist_tasks_idempotently(
             insert(TaskDependency.__table__)
             .values(dependency_rows)
             .on_conflict_do_nothing(index_elements=["task_id", "depends_on_task_id"])
+        )
+
+
+async def _assert_next_phase_client_ids_are_new(
+    session: Any,
+    tasks: list[Task],
+) -> None:
+    existing_ids = await _load_task_ids_by_client_node_id(
+        session,
+        user_id=tasks[0].user_id,
+        thread_id=tasks[0].thread_id,
+        client_node_ids=[task.client_node_id for task in tasks],
+    )
+    if existing_ids:
+        conflicting_ids = ", ".join(sorted(existing_ids))
+        raise RuntimeError(
+            "next-phase client_node_id values already exist in committed tasks: "
+            f"{conflicting_ids}"
         )
 
 
@@ -1126,6 +1172,11 @@ def _collect_phase_contract_errors(
             errors.append("next_phase requires planning_context in committed and proposed trees")
             return
         errors.extend(validate_next_phase_transition(committed.planning_context, context))
+        _collect_cross_tree_client_id_errors(
+            committed=committed,
+            proposed=task_tree,
+            errors=errors,
+        )
         return
 
     if intent_type in {"long_term_growth", "exploration_decision"}:
@@ -1139,6 +1190,21 @@ def _collect_phase_contract_errors(
             errors.append("planning_context time_horizon must match IntentProfile")
     elif context is not None:
         errors.append(f"{intent_type} planning_context must be null")
+
+
+def _collect_cross_tree_client_id_errors(
+    *,
+    committed: TaskTree,
+    proposed: TaskTree,
+    errors: list[str],
+) -> None:
+    committed_ids = {node.client_node_id for node in _iter_task_nodes(committed.root)}
+    proposed_ids = {node.client_node_id for node in _iter_task_nodes(proposed.root)}
+    for client_node_id in sorted(committed_ids & proposed_ids):
+        errors.append(
+            f"{client_node_id}: next_phase client_node_id already exists in committed tree; "
+            "generate a new client_node_id for this node"
+        )
 
 
 def _collect_rule_errors(

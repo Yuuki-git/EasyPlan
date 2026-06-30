@@ -553,7 +553,37 @@ def test_next_phase_prompt_locks_completed_phases_and_profile():
     assert "completed 阶段必须逐字段保持不变" in prompt
     assert "intent_type 和 time_horizon 必须保持不变" in prompt
     assert "只能展开一个新的 current phase" in prompt
+    assert "不得复用已提交计划中的任何 client_node_id" in prompt
     assert "1/1 AI actions completed" in prompt
+
+
+def test_next_phase_validator_replans_when_client_node_id_reuses_committed_tree():
+    committed = phase_plan(current_order=1)
+    proposed = phase_plan(current_order=2)
+    reused_id = committed["root"]["children"][0]["client_node_id"]
+    proposed["root"]["children"][0]["client_node_id"] = reused_id
+    proposed["planning_context"]["next_action_client_node_id"] = reused_id
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": proposed,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "next_phase",
+                "committed_task_tree": committed,
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        reused_id in error and "committed tree" in error
+        for error in result["validation_errors"]
+    )
 
 
 def test_next_phase_validator_rejects_completed_phase_mutation():

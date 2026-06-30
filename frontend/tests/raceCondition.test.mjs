@@ -102,7 +102,8 @@ async function runTests() {
 
     // 1. 模拟初始化脏数据
     useAppStore.setState({
-      taskTree: { root: { title: 'old tree' } },
+      committedTaskTree: { root: { title: 'old tree' } },
+      previewTaskTree: { root: { title: 'old tree' } },
       nodeStatuses: { 'node-1': 'success' }
     });
 
@@ -111,13 +112,15 @@ async function runTests() {
 
     // 3. 验证此时状态已经同步清空
     let state = useAppStore.getState();
-    assert.equal(state.taskTree, null);
+    assert.equal(state.committedTaskTree, null);
+    assert.equal(state.previewTaskTree, null);
     assert.equal(Object.keys(state.nodeStatuses).length, 0);
 
     // 4. 模拟新 run 写入
     const nextTree = { root: { title: 'new tree' } };
     useAppStore.setState({
-      taskTree: nextTree,
+      committedTaskTree: nextTree,
+      previewTaskTree: nextTree,
       nodeStatuses: { 'node-2': 'syncing' }
     });
 
@@ -126,8 +129,10 @@ async function runTests() {
 
     // 6. 验证新 run 状态仍然完好，未被任何旧定时器清理
     state = useAppStore.getState();
-    assert.ok(state.taskTree);
-    assert.equal(state.taskTree.root.title, 'new tree');
+    assert.ok(state.committedTaskTree);
+    assert.equal(state.committedTaskTree.root.title, 'new tree');
+    assert.ok(state.previewTaskTree);
+    assert.equal(state.previewTaskTree.root.title, 'new tree');
     assert.equal(Object.keys(state.nodeStatuses).length, 1);
     assert.equal(state.nodeStatuses['node-2'], 'syncing');
   }

@@ -8,7 +8,7 @@ export const useSSE = () => {
   const {
     threadId,
     addReasoningLog,
-    setTaskTree,
+    setPreviewTaskTree,
     setAppState,
     setError,
     setNodeStatus,
@@ -137,7 +137,7 @@ export const useSSE = () => {
         handleEventActivity();
         lastEventIdRef.current = e.lastEventId;
         const data = JSON.parse(e.data);
-        setTaskTree(data.task_tree);
+        setPreviewTaskTree(data.task_tree);
         setAppState('PENDING');
         clearStallTimer();
       });
@@ -239,7 +239,7 @@ export const useSSE = () => {
   }, [
     threadId,
     addReasoningLog,
-    setTaskTree,
+    setPreviewTaskTree,
     setAppState,
     setError,
     setNodeStatus,

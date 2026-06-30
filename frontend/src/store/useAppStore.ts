@@ -60,7 +60,8 @@ interface AppStore {
   threadId: string | null;
   syncRequestId: string | null;
   reasoningLogs: string[];
-  taskTree: TaskTree | null;
+  committedTaskTree: TaskTree | null;
+  previewTaskTree: TaskTree | null;
   nodeStatuses: Record<string, 'pending' | 'syncing' | 'success' | 'error'>;
   preferredProvider: string; // 'todoist' or 'microsoft_todo'
   isIntegrated: boolean;
@@ -95,7 +96,8 @@ interface AppStore {
   setSelectedProjectId: (projectId: string | null) => void;
   generateSyncId: () => void;
   addReasoningLog: (log: string) => void;
-  setTaskTree: (tree: TaskTree | null) => void;
+  setPreviewTaskTree: (tree: TaskTree | null) => void;
+  setCommittedTaskTree: (tree: TaskTree | null) => void;
   setNodeStatus: (nodeId: string, status: 'pending' | 'syncing' | 'success' | 'error') => void;
   setError: (error: string | null) => void;
   setRunStalled: (stalled: boolean) => void;
@@ -135,7 +137,8 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
   set({
     selectedProjectId: shouldClearSelectedProject ? null : state.selectedProjectId,
     threadId: shouldClearThread ? null : state.threadId,
-    taskTree: null,
+    committedTaskTree: null,
+    previewTaskTree: null,
     previewMode: null,
     phaseRequestId: null,
     appState: 'INITIAL',
@@ -164,7 +167,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   threadId: localStorage.getItem('easyplan_thread_id') || null,
   syncRequestId: null,
   reasoningLogs: [],
-  taskTree: null,
+  committedTaskTree: null,
+  previewTaskTree: null,
   nodeStatuses: {},
   preferredProvider: 'microsoft_todo',
   isIntegrated: false,
@@ -238,10 +242,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (view === 'board') {
       const { selectedProjectId } = get();
       if (!selectedProjectId) {
-        set({ currentViewBucket: 'planned', selectedProjectId: null, taskTree: null, boardTasks: null });
+        set({ currentViewBucket: 'planned', selectedProjectId: null, committedTaskTree: null, previewTaskTree: null, boardTasks: null });
         get().fetchTasks('planned');
       } else {
-        set({ currentViewBucket: 'planned', taskTree: null, boardTasks: null });
+        set({ currentViewBucket: 'planned', previewTaskTree: null, boardTasks: null });
         get().fetchTasks('planned');
       }
     }
@@ -259,7 +263,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       localStorage.removeItem('easyplan_selected_project_id');
       set({
         threadId: null,
-        taskTree: null,
+        committedTaskTree: null,
+        previewTaskTree: null,
         previewMode: null,
         phaseRequestId: null,
         appState: 'INITIAL',
@@ -276,7 +281,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     reasoningLogs: [...state.reasoningLogs, log]
   })),
 
-  setTaskTree: (taskTree) => set({ taskTree }),
+  setPreviewTaskTree: (previewTaskTree) => set({ previewTaskTree }),
+  setCommittedTaskTree: (committedTaskTree) => set({ committedTaskTree }),
 
   setNodeStatus: (nodeId, status) => set((state) => ({
     nodeStatuses: { ...state.nodeStatuses, [nodeId]: status }
@@ -301,7 +307,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectedProjectId: null,
       boardTasks: null,
       boardError: null,
-      taskTree: null,
+      committedTaskTree: null,
+      previewTaskTree: null,
       showAuthModal: false,
       pendingIntent: null,
       isPhaseRequestPending: false,
@@ -326,6 +333,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({
         previewMode: null,
         phaseRequestId: null,
+        previewTaskTree: null,
       });
       localStorage.removeItem('easyplan_preview_mode');
       localStorage.removeItem('easyplan_phase_request_id');
@@ -336,7 +344,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         phaseRequestId: null,
         currentViewBucket: 'planned',
         selectedProjectId: null,
-        highlightedProjectId: threadId
+        highlightedProjectId: threadId,
+        committedTaskTree: null,
+        previewTaskTree: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_selected_project_id');
@@ -379,7 +389,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const snapshot = await response.json();
 
       set({
-        taskTree: snapshot.task_tree
+        committedTaskTree: snapshot.task_tree
       });
     } catch (err) {
       console.error('loadProjectSnapshot failed', err);
@@ -424,7 +434,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         previewMode: null,
         phaseRequestId: null,
         appState: 'INITIAL',
-        taskTree: snapshot.task_tree || null,
+        committedTaskTree: snapshot.task_tree || null,
+        previewTaskTree: null,
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
       });
@@ -504,7 +515,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         isRunStalled: false,
         threadId: null,
         intent: '',
-        taskTree: null
+        committedTaskTree: null,
+        previewTaskTree: null
       });
       localStorage.setItem('easyplan_view', 'input');
       localStorage.removeItem('easyplan_thread_id');
@@ -805,7 +817,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       previewMode: null,
       phaseRequestId: null,
       boardTasks: null,
-      taskTree: null,
+      committedTaskTree: null,
+      previewTaskTree: null,
       nodeStatuses: {},
       isRunStalled: false
     });
@@ -857,13 +870,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   generateNextPhasePlan: async () => {
-    const { token, selectedProjectId, taskTree, isPhaseRequestPending, boardTasks } = get();
-    if (!token || !selectedProjectId || !taskTree?.planning_context || isPhaseRequestPending) return;
+    const { token, selectedProjectId, committedTaskTree, isPhaseRequestPending, boardTasks } = get();
+    if (!token || !selectedProjectId || !committedTaskTree?.planning_context || isPhaseRequestPending) return;
     if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return;
 
     // Use dynamic import or alternative to avoid circular deps if they occur
     const { selectPlanningView } = await import('./planningState');
-    const planningView = selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
+    const planningView = selectPlanningView(committedTaskTree, boardTasks || [], selectedProjectId);
     if (!planningView?.canUnlock) return;
 
     const requestId = generateUUID();
@@ -875,7 +888,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       error: null,
       phaseRequestId: requestId,
       previewMode: 'next_phase',
-      appState: 'THINKING'
+      appState: 'THINKING',
+      previewTaskTree: null
     });
     localStorage.setItem('easyplan_view', 'board');
     localStorage.setItem('easyplan_thread_id', selectedProjectId);
@@ -932,7 +946,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         error: null,
         isRunStalled: false,
         reasoningLogs: [],
-        taskTree: null,
+        committedTaskTree: null,
+        previewTaskTree: null,
         nodeStatuses: {}
       });
       const headers: Record<string, string> = {
@@ -1038,28 +1053,38 @@ export const useAppStore = create<AppStore>((set, get) => ({
         localStorage.setItem('easyplan_thread_id', snapshot.thread_id);
       }
 
-      let taskTree = null;
+      let committedTaskTree = null;
+      let previewTaskTree = null;
       let targetAppState: AppState = 'INITIAL';
       let targetView = get().view;
 
       if (isPending) {
-        taskTree = snapshot.interrupt_payload?.task_tree || null;
+        if (isNextPhasePreview) {
+          committedTaskTree = snapshot.task_tree || null;
+          previewTaskTree = snapshot.interrupt_payload?.task_tree || null;
+        } else {
+          committedTaskTree = null;
+          previewTaskTree = snapshot.interrupt_payload?.task_tree || null;
+        }
         targetAppState = 'PENDING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else if (isNextPhaseRunning || isStalled || shouldPreserveLocalNextPhase) {
-        taskTree = snapshot.task_tree || get().taskTree || null;
+        committedTaskTree = snapshot.task_tree || null;
+        previewTaskTree = null;
         targetAppState = 'THINKING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else {
-        taskTree = snapshot.task_tree || null;
-        targetAppState = taskTree ? 'INITIAL' : 'THINKING';
-        targetView = (taskTree && get().selectedProjectId) ? 'board' : get().view;
+        committedTaskTree = snapshot.task_tree || null;
+        previewTaskTree = null;
+        targetAppState = committedTaskTree ? 'INITIAL' : 'THINKING';
+        targetView = (committedTaskTree && get().selectedProjectId) ? 'board' : get().view;
       }
 
       set({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
-        taskTree: taskTree,
+        committedTaskTree,
+        previewTaskTree,
         appState: targetAppState,
         view: targetView,
         previewMode: savedPreviewMode,
@@ -1081,7 +1106,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       syncRequestId: requestId,
       isRunStalled: false,
       reasoningLogs: [],
-      taskTree: null,
+      previewTaskTree: null,
       nodeStatuses: { [nodeId]: 'syncing' },
       error: null
     });
@@ -1192,7 +1217,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       error: null,
       isRunStalled: false,
       reasoningLogs: [],
-      taskTree: null,
+      committedTaskTree: null,
+      previewTaskTree: null,
       nodeStatuses: {}
     });
 

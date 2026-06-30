@@ -382,7 +382,7 @@ useAppStore.setState({
   currentViewBucket: 'planned',
   selectedProjectId: 'proj-1',
   boardTasks,
-  taskTree: phase1Tree,
+  committedTaskTree: phase1Tree,
   boardError: null,
   appState: 'INITIAL',
 });
@@ -394,7 +394,7 @@ assert.ok(findInVdom(firstRender, (node) => typeof node === 'string' && node.inc
 assert.equal(findInVdom(firstRender, (node) => typeof node === 'string' && node.includes('Phase 2 Task')), null);
 
 useAppStore.setState({
-  taskTree: phase2Tree,
+  committedTaskTree: phase2Tree,
 });
 
 const secondRender = render();
@@ -403,7 +403,8 @@ assert.ok(findInVdom(secondRender, (node) => typeof node === 'string' && node.in
 useAppStore.setState({
   selectedProjectId: 'proj-1',
   boardTasks: previewBoardTasks,
-  taskTree: previewPhaseTree,
+  committedTaskTree: phase1Tree,
+  previewTaskTree: previewPhaseTree,
   previewMode: 'next_phase',
   appState: 'PENDING',
 });

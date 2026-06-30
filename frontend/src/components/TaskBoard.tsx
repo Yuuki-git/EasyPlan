@@ -545,7 +545,8 @@ export const TaskBoard: React.FC = () => {
     boardError,
     fetchTasks,
     appState,
-    taskTree,
+    committedTaskTree,
+    previewTaskTree,
     loadProjectSnapshot,
     previewMode
   } = useAppStore();
@@ -555,10 +556,10 @@ export const TaskBoard: React.FC = () => {
       const bootstrap = async () => {
         try {
           if (selectedProjectId === null) {
-            useAppStore.setState({ taskTree: null });
+            useAppStore.setState({ committedTaskTree: null, previewTaskTree: null });
             await fetchTasks('planned');
           } else {
-            useAppStore.setState({ taskTree: null });
+            useAppStore.setState({ committedTaskTree: null, previewTaskTree: null });
             await loadProjectSnapshot(selectedProjectId);
             await fetchTasks('planned');
           }
@@ -598,15 +599,15 @@ export const TaskBoard: React.FC = () => {
   const planningView = useMemo(() => {
     if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return null;
     if (currentViewBucket !== 'planned' || !selectedProjectId) return null;
-    return selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
-  }, [taskTree, boardTasks, currentViewBucket, selectedProjectId]);
+    return selectPlanningView(committedTaskTree, boardTasks || [], selectedProjectId);
+  }, [committedTaskTree, boardTasks, currentViewBucket, selectedProjectId]);
 
   const previewTree = useMemo(() => {
-    if (currentViewBucket !== 'planned' || previewMode !== 'next_phase' || !selectedProjectId || !taskTree?.root) {
+    if (currentViewBucket !== 'planned' || previewMode !== 'next_phase' || !selectedProjectId || !previewTaskTree?.root) {
       return null;
     }
-    return buildPreviewTree(taskTree.root, selectedProjectId);
-  }, [currentViewBucket, previewMode, selectedProjectId, taskTree]);
+    return buildPreviewTree(previewTaskTree.root, selectedProjectId);
+  }, [currentViewBucket, previewMode, selectedProjectId, previewTaskTree]);
 
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;

@@ -431,7 +431,8 @@ async function runTests() {
       threadId: 'user-A-proj',
       view: 'board',
       boardTasks: [{ id: 't-1', title: 'Task 1', status: 'active', parent_task_id: null, thread_id: 'user-A-proj', source: 'ai' }],
-      taskTree: { root: { title: 'User A Tree' } },
+      committedTaskTree: { root: { title: 'User A Tree' } },
+      previewTaskTree: { root: { title: 'User A Tree' } },
       boardError: 'Some prior error',
       showAuthModal: true,
       pendingIntent: 'user-A-intent',
@@ -445,7 +446,8 @@ async function runTests() {
     assert.equal(useAppStore.getState().token, null);
     assert.equal(useAppStore.getState().selectedProjectId, null);
     assert.equal(useAppStore.getState().threadId, null);
-    assert.equal(useAppStore.getState().taskTree, null);
+    assert.equal(useAppStore.getState().committedTaskTree, null);
+    assert.equal(useAppStore.getState().previewTaskTree, null);
     assert.equal(useAppStore.getState().boardTasks, null);
     assert.equal(useAppStore.getState().boardError, null);
     assert.equal(useAppStore.getState().view, 'input');
@@ -461,12 +463,14 @@ async function runTests() {
 
     // 状态防挂起闪烁校验：setView('board') 应该强制清空 taskTree 和 boardTasks
     useAppStore.setState({
-      taskTree: { root: { title: 'Old Tree' } },
+      committedTaskTree: { root: { title: 'Old Tree' } },
+      previewTaskTree: { root: { title: 'Old Tree' } },
       boardTasks: [{ id: 't-old' }]
     });
 
     useAppStore.getState().setView('board');
-    assert.equal(useAppStore.getState().taskTree, null, 'taskTree should be cleared on setView');
+    assert.equal(useAppStore.getState().committedTaskTree, null, 'committedTaskTree should be cleared on setView');
+    assert.equal(useAppStore.getState().previewTaskTree, null, 'previewTaskTree should be cleared on setView');
     assert.equal(useAppStore.getState().boardTasks, null, 'boardTasks should be cleared on setView');
   }
 
