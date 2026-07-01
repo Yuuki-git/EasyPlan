@@ -45,6 +45,7 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
     console: { ...console, error: () => {} },
     fetch: fetchImpl,
     setTimeout,
+    __test__: true,
     localStorage: {
       getItem: (key) => localStorageValues.get(key) ?? null,
       setItem: (key, value) => localStorageValues.set(key, value),
@@ -76,6 +77,20 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
           }
         };
       }
+      if (specifier === './snapshotRequestGate') {
+        return {
+          createLatestRequestGate: () => {
+            let latest = 0;
+            return {
+              begin: () => {
+                const seq = ++latest;
+                return () => seq === latest;
+              },
+              invalidate: () => { latest++; }
+            };
+          }
+        };
+      }
       throw new Error(`Unexpected require: ${specifier}`);
     },
     Intl: Intl
@@ -89,6 +104,7 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
 }
 
 async function runTests() {
+  globalThis.__test__ = true;
   console.log('Running generationRun tests...');
 
   // --- 测试场景 1: submitIntent 触发新 Run 清空旧状态 ---
@@ -463,6 +479,7 @@ async function runTests() {
       'easyplan_thread_id': 'proj-race',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-race',
+      'easyplan_base_phase_id': 'phase-1'
     });
 
     useAppStore.setState({
@@ -472,8 +489,9 @@ async function runTests() {
       appState: 'THINKING',
       previewMode: 'next_phase',
       phaseRequestId: 'req-race',
+      basePhaseId: 'phase-1',
       boardTasks: [],
-      committedTaskTree: { planning_context: {} },
+      committedTaskTree: { planning_context: { current_phase: { phase_id: 'phase-1' } } },
       previewTaskTree: { planning_context: {} }
     });
 
@@ -487,14 +505,19 @@ async function runTests() {
     assert.equal(localStorageValues.get('easyplan_preview_mode'), 'next_phase');
     assert.equal(localStorageValues.get('easyplan_phase_request_id'), 'req-race');
 
-    await useAppStore.getState().finishAgentRun();
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-race',
+      run_type: 'next_phase',
+      request_id: 'req-race',
+      state_version: 2
+    });
 
     const finishedState = useAppStore.getState();
     assert.equal(finishedState.selectedProjectId, 'proj-race', 'finishing a next-phase run should stay inside the current project');
     assert.equal(finishedState.view, 'board');
   }
 
-  // --- 测试场景 8: finishAgentRun 在 next-phase confirm 完成前不应先清掉 preview ---
+  // --- 测试场景 8: finishAgentRun - 历史陈旧 done 应该什么都不做 ---
   {
     const { useAppStore, localStorageValues } = loadAppStoreModule(async () => ({
       ok: true,
@@ -502,45 +525,312 @@ async function runTests() {
       json: async () => ({})
     }), {
       'easyplan_view': 'board',
-      'easyplan_selected_project_id': 'proj-confirm',
-      'easyplan_thread_id': 'proj-confirm',
+      'easyplan_selected_project_id': 'proj-proof',
+      'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
-      'easyplan_phase_request_id': 'req-confirm',
+      'easyplan_phase_request_id': 'req-current',
+      'easyplan_base_phase_id': 'phase-1'
     });
-
-    let resolveSnapshot;
-    let resolveTasks;
-    const snapshotPromise = new Promise((resolve) => { resolveSnapshot = resolve; });
-    const tasksPromise = new Promise((resolve) => { resolveTasks = resolve; });
 
     useAppStore.setState({
       view: 'board',
-      selectedProjectId: 'proj-confirm',
-      threadId: 'proj-confirm',
+      selectedProjectId: 'proj-proof',
+      threadId: 'proj-proof',
       previewMode: 'next_phase',
-      phaseRequestId: 'req-confirm',
-      loadProjectSnapshot: async () => {
-        await snapshotPromise;
-      },
-      fetchTasks: async () => {
-        await tasksPromise;
-      },
+      phaseRequestId: 'req-current',
+      basePhaseId: 'phase-1'
     });
 
-    const finishPromise = useAppStore.getState().finishAgentRun();
+    // 历史 done 事件：requestId 为 req-old
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-proof',
+      run_type: 'next_phase',
+      request_id: 'req-old',
+      state_version: 2
+    });
 
-    assert.equal(useAppStore.getState().previewMode, 'next_phase', 'preview should remain visible until committed data has reloaded');
-    assert.equal(localStorageValues.get('easyplan_preview_mode'), 'next_phase');
+    const state = useAppStore.getState();
+    assert.equal(state.previewMode, 'next_phase', 'stale finishAgentRun should not clear previewMode');
+    assert.equal(state.phaseRequestId, 'req-current');
+  }
 
-    resolveSnapshot();
-    resolveTasks();
-    await finishPromise;
+  // --- 测试场景 9: finishAgentRun - 匹配但未确认 the snapshot 不应清掉 preview ---
+  {
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/proj-proof')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-proof',
+            status: 'awaiting_confirmation',
+            interrupt_payload: {
+              type: 'phase_generation_state',
+              request_id: 'req-current',
+              status: 'running' // 未确认
+            }
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([])
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
 
-    const finishedState = useAppStore.getState();
-    assert.equal(finishedState.previewMode, null, 'preview should clear after committed project data finishes loading');
-    assert.equal(finishedState.phaseRequestId, null);
-    assert.equal(localStorageValues.get('easyplan_preview_mode'), undefined);
-    assert.equal(localStorageValues.get('easyplan_phase_request_id'), undefined);
+    const { useAppStore } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-proof',
+      'easyplan_thread_id': 'proj-proof',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-current',
+      'easyplan_base_phase_id': 'phase-1'
+    });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-proof',
+      threadId: 'proj-proof',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-current',
+      basePhaseId: 'phase-1'
+    });
+
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-proof',
+      run_type: 'next_phase',
+      request_id: 'req-current',
+      state_version: 2
+    });
+
+    const state = useAppStore.getState();
+    assert.equal(state.previewMode, 'next_phase', 'unconfirmed snapshot should not clear preview');
+    assert.ok(state.error && state.error.includes('未检测到下一阶段的确认'));
+  }
+
+  // --- 测试场景 10: finishAgentRun - 匹配且已确认但阶段未推进不应清掉 preview ---
+  {
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/proj-proof')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-proof',
+            status: 'succeeded',
+            interrupt_payload: {
+              type: 'phase_generation_state',
+              request_id: 'req-current',
+              status: 'confirmed'
+            },
+            task_tree: {
+              planning_context: {
+                current_phase: {
+                  phase_id: 'phase-1' // 仍是原阶段
+                }
+              }
+            }
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([])
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-proof',
+      'easyplan_thread_id': 'proj-proof',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-current',
+      'easyplan_base_phase_id': 'phase-1'
+    });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-proof',
+      threadId: 'proj-proof',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-current',
+      basePhaseId: 'phase-1'
+    });
+
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-proof',
+      run_type: 'next_phase',
+      request_id: 'req-current',
+      state_version: 2
+    });
+
+    const state = useAppStore.getState();
+    assert.equal(state.previewMode, 'next_phase', 'snapshot without advanced phase should not clear preview');
+  }
+
+  // --- 测试场景 11: finishAgentRun - 阶段已推进但无相应 AI 任务不应清掉 preview ---
+  {
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/proj-proof')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-proof',
+            status: 'succeeded',
+            interrupt_payload: {
+              type: 'phase_generation_state',
+              request_id: 'req-current',
+              status: 'confirmed'
+            },
+            task_tree: {
+              planning_context: {
+                current_phase: {
+                  phase_id: 'phase-2' // 已推进
+                }
+              }
+            }
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]) // 无任务
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-proof',
+      'easyplan_thread_id': 'proj-proof',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-current',
+      'easyplan_base_phase_id': 'phase-1'
+    });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-proof',
+      threadId: 'proj-proof',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-current',
+      basePhaseId: 'phase-1'
+    });
+
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-proof',
+      run_type: 'next_phase',
+      request_id: 'req-current',
+      state_version: 2
+    });
+
+    const state = useAppStore.getState();
+    assert.equal(state.previewMode, 'next_phase', 'snapshot with advanced phase but no phase tasks should not clear preview');
+  }
+
+  // --- 测试场景 12: finishAgentRun - 全部条件匹配应成功提交 Phase 2 并清空 preview ---
+  {
+    const fetchMock = async (url) => {
+      if (url.includes('/api/threads/proj-proof')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-proof',
+            status: 'succeeded',
+            interrupt_payload: {
+              type: 'phase_generation_state',
+              request_id: 'req-current',
+              status: 'confirmed'
+            },
+            task_tree: {
+              root: { title: 'Phase 2 Root' },
+              planning_context: {
+                current_phase: {
+                  phase_id: 'phase-2'
+                }
+              }
+            }
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([
+            {
+              id: 'task-1',
+              thread_id: 'proj-proof',
+              phase_id: 'phase-2',
+              source: 'ai'
+            }
+          ])
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-proof',
+      'easyplan_thread_id': 'proj-proof',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-current',
+      'easyplan_base_phase_id': 'phase-1'
+    });
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'proj-proof',
+      threadId: 'proj-proof',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-current',
+      basePhaseId: 'phase-1'
+    });
+
+    await useAppStore.getState().finishAgentRun({
+      thread_id: 'proj-proof',
+      run_type: 'next_phase',
+      request_id: 'req-current',
+      state_version: 2
+    });
+
+    const state = useAppStore.getState();
+    assert.equal(state.previewMode, null, 'successful commit proof should clear previewMode');
+    assert.equal(state.phaseRequestId, null);
+    assert.equal(state.committedTaskTree?.root?.title, 'Phase 2 Root');
+    assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
+    assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
+    assert.equal(localStorageValues.has('easyplan_base_phase_id'), false);
   }
 
   console.log('generationRun tests passed');

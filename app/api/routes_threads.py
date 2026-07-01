@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Path, Query, status
@@ -15,7 +15,7 @@ from app.api.schemas import (
     ThreadSnapshot,
 )
 from app.db.session import get_db
-from app.services.agent_runtime import AgentRuntime, agent_runtime
+from app.services.agent_runtime import INITIAL_RUN_REQUEST_ID, AgentRuntime, agent_runtime
 from app.services.phase_planning import phase_planning_enabled
 from app.services.thread_repository import (
     AgentThreadRepository,
@@ -63,7 +63,9 @@ async def get_thread_snapshot(
     description=(
         "Server-Sent Events stream. Events include reasoning, checkpoint, "
         "plan_ready, done, snapshot_required, and agent_error. "
-        "The agent_error event payload contains state_version, code, and message."
+        "Every event payload contains thread_id, run_type, request_id, and state_version. "
+        "Next-phase streams require run_type=next_phase and the matching request_id. "
+        "The agent_error event payload also contains code and message."
     ),
 )
 async def stream_thread_events(
@@ -73,15 +75,27 @@ async def stream_thread_events(
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
     last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     last_event_id_query: Annotated[str | None, Query(alias="last_event_id")] = None,
+    run_type: Annotated[Literal["initial", "next_phase"], Query()] = "initial",
+    request_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
 ) -> StreamingResponse:
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    if run_type == "next_phase" and not request_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error_code": "REQUEST_ID_REQUIRED",
+                "message": "request_id is required for next_phase event streams",
+            },
+        )
     return StreamingResponse(
         runtime.stream_thread_events(
             user_id=str(current_user.id),
             thread_id=thread_id,
             last_event_id=last_event_id_header or last_event_id_query,
+            run_type=run_type,
+            request_id=request_id,
         ),
         media_type="text/event-stream",
     )
@@ -104,6 +118,11 @@ async def confirm_thread(
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    pending_payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+    run_type: Literal["initial", "next_phase"] = (
+        "next_phase" if pending_payload.get("type") == "next_phase_review" else "initial"
+    )
+    event_request_id = payload.request_id if run_type == "next_phase" else INITIAL_RUN_REQUEST_ID
     try:
         await repository.mark_confirmation_accepted(
             thread=thread,
@@ -117,6 +136,8 @@ async def confirm_thread(
         user_id=str(current_user.id),
         thread_id=thread_id,
         decision=payload.model_dump(mode="json", exclude_none=True),
+        run_type=run_type,
+        request_id=event_request_id,
     )
     return ConfirmationResponse(
         thread_id=thread_id,
@@ -192,7 +213,10 @@ async def start_next_phase(
         thread_id=thread_id,
         request_id=payload.request_id,
         status=result.status,
-        events_url=f"/api/threads/{thread_id}/events",
+        events_url=(
+            f"/api/threads/{thread_id}/events"
+            f"?run_type=next_phase&request_id={request_id}"
+        ),
     )
 
 

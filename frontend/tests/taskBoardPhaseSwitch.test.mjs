@@ -81,6 +81,20 @@ function loadAppStoreModule() {
           }
         };
       }
+      if (specifier === './snapshotRequestGate') {
+        return {
+          createLatestRequestGate: () => {
+            let latest = 0;
+            return {
+              begin: () => {
+                const seq = ++latest;
+                return () => seq === latest;
+              },
+              invalidate: () => { latest++; }
+            };
+          }
+        };
+      }
       throw new Error(`Unexpected require: ${specifier}`);
     },
     Intl: Intl

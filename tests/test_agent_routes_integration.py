@@ -262,8 +262,24 @@ class FakeRuntime:
     async def run_next_phase(self, **kwargs):
         self.phase_runs.append(kwargs)
 
-    async def stream_thread_events(self, *, user_id, thread_id, last_event_id=None):
-        self.streamed.append({"user_id": user_id, "thread_id": thread_id, "last_event_id": last_event_id})
+    async def stream_thread_events(
+        self,
+        *,
+        user_id,
+        thread_id,
+        last_event_id=None,
+        run_type="initial",
+        request_id=None,
+    ):
+        self.streamed.append(
+            {
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "last_event_id": last_event_id,
+                "run_type": run_type,
+                "request_id": request_id,
+            }
+        )
         for event in self.events:
             yield event
 
@@ -375,6 +391,37 @@ def test_stream_thread_events_uses_query_last_event_id_when_header_is_missing():
     assert runtime.streamed[0]["last_event_id"] == "evt_00000002"
 
 
+def test_stream_thread_events_forwards_next_phase_run_identity():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+    request_id = "11111111-1111-1111-1111-111111111111"
+
+    response = client.get(
+        f"/api/threads/thread-1/events?run_type=next_phase&request_id={request_id}"
+    )
+
+    assert response.status_code == 200
+    assert runtime.streamed[0]["run_type"] == "next_phase"
+    assert runtime.streamed[0]["request_id"] == request_id
+
+
+def test_stream_thread_events_requires_request_id_for_next_phase():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.get("/api/threads/thread-1/events?run_type=next_phase")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error_code"] == "REQUEST_ID_REQUIRED"
+    assert runtime.streamed == []
+
+
 def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
     repository = FakeThreadRepository()
     runtime = FakeRuntime()
@@ -450,6 +497,8 @@ def test_confirm_thread_does_not_resume_same_next_phase_preview_twice():
     assert first.status_code == 202
     assert second.status_code == 409
     assert len(runtime.resumed) == 1
+    assert runtime.resumed[0]["run_type"] == "next_phase"
+    assert runtime.resumed[0]["request_id"] == payload["request_id"]
 
 
 def test_cancel_next_phase_preview_returns_latest_snapshot():
@@ -628,7 +677,10 @@ def test_start_next_phase_reuses_thread_and_runtime():
         "thread_id": thread.thread_id,
         "request_id": request_id,
         "status": "running",
-        "events_url": f"/api/threads/{thread.thread_id}/events",
+        "events_url": (
+            f"/api/threads/{thread.thread_id}/events"
+            f"?run_type=next_phase&request_id={request_id}"
+        ),
     }
     assert runtime.phase_runs[0]["thread_id"] == thread.thread_id
     assert runtime.phase_runs[0]["request_id"] == request_id

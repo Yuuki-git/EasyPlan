@@ -1,7 +1,10 @@
 import { create } from 'zustand';
-import { TaskTree, TaskResponse, ThreadSnapshot } from '../types/api';
+import { TaskTree, TaskResponse, ThreadSnapshot, AgentRunEventMeta } from '../types/api';
 import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
+import { createLatestRequestGate } from './snapshotRequestGate';
+
+const snapshotGate = createLatestRequestGate();
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -77,10 +80,12 @@ interface AppStore {
   boardError: string | null;
   previewMode: PreviewMode;
   phaseRequestId: string | null;
+  basePhaseId: string | null;
   isPhaseRequestPending: boolean;
   isRunStalled: boolean;
   projectSnapshots: Record<string, ThreadSnapshot>;
   highlightedProjectId: string | null;
+  lastDoneEvent: AgentRunEventMeta | null;
 
   // Actions
   setIntent: (intent: string) => void;
@@ -122,7 +127,7 @@ interface AppStore {
   deleteThread: (threadId: string) => Promise<void>;
   loadProjectSnapshot: (threadId: string) => Promise<void>;
   cancelPlanPreview: () => Promise<void>;
-  finishAgentRun: () => Promise<void>;
+  finishAgentRun: (event: AgentRunEventMeta) => Promise<void>;
   returnToCommittedPlan: () => Promise<void>;
 }
 
@@ -134,6 +139,8 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
   const shouldClearSelectedProject = state.selectedProjectId === staleThreadId;
   const shouldClearThread = state.threadId === staleThreadId;
 
+  snapshotGate.invalidate();
+
   set({
     selectedProjectId: shouldClearSelectedProject ? null : state.selectedProjectId,
     threadId: shouldClearThread ? null : state.threadId,
@@ -141,6 +148,7 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     previewTaskTree: null,
     previewMode: null,
     phaseRequestId: null,
+    basePhaseId: null,
     appState: 'INITIAL',
     error: null,
     boardError: null,
@@ -159,6 +167,7 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
   }
   localStorage.removeItem('easyplan_preview_mode');
   localStorage.removeItem('easyplan_phase_request_id');
+  localStorage.removeItem('easyplan_base_phase_id');
 };
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -184,10 +193,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   boardError: null,
   previewMode: (localStorage.getItem('easyplan_preview_mode') as PreviewMode) || null,
   phaseRequestId: localStorage.getItem('easyplan_phase_request_id') || null,
+  basePhaseId: localStorage.getItem('easyplan_base_phase_id') || null,
   isPhaseRequestPending: false,
   isRunStalled: false,
   projectSnapshots: {},
   highlightedProjectId: null,
+  lastDoneEvent: null,
 
   setIntent: (intent) => set({ intent }),
   setRunStalled: (stalled) => set({ isRunStalled: stalled }),
@@ -255,6 +266,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().fetchTasks(bucket);
   },
   setSelectedProjectId: (projectId) => {
+    snapshotGate.invalidate();
     set({ selectedProjectId: projectId });
     if (projectId) {
       localStorage.setItem('easyplan_selected_project_id', projectId);
@@ -267,11 +279,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         previewTaskTree: null,
         previewMode: null,
         phaseRequestId: null,
+        basePhaseId: null,
         appState: 'INITIAL',
       });
       localStorage.removeItem('easyplan_thread_id');
       localStorage.removeItem('easyplan_preview_mode');
       localStorage.removeItem('easyplan_phase_request_id');
+      localStorage.removeItem('easyplan_base_phase_id');
     }
   },
 
@@ -292,6 +306,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   reset: () => {
     taskStatusOverrides.clear();
+    snapshotGate.invalidate();
     set({
       intent: '',
       appState: 'INITIAL',
@@ -301,6 +316,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       view: 'input',
       previewMode: null,
       phaseRequestId: null,
+      basePhaseId: null,
       isRunStalled: false,
       projectSnapshots: {},
       highlightedProjectId: null,
@@ -318,48 +334,125 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.removeItem('easyplan_thread_id');
     localStorage.removeItem('easyplan_preview_mode');
     localStorage.removeItem('easyplan_phase_request_id');
+    localStorage.removeItem('easyplan_base_phase_id');
   },
 
-  finishAgentRun: async () => {
-    const { previewMode, selectedProjectId, threadId, fetchTasks, loadProjectSnapshot } = get();
+  finishAgentRun: async (event: AgentRunEventMeta) => {
+    const isCurrent = snapshotGate.begin();
+    const { previewMode, selectedProjectId, threadId, fetchTasks, phaseRequestId, basePhaseId } = get();
     if (previewMode === 'next_phase' && selectedProjectId) {
-      set({
-        view: 'board',
-        currentViewBucket: 'planned'
-      });
-      localStorage.setItem('easyplan_view', 'board');
-      await loadProjectSnapshot(selectedProjectId);
-      await fetchTasks('planned');
-      set({
-        previewMode: null,
-        phaseRequestId: null,
-        previewTaskTree: null,
-      });
-      localStorage.removeItem('easyplan_preview_mode');
-      localStorage.removeItem('easyplan_phase_request_id');
+      if (event.run_type !== 'next_phase' || event.request_id !== phaseRequestId) {
+        if (!(globalThis as { __test__?: boolean }).__test__) {
+          console.warn('finishAgentRun next_phase check failed: mismatched run_type or request_id');
+        }
+        return;
+      }
+
+      const { token } = get();
+      if (!token) return;
+      const headers: Record<string, string> = {
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        'Authorization': `Bearer ${token}`
+      };
+
+      try {
+        const response = await fetch(`/api/threads/${selectedProjectId}`, { headers });
+        if (!response.ok) {
+          if (!isCurrent()) return;
+          set({ error: '同步最新计划状态失败，请重试', appState: 'ERROR', lastDoneEvent: event });
+          return;
+        }
+        const snapshot = await response.json();
+
+        const envelope = snapshot.interrupt_payload;
+        const isEnvelopeValid =
+          envelope &&
+          envelope.type === 'phase_generation_state' &&
+          envelope.request_id === phaseRequestId &&
+          envelope.status === 'confirmed';
+
+        const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
+        const hasPhaseAdvanced = currentPhaseId !== basePhaseId;
+
+        const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, { headers });
+        if (!tasksResponse.ok) {
+          if (!isCurrent()) return;
+          set({ error: '获取计划任务失败，请重试', appState: 'ERROR', lastDoneEvent: event });
+          return;
+        }
+        const allTasks: TaskResponse[] = await tasksResponse.json();
+        const threadTasks = allTasks.filter(t => t.thread_id === selectedProjectId);
+        const hasNewPhaseTasks = threadTasks.some(t => t.phase_id === currentPhaseId && t.source === 'ai');
+
+        if (!isEnvelopeValid || !hasPhaseAdvanced || !hasNewPhaseTasks) {
+          if (!(globalThis as { __test__?: boolean }).__test__) {
+            console.warn('finishAgentRun proof incomplete:', { isEnvelopeValid, hasPhaseAdvanced, hasNewPhaseTasks });
+          }
+          if (!isCurrent()) return;
+          set({
+            error: '未检测到下一阶段的确认和生成任务，同步未完成。请点击“重试同步”或“返回当前计划”。',
+            appState: 'ERROR',
+            lastDoneEvent: event
+          });
+          return;
+        }
+
+        if (!isCurrent()) return;
+        set({
+          view: 'board',
+          currentViewBucket: 'planned',
+          committedTaskTree: snapshot.task_tree || null,
+          boardTasks: allTasks, // Keep all tasks, do not filter out other projects!
+          previewMode: null,
+          phaseRequestId: null,
+          basePhaseId: null,
+          previewTaskTree: null,
+          error: null,
+          lastDoneEvent: null,
+          isRunStalled: false,
+          appState: 'INITIAL' // Reset appState to INITIAL on success
+        });
+        localStorage.setItem('easyplan_view', 'board');
+        localStorage.removeItem('easyplan_preview_mode');
+        localStorage.removeItem('easyplan_phase_request_id');
+        localStorage.removeItem('easyplan_base_phase_id');
+      } catch (err) {
+        if (!isCurrent()) return;
+        set({
+          error: '同步过程发生网络异常，请重试。',
+          appState: 'ERROR',
+          lastDoneEvent: event
+        });
+      }
     } else {
+      if (!isCurrent()) return;
       set({
         view: 'board',
         previewMode: null,
         phaseRequestId: null,
+        basePhaseId: null,
         currentViewBucket: 'planned',
         selectedProjectId: null,
         highlightedProjectId: threadId,
         committedTaskTree: null,
         previewTaskTree: null,
+        lastDoneEvent: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_selected_project_id');
       localStorage.removeItem('easyplan_preview_mode');
       localStorage.removeItem('easyplan_phase_request_id');
+      localStorage.removeItem('easyplan_base_phase_id');
       await fetchTasks('planned');
     }
   },
 
   loadProjectSnapshot: async (threadId: string) => {
+    const isCurrent = snapshotGate.begin();
     try {
       const { token } = get();
       if (!token) {
+        if (!isCurrent()) return;
         set({ showAuthModal: true });
         throw new Error('请先登录以查看项目看板');
       }
@@ -372,12 +465,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const response = await fetch(`/api/threads/${threadId}`, { headers });
 
       if (isUnauthorizedResponse(response)) {
+        if (!isCurrent()) return;
         get().setToken(null, false);
         set({ showAuthModal: true });
         throw new Error('请先登录以查看项目看板');
       }
 
       if (response.status === 404) {
+        if (!isCurrent()) return;
         const { selectedProjectId, threadId: activeThreadId } = get();
         if (selectedProjectId === threadId || activeThreadId === threadId) {
           clearRecoveredThreadContext(set, get, threadId);
@@ -388,10 +483,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (!response.ok) throw new Error('Failed to load project snapshot');
       const snapshot = await response.json();
 
+      if (!isCurrent()) return;
       set({
         committedTaskTree: snapshot.task_tree
       });
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('loadProjectSnapshot failed', err);
       throw err;
     }
@@ -433,6 +530,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         view: 'board',
         previewMode: null,
         phaseRequestId: null,
+        basePhaseId: null,
         appState: 'INITIAL',
         committedTaskTree: snapshot.task_tree || null,
         previewTaskTree: null,
@@ -442,6 +540,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_preview_mode');
       localStorage.removeItem('easyplan_phase_request_id');
+      localStorage.removeItem('easyplan_base_phase_id');
       get().fetchTasks();
     } catch (err) {
       console.error('cancelPlanPreview error:', err);
@@ -804,6 +903,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   startNewIntent: () => {
+    snapshotGate.invalidate();
     set({
       appState: 'INITIAL',
       view: 'input',
@@ -816,6 +916,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectedProjectId: null,
       previewMode: null,
       phaseRequestId: null,
+      basePhaseId: null,
       boardTasks: null,
       committedTaskTree: null,
       previewTaskTree: null,
@@ -827,6 +928,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.removeItem('easyplan_thread_id');
     localStorage.removeItem('easyplan_preview_mode');
     localStorage.removeItem('easyplan_phase_request_id');
+    localStorage.removeItem('easyplan_base_phase_id');
   },
 
   deleteThread: async (threadId: string) => {
@@ -848,9 +950,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       const isCurrentProject = selectedProjectId === threadId;
       if (isCurrentProject) {
+        snapshotGate.invalidate();
         localStorage.removeItem('easyplan_selected_project_id');
         localStorage.removeItem('easyplan_preview_mode');
         localStorage.removeItem('easyplan_phase_request_id');
+        localStorage.removeItem('easyplan_base_phase_id');
       }
       if (threadId === get().threadId) {
         localStorage.removeItem('easyplan_thread_id');
@@ -862,6 +966,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         threadId: threadId === get().threadId ? null : get().threadId,
         previewMode: isCurrentProject ? null : get().previewMode,
         phaseRequestId: isCurrentProject ? null : get().phaseRequestId,
+        basePhaseId: isCurrentProject ? null : get().basePhaseId,
       });
     } catch (err) {
       console.error("Delete plan failed", err);
@@ -880,6 +985,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!planningView?.canUnlock) return;
 
     const requestId = generateUUID();
+    const basePhaseId = committedTaskTree.planning_context.current_phase?.phase_id || null;
     set({
       isPhaseRequestPending: true,
       isRunStalled: false,
@@ -887,6 +993,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       nodeStatuses: {},
       error: null,
       phaseRequestId: requestId,
+      basePhaseId: basePhaseId,
       previewMode: 'next_phase',
       appState: 'THINKING',
       previewTaskTree: null
@@ -895,6 +1002,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.setItem('easyplan_thread_id', selectedProjectId);
     localStorage.setItem('easyplan_preview_mode', 'next_phase');
     localStorage.setItem('easyplan_phase_request_id', requestId);
+    if (basePhaseId) {
+      localStorage.setItem('easyplan_base_phase_id', basePhaseId);
+    } else {
+      localStorage.removeItem('easyplan_base_phase_id');
+    }
 
     try {
       const response = await fetch(`/api/threads/${selectedProjectId}/phases/next`, {
@@ -985,6 +1097,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   alignState: async (threadId: string) => {
+    const isCurrent = snapshotGate.begin();
     try {
       const { token } = get();
       const headers: Record<string, string> = {
@@ -994,25 +1107,62 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       const response = await fetch(`/api/threads/${threadId}`, { headers });
       if (response.status === 404) {
+        if (!isCurrent()) return;
         clearRecoveredThreadContext(set, get, threadId);
         return;
       }
       if (!response.ok) throw new Error('Failed to align state');
       const snapshot = await response.json();
 
-      const isPending = snapshot.status === 'awaiting_confirmation';
-      const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
-      const phaseGenerationStatus =
-        snapshot.interrupt_payload?.type === 'phase_generation_state'
-          ? snapshot.interrupt_payload.status
-          : null;
-      const hasTerminalPhaseGenerationState =
-        phaseGenerationStatus === 'confirmed'
-        || phaseGenerationStatus === 'cancelled'
-        || phaseGenerationStatus === 'failed';
+      if (!isCurrent()) return;
 
       const localPreviewMode = localStorage.getItem('easyplan_preview_mode') as PreviewMode;
       const localPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
+      const localBasePhaseId = localStorage.getItem('easyplan_base_phase_id');
+
+      const isPending = snapshot.status === 'awaiting_confirmation';
+      const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
+
+      const envelope = snapshot.interrupt_payload;
+      const isMatchingRequest = envelope && envelope.request_id === localPhaseRequestId;
+      const phaseGenerationStatus =
+        (envelope?.type === 'phase_generation_state' && (localPreviewMode !== 'next_phase' || isMatchingRequest))
+          ? envelope.status
+          : null;
+
+      let alignedTasks: TaskResponse[] | null = null;
+      let hasTerminalPhaseGenerationState = false;
+      if (phaseGenerationStatus === 'confirmed') {
+        const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
+        const hasPhaseAdvanced = currentPhaseId !== localBasePhaseId;
+
+        let hasNewPhaseTasks = false;
+        if (hasPhaseAdvanced && token) {
+          try {
+            const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, { headers });
+            if (!isCurrent()) return;
+            if (tasksResponse.ok) {
+              const allTasks: TaskResponse[] = await tasksResponse.json();
+              if (!isCurrent()) return;
+              alignedTasks = allTasks;
+              const threadTasks = allTasks.filter(t => t.thread_id === threadId);
+              hasNewPhaseTasks = threadTasks.some(t => t.phase_id === currentPhaseId && t.source === 'ai');
+            }
+          } catch (e) {
+            console.error('alignState task verification failed:', e);
+          }
+        }
+
+        if (hasPhaseAdvanced && hasNewPhaseTasks) {
+          hasTerminalPhaseGenerationState = true;
+        } else {
+          hasTerminalPhaseGenerationState = false;
+          alignedTasks = null;
+        }
+      } else if (phaseGenerationStatus === 'cancelled' || phaseGenerationStatus === 'failed') {
+        hasTerminalPhaseGenerationState = true;
+      }
+
       const isNextPhaseRunning = snapshot.status === 'running' && localPreviewMode === 'next_phase';
       const isStalled = snapshot.status === 'stalled';
       const shouldPreserveLocalNextPhase =
@@ -1023,12 +1173,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       let savedPreviewMode: PreviewMode = null;
       let recoveredPhaseRequestId: string | null = null;
+      let recoveredBasePhaseId: string | null = null;
 
       if (isPending) {
         if (isNextPhasePreview) {
           savedPreviewMode = 'next_phase';
           localStorage.setItem('easyplan_preview_mode', 'next_phase');
           recoveredPhaseRequestId = snapshot.interrupt_payload?.request_id || null;
+          recoveredBasePhaseId = localBasePhaseId;
         } else {
           savedPreviewMode = 'initial';
           localStorage.setItem('easyplan_preview_mode', 'initial');
@@ -1036,17 +1188,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       } else if (isNextPhaseRunning || (isStalled && localPreviewMode === 'next_phase')) {
         savedPreviewMode = 'next_phase';
         recoveredPhaseRequestId = localPhaseRequestId;
+        recoveredBasePhaseId = localBasePhaseId;
       } else if (shouldPreserveLocalNextPhase) {
         savedPreviewMode = 'next_phase';
         recoveredPhaseRequestId = localPhaseRequestId;
+        recoveredBasePhaseId = localBasePhaseId;
       } else {
         localStorage.removeItem('easyplan_preview_mode');
         localStorage.removeItem('easyplan_phase_request_id');
+        localStorage.removeItem('easyplan_base_phase_id');
         savedPreviewMode = null;
       }
 
       if (recoveredPhaseRequestId) {
         localStorage.setItem('easyplan_phase_request_id', recoveredPhaseRequestId);
+      }
+      if (recoveredBasePhaseId) {
+        localStorage.setItem('easyplan_base_phase_id', recoveredBasePhaseId);
       }
 
       if (snapshot.thread_id) {
@@ -1080,6 +1238,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         targetView = (committedTaskTree && get().selectedProjectId) ? 'board' : get().view;
       }
 
+      const nextBoardTasks = alignedTasks ? alignedTasks : get().boardTasks;
+
       set({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
@@ -1089,10 +1249,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         view: targetView,
         previewMode: savedPreviewMode,
         phaseRequestId: recoveredPhaseRequestId || localStorage.getItem('easyplan_phase_request_id') || null,
+        basePhaseId: recoveredBasePhaseId || localStorage.getItem('easyplan_base_phase_id') || null,
         isRunStalled: isStalled,
+        boardTasks: nextBoardTasks,
       });
       localStorage.setItem('easyplan_view', targetView);
     } catch (err) {
+      if (!isCurrent()) return;
       set({ error: (err as Error).message, appState: 'ERROR' });
     }
   },

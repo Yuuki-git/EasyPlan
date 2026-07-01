@@ -1,5 +1,7 @@
 # Next-Phase State Model and ID Contract Fix Implementation Plan
 
+> **Status: Superseded on 2026-07-01.** The split-state and `client_node_id` work in this plan remains valid, but it does not close cross-run SSE replay or stale snapshot writes. Use `docs/superpowers/plans/2026-07-01-next-phase-cross-run-sse-snapshot-fix.md` as the authoritative P0 plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix next-phase planning so phase preview never regresses back to the committed phase during generation or confirmation, and so confirmed next-phase tasks cannot be silently dropped by `client_node_id` conflicts.

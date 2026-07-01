@@ -159,6 +159,8 @@ def test_openapi_contract_documents_sse_last_event_id_query_fallback():
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
 
     assert "last_event_id" in events_params
+    assert "run_type" in events_params
+    assert "request_id" in events_params
 
 
 def test_openapi_contract_documents_agent_error_sse_event_name():

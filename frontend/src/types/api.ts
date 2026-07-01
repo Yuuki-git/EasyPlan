@@ -209,3 +209,10 @@ export interface ValidationError {
 export interface HTTPValidationError {
   detail?: ValidationError[];
 }
+
+export interface AgentRunEventMeta {
+  thread_id: string;
+  run_type: 'initial' | 'next_phase';
+  request_id: string;
+  state_version: number;
+}

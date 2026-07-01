@@ -21,8 +21,26 @@ export const PlanningOverview: React.FC = () => {
     error,
     cancelPlanPreview,
     confirmPlan,
-    reasoningLogs
+    reasoningLogs,
+    finishAgentRun,
+    returnToCommittedPlan,
+    lastDoneEvent
   } = useAppStore();
+
+  const retrySync = () => {
+    const localPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
+    const localThreadId = localStorage.getItem('easyplan_thread_id');
+    if (localPhaseRequestId && localThreadId) {
+      finishAgentRun({
+        thread_id: localThreadId,
+        run_type: 'next_phase',
+        request_id: localPhaseRequestId,
+        state_version: 0
+      });
+    } else if (lastDoneEvent) {
+      finishAgentRun(lastDoneEvent);
+    }
+  };
 
   if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') {
     return null;
@@ -134,21 +152,42 @@ export const PlanningOverview: React.FC = () => {
                 </div>
               ) : appState === 'ERROR' ? (
                 <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5 h-full flex flex-col justify-center items-center text-center">
-                  <div className="text-red-400 font-medium mb-1">规划失败</div>
+                  <div className="text-red-400 font-medium mb-1">
+                    {error && (error.includes('同步') || error.includes('未检测到')) ? '同步计划失败' : '规划失败'}
+                  </div>
                   <p className="text-xs text-muted-foreground mb-4">{error || '加载下一阶段规划时发生错误'}</p>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => generateNextPhasePlan()}
-                      className="px-3 py-1.5 bg-foreground text-background hover:bg-foreground/90 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      重试
-                    </button>
-                    <button
-                      onClick={() => cancelPlanPreview()}
-                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
-                    >
-                      取消本次生成
-                    </button>
+                    {error && (error.includes('同步') || error.includes('未检测到')) ? (
+                      <>
+                        <button
+                          onClick={retrySync}
+                          className="px-3 py-1.5 bg-foreground text-background hover:bg-foreground/90 rounded-lg text-xs font-medium transition-colors"
+                        >
+                          重试同步
+                        </button>
+                        <button
+                          onClick={() => returnToCommittedPlan()}
+                          className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                        >
+                          返回当前计划
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => generateNextPhasePlan()}
+                          className="px-3 py-1.5 bg-foreground text-background hover:bg-foreground/90 rounded-lg text-xs font-medium transition-colors"
+                        >
+                          重试
+                        </button>
+                        <button
+                          onClick={() => cancelPlanPreview()}
+                          className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                        >
+                          取消本次生成
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : appState === 'THINKING' || appState === 'SYNCING' ? (

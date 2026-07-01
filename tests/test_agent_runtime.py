@@ -5,7 +5,12 @@ from typing import Any
 import pytest
 from sqlalchemy.sql import Select, Update
 
-from app.services.agent_runtime import AgentRuntime, SAFE_PLANNING_ERROR_MESSAGE
+from app.services.agent_runtime import (
+    INITIAL_RUN_REQUEST_ID,
+    AgentRuntime,
+    EventRunKey,
+    SAFE_PLANNING_ERROR_MESSAGE,
+)
 
 
 class AsyncStreamGraph:
@@ -317,9 +322,19 @@ def test_next_phase_runtime_failure_releases_lease_without_overwriting_tree(monk
         for value in params.values()
     )
     event = asyncio.run(
-        _next_event(runtime.stream_thread_events(user_id="user-1", thread_id="thread-1"))
+        _next_event(
+            runtime.stream_thread_events(
+                user_id="user-1",
+                thread_id="thread-1",
+                run_type="next_phase",
+                request_id=request_id,
+            )
+        )
     )
     assert "event: agent_error" in event
+    assert '"thread_id":"thread-1"' in event
+    assert '"run_type":"next_phase"' in event
+    assert f'"request_id":"{request_id}"' in event
 
 
 def test_agent_runtime_stream_keeps_connection_open_for_new_events_until_done():
@@ -468,6 +483,82 @@ def test_agent_runtime_streams_only_events_after_last_event_id():
     assert "second" not in event
 
 
+def test_new_next_phase_stream_excludes_historical_terminal_event_from_previous_request():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+    runtime._append_done(
+        "thread-1",
+        status="completed",
+        run_type="next_phase",
+        request_id="request-a",
+    )
+    runtime._append_event(
+        "thread-1",
+        "plan_ready",
+        {"task_tree": {"root": {}}},
+        run_type="next_phase",
+        request_id="request-b",
+    )
+    runtime._append_done(
+        "thread-1",
+        status="completed",
+        run_type="next_phase",
+        request_id="request-b",
+    )
+
+    events = asyncio.run(
+        _collect_events(
+            runtime.stream_thread_events(
+                user_id="user-1",
+                thread_id="thread-1",
+                run_type="next_phase",
+                request_id="request-b",
+            )
+        )
+    )
+
+    payload = "\n".join(events)
+    assert '"thread_id":"thread-1"' in payload
+    assert '"run_type":"next_phase"' in payload
+    assert '"request_id":"request-a"' not in payload
+    assert '"request_id":"request-b"' in payload
+    assert "event: plan_ready" in payload
+    assert payload.count("event: done") == 1
+
+
+def test_next_phase_stream_rejects_cursor_from_a_different_request():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+    runtime._append_event(
+        "thread-1",
+        "reasoning",
+        {"message": "request A"},
+        run_type="next_phase",
+        request_id="request-a",
+    )
+    runtime._append_event(
+        "thread-1",
+        "reasoning",
+        {"message": "request B"},
+        run_type="next_phase",
+        request_id="request-b",
+    )
+
+    event = asyncio.run(
+        _next_event(
+            runtime.stream_thread_events(
+                user_id="user-1",
+                thread_id="thread-1",
+                run_type="next_phase",
+                request_id="request-b",
+                last_event_id="evt_00000001",
+            )
+        )
+    )
+
+    assert "event: snapshot_required" in event
+    assert '"request_id":"request-b"' in event
+    assert "request A" not in event
+
+
 def test_agent_runtime_sanitizes_internal_graph_errors_in_sse(caplog):
     runtime = AgentRuntime(graph_factory=lambda **_: FailingAsyncGraph())
 
@@ -513,7 +604,13 @@ def test_runtime_sanitizes_internal_phase_contract_errors_before_sse_emit():
         )
     )
 
-    event = runtime._events["thread_contract_error"][-1]
+    event = runtime._events[
+        EventRunKey(
+            thread_id="thread_contract_error",
+            run_type="initial",
+            request_id=INITIAL_RUN_REQUEST_ID,
+        )
+    ][-1]
     assert "event: agent_error" in event
     assert SAFE_PLANNING_ERROR_MESSAGE in event
     assert "planning_context time_horizon must match IntentProfile" not in event

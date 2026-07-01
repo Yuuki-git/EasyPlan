@@ -42,6 +42,7 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
     console: { ...console, error: () => {} },
     fetch: fetchImpl,
     setTimeout,
+    __test__: true,
     localStorage: {
       getItem: (key) => localStorageValues.get(key) ?? null,
       setItem: (key, value) => localStorageValues.set(key, value),
@@ -73,6 +74,20 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
           }
         };
       }
+      if (specifier === './snapshotRequestGate') {
+        return {
+          createLatestRequestGate: () => {
+            let latest = 0;
+            return {
+              begin: () => {
+                const seq = ++latest;
+                return () => seq === latest;
+              },
+              invalidate: () => { latest++; }
+            };
+          }
+        };
+      }
       throw new Error(`Unexpected require: ${specifier}`);
     },
     Intl: Intl
@@ -86,6 +101,7 @@ function loadAppStoreModule(fetchImpl, initialLocalStorage = {}) {
 }
 
 async function runTests() {
+  globalThis.__test__ = true;
   console.log('Running stateRestoration tests...');
 
   // --- 测试场景 1: 已有 Committed Plan 刷新恢复 ---
@@ -361,33 +377,53 @@ async function runTests() {
     let fetchCalled = false;
     const fetchMock = async (url) => {
       fetchCalled = true;
-      assert.ok(url.includes('/api/threads/thread-confirmed'));
+      if (url.includes('/api/threads/thread-confirmed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'thread-confirmed',
+            status: 'succeeded',
+            intent_text: 'my intent',
+            task_tree: {
+              root: { title: 'Phase 2 Root' },
+              planning_context: {
+                roadmap: [
+                  { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
+                  { phase_id: 'phase_02', order: 2, title: 'Phase 2', objective: 'Build', status: 'current' },
+                ],
+                current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
+              },
+            },
+            interrupt_payload: {
+              type: 'phase_generation_state',
+              request_id: 'req-confirmed',
+              status: 'confirmed',
+              history: {
+                'req-confirmed': { status: 'confirmed' },
+              },
+            },
+          }),
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              id: 'task-new',
+              thread_id: 'thread-confirmed',
+              phase_id: 'phase_02',
+              source: 'ai'
+            }
+          ]
+        };
+      }
       return {
         ok: true,
         status: 200,
-        json: async () => ({
-          thread_id: 'thread-confirmed',
-          status: 'succeeded',
-          intent_text: 'my intent',
-          task_tree: {
-            root: { title: 'Phase 2 Root' },
-            planning_context: {
-              roadmap: [
-                { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
-                { phase_id: 'phase_02', order: 2, title: 'Phase 2', objective: 'Build', status: 'current' },
-              ],
-              current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
-            },
-          },
-          interrupt_payload: {
-            type: 'phase_generation_state',
-            request_id: 'req-confirmed',
-            status: 'confirmed',
-            history: {
-              'req-confirmed': { status: 'confirmed' },
-            },
-          },
-        }),
+        json: async () => ({})
       };
     };
 
@@ -397,6 +433,7 @@ async function runTests() {
       'easyplan_thread_id': 'thread-confirmed',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-confirmed',
+      'easyplan_base_phase_id': 'phase_01',
     };
 
     const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);
@@ -411,6 +448,72 @@ async function runTests() {
     assert.equal(updatedState.committedTaskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
+  }
+
+  // --- Scenario 9: late snapshot requests must not overwrite newer state (snapshotRequestGate) ---
+  {
+    let resolveA;
+    let resolveB;
+    const promiseA = new Promise((resolve) => { resolveA = resolve; });
+    const promiseB = new Promise((resolve) => { resolveB = resolve; });
+
+    let fetchCount = 0;
+    const fetchMock = async (url) => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        await promiseA;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'thread-1',
+            status: 'succeeded',
+            intent_text: 'my intent',
+            task_tree: { root: { title: 'Phase 1' } }
+          })
+        };
+      } else {
+        await promiseB;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'thread-1',
+            status: 'succeeded',
+            intent_text: 'my intent',
+            task_tree: { root: { title: 'Phase 2' } }
+          })
+        };
+      }
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'thread-1',
+    });
+
+    const alignPromiseA = useAppStore.getState().alignState('thread-1');
+    const alignPromiseB = useAppStore.getState().alignState('thread-1');
+
+    // Resolve B first (it's the second request but resolves first)
+    resolveB();
+    await alignPromiseB;
+
+    // Check that committedTaskTree is Phase 2
+    assert.equal(useAppStore.getState().committedTaskTree.root.title, 'Phase 2');
+
+    // Now resolve A last (the first request)
+    resolveA();
+    await alignPromiseA;
+
+    // Verify A did NOT alter committedTaskTree, previewTaskTree, previewMode, phaseRequestId, appState, view
+    const finalState = useAppStore.getState();
+    assert.equal(finalState.committedTaskTree.root.title, 'Phase 2', 'Late Phase 1 response should not overwrite Phase 2');
+    assert.equal(finalState.previewTaskTree, null);
+    assert.equal(finalState.previewMode, null);
+    assert.equal(finalState.phaseRequestId, null);
+    assert.equal(finalState.appState, 'INITIAL');
+    assert.equal(finalState.view, 'board');
   }
 
   console.log('stateRestoration tests passed');
