@@ -414,8 +414,7 @@ async function runTests() {
             {
               id: 'task-new',
               thread_id: 'thread-confirmed',
-              phase_id: 'phase_02',
-              source: 'ai'
+              phase_id: 'phase_02'
             }
           ]
         };
@@ -434,6 +433,7 @@ async function runTests() {
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-confirmed',
       'easyplan_base_phase_id': 'phase_01',
+      'auth_token': '',
     };
 
     const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);

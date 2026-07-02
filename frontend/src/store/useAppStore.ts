@@ -419,46 +419,122 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
 
       try {
-        const response = await fetch(`/api/threads/${selectedProjectId}`, { headers });
+        const response = await fetch(`/api/threads/${selectedProjectId}`, {
+          headers,
+          cache: 'no-store'
+        });
         if (!response.ok) {
           if (!isCurrent()) return;
           set({ error: '同步最新计划状态失败，请重试', appState: 'ERROR', lastDoneEvent: event });
           return;
         }
-        const snapshot = await response.json();
+        let snapshot: ThreadSnapshot = await response.json();
 
         const envelope = snapshot.interrupt_payload;
-        const isEnvelopeValid =
+        let isEnvelopeValid = Boolean(
           envelope &&
           envelope.type === 'phase_generation_state' &&
           envelope.request_id === event.request_id &&
-          envelope.status === 'confirmed';
+          envelope.status === 'confirmed'
+        );
 
-        const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
-        const hasPhaseAdvanced = currentPhaseId !== basePhaseId;
+        let currentPhaseId =
+          snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
+        let hasPhaseAdvanced = Boolean(currentPhaseId && currentPhaseId !== basePhaseId);
 
-        const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, { headers });
+        const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, {
+          headers,
+          cache: 'no-store'
+        });
         if (!tasksResponse.ok) {
           if (!isCurrent()) return;
           set({ error: '获取计划任务失败，请重试', appState: 'ERROR', lastDoneEvent: event });
           return;
         }
-        const allTasks: TaskResponse[] = await tasksResponse.json();
+        let allTasks: TaskResponse[] = await tasksResponse.json();
         if (!isCurrent()) return;
         const threadTasks = allTasks.filter(t => t.thread_id === selectedProjectId);
-        const hasNewPhaseTasks = threadTasks.some(t => t.phase_id === currentPhaseId && t.source === 'ai');
+        let hasNewPhaseTasks = threadTasks.some(
+          t => t.phase_id === currentPhaseId
+        );
 
         if (!isEnvelopeValid || !hasPhaseAdvanced || !hasNewPhaseTasks) {
-          if (!(globalThis as { __test__?: boolean }).__test__) {
-            console.warn('finishAgentRun proof incomplete:', { isEnvelopeValid, hasPhaseAdvanced, hasNewPhaseTasks });
+          for (let attempt = 1; attempt < 3; attempt += 1) {
+            const currentRun = get().activeRun;
+            if (
+              !isCurrent() ||
+              !currentRun ||
+              currentRun.threadId !== event.thread_id ||
+              currentRun.runType !== event.run_type ||
+              currentRun.requestId !== event.request_id
+            ) {
+              return;
+            }
+
+            const delayMs = (globalThis as { __test__?: boolean }).__test__
+              ? 0
+              : attempt * 200;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+
+            const [snapshotResponse, retryTasksResponse] = await Promise.all([
+              fetch(`/api/threads/${selectedProjectId}`, {
+                headers,
+                cache: 'no-store'
+              }),
+              fetch(`/api/tasks?view_bucket=planned`, {
+                headers,
+                cache: 'no-store'
+              })
+            ]);
+            if (!snapshotResponse.ok || !retryTasksResponse.ok) {
+              continue;
+            }
+
+            snapshot = await snapshotResponse.json() as ThreadSnapshot;
+            allTasks = await retryTasksResponse.json() as TaskResponse[];
+            if (!isCurrent()) return;
+
+            const retryEnvelope = snapshot.interrupt_payload;
+            isEnvelopeValid = Boolean(
+              retryEnvelope &&
+              retryEnvelope.type === 'phase_generation_state' &&
+              retryEnvelope.request_id === event.request_id &&
+              retryEnvelope.status === 'confirmed'
+            );
+            currentPhaseId =
+              snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
+            hasPhaseAdvanced = Boolean(
+              currentPhaseId && currentPhaseId !== basePhaseId
+            );
+            hasNewPhaseTasks = allTasks.some(
+              task =>
+                task.thread_id === selectedProjectId &&
+                task.phase_id === currentPhaseId
+            );
+            if (isEnvelopeValid && hasPhaseAdvanced && hasNewPhaseTasks) {
+              break;
+            }
           }
-          if (!isCurrent()) return;
-          set({
-            error: '未检测到下一阶段的确认和生成任务，同步未完成。请点击“重试同步”或“返回当前计划”。',
-            appState: 'ERROR',
-            lastDoneEvent: event
-          });
-          return;
+
+          if (!isEnvelopeValid || !hasPhaseAdvanced || !hasNewPhaseTasks) {
+            if (!(globalThis as { __test__?: boolean }).__test__) {
+              console.warn('finishAgentRun proof incomplete:', {
+                requestId: event.request_id,
+                basePhaseId,
+                currentPhaseId,
+                isEnvelopeValid,
+                hasPhaseAdvanced,
+                hasNewPhaseTasks
+              });
+            }
+            if (!isCurrent()) return;
+            set({
+              error: '未检测到下一阶段的确认和生成任务，同步未完成。请点击“重试同步”或“返回当前计划”。',
+              appState: 'ERROR',
+              lastDoneEvent: event
+            });
+            return;
+          }
         }
 
         if (!isCurrent()) return;
@@ -530,7 +606,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         'Authorization': `Bearer ${token}`
       };
 
-      const response = await fetch(`/api/threads/${threadId}`, { headers });
+      const response = await fetch(`/api/threads/${threadId}`, {
+        headers,
+        cache: 'no-store'
+      });
 
       if (isUnauthorizedResponse(response)) {
         if (!isCurrent()) return;
@@ -1236,7 +1315,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const response = await fetch(`/api/threads/${threadId}`, { headers });
+      const response = await fetch(`/api/threads/${threadId}`, {
+        headers,
+        cache: 'no-store'
+      });
       if (response.status === 404) {
         if (!isCurrent()) return;
         clearRecoveredThreadContext(set, get, threadId);
@@ -1265,19 +1347,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
       let hasTerminalPhaseGenerationState = false;
       if (phaseGenerationStatus === 'confirmed') {
         const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
-        const hasPhaseAdvanced = currentPhaseId !== localBasePhaseId;
+        const hasPhaseAdvanced = Boolean(
+          currentPhaseId && currentPhaseId !== localBasePhaseId
+        );
 
         let hasNewPhaseTasks = false;
-        if (hasPhaseAdvanced && token) {
+        if (hasPhaseAdvanced) {
           try {
-            const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, { headers });
+            const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, {
+              headers,
+              cache: 'no-store'
+            });
             if (!isCurrent()) return;
             if (tasksResponse.ok) {
               const allTasks: TaskResponse[] = await tasksResponse.json();
               if (!isCurrent()) return;
               alignedTasks = allTasks;
               const threadTasks = allTasks.filter(t => t.thread_id === threadId);
-              hasNewPhaseTasks = threadTasks.some(t => t.phase_id === currentPhaseId && t.source === 'ai');
+              hasNewPhaseTasks = threadTasks.some(
+                task => task.phase_id === currentPhaseId
+              );
             }
           } catch (e) {
             console.error('alignState task verification failed:', e);

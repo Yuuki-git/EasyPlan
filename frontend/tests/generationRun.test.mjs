@@ -764,6 +764,7 @@ async function runTests() {
 
   // --- 测试场景 12: finishAgentRun - 全部条件匹配应成功提交 Phase 2 并清空 preview ---
   {
+    let taskFetchCount = 0;
     const fetchMock = async (url) => {
       if (url.includes('/api/threads/proj-proof')) {
         return {
@@ -789,17 +790,21 @@ async function runTests() {
         };
       }
       if (url.includes('/api/tasks')) {
+        taskFetchCount += 1;
         return {
           ok: true,
           status: 200,
-          json: async () => ([
-            {
-              id: 'task-1',
-              thread_id: 'proj-proof',
-              phase_id: 'phase-2',
-              source: 'ai'
-            }
-          ])
+          json: async () => (
+            taskFetchCount === 1
+              ? []
+              : [
+                  {
+                    id: 'task-1',
+                    thread_id: 'proj-proof',
+                    phase_id: 'phase-2'
+                  }
+                ]
+          )
         };
       }
       return {
@@ -839,6 +844,7 @@ async function runTests() {
     assert.equal(state.previewMode, null, 'successful commit proof should clear previewMode');
     assert.equal(state.phaseRequestId, null);
     assert.equal(state.committedTaskTree?.root?.title, 'Phase 2 Root');
+    assert.equal(taskFetchCount, 2, 'finishAgentRun should retry transiently stale task reads');
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
     assert.equal(localStorageValues.has('easyplan_base_phase_id'), false);
