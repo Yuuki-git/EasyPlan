@@ -386,7 +386,11 @@ async function runTests() {
             status: 'succeeded',
             intent_text: 'my intent',
             task_tree: {
-              root: { title: 'Phase 2 Root' },
+              root: {
+                client_node_id: 'phase-2-root',
+                title: 'Phase 2 Root',
+                children: []
+              },
               planning_context: {
                 roadmap: [
                   { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
@@ -414,7 +418,7 @@ async function runTests() {
             {
               id: 'task-new',
               thread_id: 'thread-confirmed',
-              phase_id: 'phase_02'
+              client_node_id: 'phase-2-root'
             }
           ]
         };
@@ -446,6 +450,8 @@ async function runTests() {
     assert.equal(updatedState.previewMode, null, 'Confirmed snapshot should exit preview mode');
     assert.equal(updatedState.phaseRequestId, null, 'Confirmed snapshot should clear stale phase request id');
     assert.equal(updatedState.committedTaskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
+    assert.equal(updatedState.boardTasks?.[0]?.phase_id, 'phase_02');
+    assert.equal(updatedState.boardTasks?.[0]?.source, 'ai');
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
   }

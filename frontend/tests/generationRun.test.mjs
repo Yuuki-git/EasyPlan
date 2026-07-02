@@ -692,7 +692,7 @@ async function runTests() {
     assert.equal(state.previewMode, 'next_phase', 'snapshot without advanced phase should not clear preview');
   }
 
-  // --- 测试场景 11: finishAgentRun - 阶段已推进但无相应 AI 任务不应清掉 preview ---
+  // --- 测试场景 11: finishAgentRun - 缺少可选 phase_id 时用 client_node_id 证明任务已持久化 ---
   {
     const fetchMock = async (url) => {
       if (url.includes('/api/threads/proj-proof')) {
@@ -708,6 +708,11 @@ async function runTests() {
               status: 'confirmed'
             },
             task_tree: {
+              root: {
+                client_node_id: 'phase-2-root',
+                title: 'Phase 2 Root',
+                children: []
+              },
               planning_context: {
                 current_phase: {
                   phase_id: 'phase-2' // 已推进
@@ -721,7 +726,13 @@ async function runTests() {
         return {
           ok: true,
           status: 200,
-          json: async () => ([]) // 无任务
+          json: async () => ([
+            {
+              id: 'task-1',
+              thread_id: 'proj-proof',
+              client_node_id: 'phase-2-root'
+            }
+          ])
         };
       }
       return {
@@ -759,7 +770,10 @@ async function runTests() {
     });
 
     const state = useAppStore.getState();
-    assert.equal(state.previewMode, 'next_phase', 'snapshot with advanced phase but no phase tasks should not clear preview');
+    assert.equal(state.previewMode, null, 'matching client_node_id should prove persistence without optional phase_id');
+    assert.equal(state.committedTaskTree?.root?.client_node_id, 'phase-2-root');
+    assert.equal(state.boardTasks?.[0]?.phase_id, 'phase-2');
+    assert.equal(state.boardTasks?.[0]?.source, 'ai');
   }
 
   // --- 测试场景 12: finishAgentRun - 全部条件匹配应成功提交 Phase 2 并清空 preview ---

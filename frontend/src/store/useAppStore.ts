@@ -47,6 +47,44 @@ const applyTaskStatusOverrides = (tasks: TaskResponse[], fetchStartedAt: number)
   });
 };
 
+const normalizeCurrentPhaseTaskMetadata = (
+  tasks: TaskResponse[],
+  threadId: string,
+  taskTree: TaskTree | null | undefined
+) => {
+  const context = taskTree?.planning_context;
+  const currentPhaseId = context?.current_phase?.phase_id;
+  if (!taskTree?.root || !currentPhaseId) return tasks;
+
+  const currentTreeNodeIds = new Set<string>();
+  const visit = (node: TaskTree['root']) => {
+    if (node.client_node_id) {
+      currentTreeNodeIds.add(node.client_node_id);
+    }
+    (node.children || []).forEach(visit);
+  };
+  visit(taskTree.root);
+
+  const currentPhaseOrder = context.roadmap?.find(
+    phase => phase.phase_id === currentPhaseId
+  )?.order;
+
+  return tasks.map(task => {
+    if (
+      task.thread_id !== threadId ||
+      !currentTreeNodeIds.has(task.client_node_id)
+    ) {
+      return task;
+    }
+    return {
+      ...task,
+      source: task.source ?? 'ai',
+      phase_id: task.phase_id ?? currentPhaseId,
+      phase_order: task.phase_order ?? currentPhaseOrder ?? null
+    };
+  });
+};
+
 export type AppState =
   | 'INITIAL'
   | 'THINKING'
@@ -451,7 +489,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
           set({ error: '获取计划任务失败，请重试', appState: 'ERROR', lastDoneEvent: event });
           return;
         }
-        let allTasks: TaskResponse[] = await tasksResponse.json();
+        let allTasks = normalizeCurrentPhaseTaskMetadata(
+          await tasksResponse.json() as TaskResponse[],
+          selectedProjectId,
+          snapshot.task_tree
+        );
         if (!isCurrent()) return;
         const threadTasks = allTasks.filter(t => t.thread_id === selectedProjectId);
         let hasNewPhaseTasks = threadTasks.some(
@@ -491,7 +533,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
             }
 
             snapshot = await snapshotResponse.json() as ThreadSnapshot;
-            allTasks = await retryTasksResponse.json() as TaskResponse[];
+            allTasks = normalizeCurrentPhaseTaskMetadata(
+              await retryTasksResponse.json() as TaskResponse[],
+              selectedProjectId,
+              snapshot.task_tree
+            );
             if (!isCurrent()) return;
 
             const retryEnvelope = snapshot.interrupt_payload;
@@ -1360,7 +1406,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
             });
             if (!isCurrent()) return;
             if (tasksResponse.ok) {
-              const allTasks: TaskResponse[] = await tasksResponse.json();
+              const allTasks = normalizeCurrentPhaseTaskMetadata(
+                await tasksResponse.json() as TaskResponse[],
+                threadId,
+                snapshot.task_tree
+              );
               if (!isCurrent()) return;
               alignedTasks = allTasks;
               const threadTasks = allTasks.filter(t => t.thread_id === threadId);
