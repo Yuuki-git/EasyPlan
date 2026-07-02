@@ -814,7 +814,6 @@ async function runTests() {
       'easyplan_selected_project_id': 'proj-proof',
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
-      'easyplan_phase_request_id': 'req-current',
       'easyplan_base_phase_id': 'phase-1',
       'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
@@ -824,7 +823,7 @@ async function runTests() {
       selectedProjectId: 'proj-proof',
       threadId: 'proj-proof',
       previewMode: 'next_phase',
-      phaseRequestId: 'req-current',
+      phaseRequestId: null,
       basePhaseId: 'phase-1',
       activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });

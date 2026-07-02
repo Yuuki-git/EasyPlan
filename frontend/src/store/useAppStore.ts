@@ -396,7 +396,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   finishAgentRun: async (event: AgentRunEventMeta) => {
     const isCurrent = snapshotGate.begin();
-    const { selectedProjectId, threadId, fetchTasks, phaseRequestId, basePhaseId, activeRun } = get();
+    const { selectedProjectId, threadId, fetchTasks, basePhaseId, activeRun } = get();
 
     if (
       !activeRun ||
@@ -431,7 +431,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const isEnvelopeValid =
           envelope &&
           envelope.type === 'phase_generation_state' &&
-          envelope.request_id === phaseRequestId &&
+          envelope.request_id === event.request_id &&
           envelope.status === 'confirmed';
 
         const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
