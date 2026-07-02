@@ -272,6 +272,7 @@ def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(m
             "type": "next_phase_review",
             "request_id": request_id,
             "status": "awaiting_confirmation",
+            "base_phase_id": "phase_01",
             "task_tree": next_phase_tree(),
             "history": {},
         },
@@ -318,6 +319,7 @@ def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(m
     )
     assert persisted_tree["planning_context"]["next_action_client_node_id"] == "phase_02_outline"
     assert envelope["history"][request_id]["status"] == "confirmed"
+    assert envelope["base_phase_id"] == "phase_01"
     assert "task_tree" not in envelope
     assert session.task_rows_inserted == 3
 

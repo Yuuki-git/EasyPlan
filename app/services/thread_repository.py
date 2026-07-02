@@ -23,6 +23,16 @@ class PhaseGenerationStart:
     remaining_ai_actions: int | None = None
 
 
+@dataclass(frozen=True)
+class NextPhaseCommitReceiptState:
+    thread_id: str
+    request_id: str
+    status: str
+    current_phase_id: str | None
+    task_tree: dict[str, Any] | None
+    tasks: list[Task]
+
+
 class ThreadStateConflictError(RuntimeError):
     def __init__(self, *, code: str, message: str) -> None:
         super().__init__(message)
@@ -76,6 +86,79 @@ class AgentThreadRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_next_phase_commit_receipt(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: str,
+        request_id: str,
+    ) -> NextPhaseCommitReceiptState | None:
+        thread = await self.get_thread_for_user(user_id=user_id, thread_id=thread_id)
+        if thread is None:
+            return None
+
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+        is_current_request = str(payload.get("request_id") or "") == request_id
+        lifecycle_status = str(payload.get("status") or "unknown") if is_current_request else "unknown"
+        base_phase_id = payload.get("base_phase_id")
+        current_phase_id: str | None = None
+        parsed_tree: TaskTree | None = None
+        try:
+            parsed_tree = TaskTree.model_validate(thread.task_tree)
+            if parsed_tree.planning_context and parsed_tree.planning_context.current_phase:
+                current_phase_id = parsed_tree.planning_context.current_phase.phase_id
+        except Exception:
+            parsed_tree = None
+
+        tasks: list[Task] = []
+        if lifecycle_status == "confirmed":
+            task_result = await self.session.execute(
+                select(Task)
+                .where(
+                    Task.user_id == user_id,
+                    Task.view_bucket == "planned",
+                )
+                .order_by(Task.sort_order.asc(), Task.created_at.asc())
+            )
+            tasks = list(task_result.scalars().all())
+
+            expected_client_node_ids = _task_tree_client_node_ids(parsed_tree)
+            persisted_client_node_ids = {
+                task.client_node_id
+                for task in tasks
+                if task.thread_id == thread_id
+            }
+            if (
+                current_phase_id is None
+                or (
+                    isinstance(base_phase_id, str)
+                    and current_phase_id == base_phase_id
+                )
+                or not expected_client_node_ids
+                or not expected_client_node_ids.issubset(persisted_client_node_ids)
+            ):
+                lifecycle_status = "incomplete"
+
+        if lifecycle_status not in {
+            "confirmed",
+            "incomplete",
+            "running",
+            "awaiting_confirmation",
+            "confirming",
+            "cancelled",
+            "failed",
+        }:
+            lifecycle_status = "unknown"
+
+        return NextPhaseCommitReceiptState(
+            thread_id=thread_id,
+            request_id=request_id,
+            status=lifecycle_status,
+            current_phase_id=current_phase_id,
+            task_tree=thread.task_tree,
+            tasks=tasks,
+        )
 
     async def mark_confirmation_accepted(
         self,
@@ -309,6 +392,7 @@ class AgentThreadRepository:
             "type": "phase_generation_state",
             "request_id": request_id_text,
             "status": "running",
+            "base_phase_id": context.current_phase.phase_id,
             "history": history,
         }
         thread.updated_at = now
@@ -363,6 +447,21 @@ def thread_to_snapshot_payload(thread: AgentThread) -> dict[str, Any]:
         "interrupt_payload": thread.interrupt_payload,
         "latest_checkpoint_id": thread.latest_checkpoint_id,
     }
+
+
+def _task_tree_client_node_ids(task_tree: TaskTree | None) -> set[str]:
+    if task_tree is None:
+        return set()
+
+    node_ids: set[str] = set()
+
+    def visit(node: Any) -> None:
+        node_ids.add(node.client_node_id)
+        for child in node.children:
+            visit(child)
+
+    visit(task_tree.root)
+    return node_ids
 
 
 def _phase_generation_conflict(

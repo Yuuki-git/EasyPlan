@@ -263,6 +263,34 @@ class FakeThreadRepository:
             )
         ]
 
+    async def get_next_phase_commit_receipt(self, *, user_id, thread_id, request_id):
+        thread = await self.get_thread_for_user(user_id=user_id, thread_id=thread_id)
+        if thread is None:
+            return None
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+        status = (
+            payload.get("status", "unknown")
+            if payload.get("request_id") == request_id
+            else "unknown"
+        )
+        context = (thread.task_tree or {}).get("planning_context") or {}
+        current_phase = context.get("current_phase") or {}
+        tasks = [
+            task
+            for task in self.tasks.values()
+            if str(task.user_id) == str(user_id)
+            and task.thread_id == thread_id
+            and task.view_bucket == "planned"
+        ]
+        return SimpleNamespace(
+            thread_id=thread_id,
+            request_id=request_id,
+            status=status,
+            current_phase_id=current_phase.get("phase_id"),
+            task_tree=thread.task_tree,
+            tasks=tasks,
+        )
+
 
 class FakeRuntime:
     def __init__(self) -> None:
@@ -416,6 +444,44 @@ def test_create_intent_requires_authenticated_user():
     )
 
     assert response.status_code == 401
+
+
+def test_get_next_phase_commit_receipt_returns_tree_and_thread_tasks():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "base_phase_id": "phase_00",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    task = _fake_route_task(
+        user_id=user.id,
+        thread_id=thread.thread_id,
+        title="Phase 1 task",
+        status="active",
+        phase_id="phase_01",
+        ai_generated=True,
+    )
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+    repository.tasks[task.id] = task
+
+    response = client.get(
+        f"/api/threads/{thread.thread_id}/phases/next/commit",
+        params={"request_id": request_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request_id"] == request_id
+    assert payload["status"] == "confirmed"
+    assert payload["current_phase_id"] == "phase_01"
+    assert payload["task_tree"]["root"]["client_node_id"] == "phase_01_root"
+    assert [item["id"] for item in payload["tasks"]] == [str(task.id)]
 
 
 def test_stream_thread_events_checks_thread_ownership_and_uses_runtime_stream():

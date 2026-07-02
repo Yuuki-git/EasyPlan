@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import { TaskTree, TaskResponse, ThreadSnapshot, AgentRunEventMeta, ActiveRun } from '../types/api';
+import {
+  TaskTree,
+  TaskResponse,
+  ThreadSnapshot,
+  NextPhaseCommitReceipt,
+  AgentRunEventMeta,
+  ActiveRun
+} from '../types/api';
 import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 import { createLatestRequestGate } from './snapshotRequestGate';
@@ -44,44 +51,6 @@ const applyTaskStatusOverrides = (tasks: TaskResponse[], fetchStartedAt: number)
 
     taskStatusOverrides.delete(task.id);
     return task;
-  });
-};
-
-const normalizeCurrentPhaseTaskMetadata = (
-  tasks: TaskResponse[],
-  threadId: string,
-  taskTree: TaskTree | null | undefined
-) => {
-  const context = taskTree?.planning_context;
-  const currentPhaseId = context?.current_phase?.phase_id;
-  if (!taskTree?.root || !currentPhaseId) return tasks;
-
-  const currentTreeNodeIds = new Set<string>();
-  const visit = (node: TaskTree['root']) => {
-    if (node.client_node_id) {
-      currentTreeNodeIds.add(node.client_node_id);
-    }
-    (node.children || []).forEach(visit);
-  };
-  visit(taskTree.root);
-
-  const currentPhaseOrder = context.roadmap?.find(
-    phase => phase.phase_id === currentPhaseId
-  )?.order;
-
-  return tasks.map(task => {
-    if (
-      task.thread_id !== threadId ||
-      !currentTreeNodeIds.has(task.client_node_id)
-    ) {
-      return task;
-    }
-    return {
-      ...task,
-      source: task.source ?? 'ai',
-      phase_id: task.phase_id ?? currentPhaseId,
-      phase_order: task.phase_order ?? currentPhaseOrder ?? null
-    };
   });
 };
 
@@ -434,7 +403,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   finishAgentRun: async (event: AgentRunEventMeta) => {
     const isCurrent = snapshotGate.begin();
-    const { selectedProjectId, threadId, fetchTasks, basePhaseId, activeRun } = get();
+    const { selectedProjectId, threadId, fetchTasks, activeRun } = get();
 
     if (
       !activeRun ||
@@ -450,145 +419,70 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     if (activeRun?.runType === 'next_phase' && selectedProjectId) {
       const { token } = get();
-      if (!token) return;
       const headers: Record<string, string> = {
-        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
-        'Authorization': `Bearer ${token}`
+        'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
       };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
       try {
-        const response = await fetch(`/api/threads/${selectedProjectId}`, {
+        const receiptUrl =
+          `/api/threads/${selectedProjectId}/phases/next/commit`
+          + `?request_id=${encodeURIComponent(event.request_id)}`;
+        const response = await fetch(receiptUrl, {
           headers,
           cache: 'no-store'
         });
+        if (isUnauthorizedResponse(response)) {
+          if (!isCurrent()) return;
+          get().setToken(null, false);
+          set({
+            showAuthModal: true,
+            error: '登录已失效，请重新登录',
+            appState: 'ERROR',
+            lastDoneEvent: event
+          });
+          return;
+        }
         if (!response.ok) {
           if (!isCurrent()) return;
-          set({ error: '同步最新计划状态失败，请重试', appState: 'ERROR', lastDoneEvent: event });
+          set({
+            error: '读取下一阶段提交回执失败，请重试同步。',
+            appState: 'ERROR',
+            lastDoneEvent: event
+          });
           return;
         }
-        let snapshot: ThreadSnapshot = await response.json();
-
-        const envelope = snapshot.interrupt_payload;
-        let isEnvelopeValid = Boolean(
-          envelope &&
-          envelope.type === 'phase_generation_state' &&
-          envelope.request_id === event.request_id &&
-          envelope.status === 'confirmed'
-        );
-
-        let currentPhaseId =
-          snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
-        let hasPhaseAdvanced = Boolean(currentPhaseId && currentPhaseId !== basePhaseId);
-
-        const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, {
-          headers,
-          cache: 'no-store'
-        });
-        if (!tasksResponse.ok) {
-          if (!isCurrent()) return;
-          set({ error: '获取计划任务失败，请重试', appState: 'ERROR', lastDoneEvent: event });
+        const receipt = await response.json() as NextPhaseCommitReceipt;
+        if (!isCurrent()) return;
+        if (
+          receipt.thread_id !== selectedProjectId ||
+          receipt.request_id !== event.request_id
+        ) {
+          set({
+            error: '下一阶段提交回执与当前请求不匹配，请重试同步。',
+            appState: 'ERROR',
+            lastDoneEvent: event
+          });
           return;
         }
-        let allTasks = normalizeCurrentPhaseTaskMetadata(
-          await tasksResponse.json() as TaskResponse[],
-          selectedProjectId,
-          snapshot.task_tree
-        );
-        if (!isCurrent()) return;
-        const threadTasks = allTasks.filter(t => t.thread_id === selectedProjectId);
-        let hasNewPhaseTasks = threadTasks.some(
-          t => t.phase_id === currentPhaseId
-        );
-
-        if (!isEnvelopeValid || !hasPhaseAdvanced || !hasNewPhaseTasks) {
-          for (let attempt = 1; attempt < 3; attempt += 1) {
-            const currentRun = get().activeRun;
-            if (
-              !isCurrent() ||
-              !currentRun ||
-              currentRun.threadId !== event.thread_id ||
-              currentRun.runType !== event.run_type ||
-              currentRun.requestId !== event.request_id
-            ) {
-              return;
-            }
-
-            const delayMs = (globalThis as { __test__?: boolean }).__test__
-              ? 0
-              : attempt * 200;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-
-            const [snapshotResponse, retryTasksResponse] = await Promise.all([
-              fetch(`/api/threads/${selectedProjectId}`, {
-                headers,
-                cache: 'no-store'
-              }),
-              fetch(`/api/tasks?view_bucket=planned`, {
-                headers,
-                cache: 'no-store'
-              })
-            ]);
-            if (!snapshotResponse.ok || !retryTasksResponse.ok) {
-              continue;
-            }
-
-            snapshot = await snapshotResponse.json() as ThreadSnapshot;
-            allTasks = normalizeCurrentPhaseTaskMetadata(
-              await retryTasksResponse.json() as TaskResponse[],
-              selectedProjectId,
-              snapshot.task_tree
-            );
-            if (!isCurrent()) return;
-
-            const retryEnvelope = snapshot.interrupt_payload;
-            isEnvelopeValid = Boolean(
-              retryEnvelope &&
-              retryEnvelope.type === 'phase_generation_state' &&
-              retryEnvelope.request_id === event.request_id &&
-              retryEnvelope.status === 'confirmed'
-            );
-            currentPhaseId =
-              snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
-            hasPhaseAdvanced = Boolean(
-              currentPhaseId && currentPhaseId !== basePhaseId
-            );
-            hasNewPhaseTasks = allTasks.some(
-              task =>
-                task.thread_id === selectedProjectId &&
-                task.phase_id === currentPhaseId
-            );
-            if (isEnvelopeValid && hasPhaseAdvanced && hasNewPhaseTasks) {
-              break;
-            }
-          }
-
-          if (!isEnvelopeValid || !hasPhaseAdvanced || !hasNewPhaseTasks) {
-            if (!(globalThis as { __test__?: boolean }).__test__) {
-              console.warn('finishAgentRun proof incomplete:', {
-                requestId: event.request_id,
-                basePhaseId,
-                currentPhaseId,
-                isEnvelopeValid,
-                hasPhaseAdvanced,
-                hasNewPhaseTasks
-              });
-            }
-            if (!isCurrent()) return;
-            set({
-              error: '未检测到下一阶段的确认和生成任务，同步未完成。请点击“重试同步”或“返回当前计划”。',
-              appState: 'ERROR',
-              lastDoneEvent: event
-            });
-            return;
-          }
+        if (receipt.status !== 'confirmed' || !receipt.task_tree) {
+          const error =
+            receipt.status === 'incomplete'
+              ? '后端未完整提交下一阶段任务，请返回当前计划后重新生成。'
+              : receipt.status === 'cancelled'
+                ? '本次下一阶段生成已取消。'
+                : receipt.status === 'failed'
+                  ? '下一阶段提交失败，请重新生成。'
+                  : '下一阶段仍在提交中，请稍后重试同步。';
+          set({ error, appState: 'ERROR', lastDoneEvent: event });
+          return;
         }
 
-        if (!isCurrent()) return;
         set({
           view: 'board',
           currentViewBucket: 'planned',
-          committedTaskTree: snapshot.task_tree || null,
-          boardTasks: allTasks, // Keep all tasks, do not filter out other projects!
+          committedTaskTree: receipt.task_tree,
+          boardTasks: receipt.tasks,
           previewMode: null,
           phaseRequestId: null,
           basePhaseId: null,
@@ -1390,44 +1284,38 @@ export const useAppStore = create<AppStore>((set, get) => ({
           : null;
 
       let alignedTasks: TaskResponse[] | null = null;
+      let alignedCommittedTaskTree: TaskTree | null = null;
       let hasTerminalPhaseGenerationState = false;
       if (phaseGenerationStatus === 'confirmed') {
-        const currentPhaseId = snapshot.task_tree?.planning_context?.current_phase?.phase_id || null;
-        const hasPhaseAdvanced = Boolean(
-          currentPhaseId && currentPhaseId !== localBasePhaseId
-        );
-
-        let hasNewPhaseTasks = false;
-        if (hasPhaseAdvanced) {
+        if (localPhaseRequestId) {
           try {
-            const tasksResponse = await fetch(`/api/tasks?view_bucket=planned`, {
+            const receiptUrl =
+              `/api/threads/${threadId}/phases/next/commit`
+              + `?request_id=${encodeURIComponent(localPhaseRequestId)}`;
+            const receiptResponse = await fetch(receiptUrl, {
               headers,
               cache: 'no-store'
             });
             if (!isCurrent()) return;
-            if (tasksResponse.ok) {
-              const allTasks = normalizeCurrentPhaseTaskMetadata(
-                await tasksResponse.json() as TaskResponse[],
-                threadId,
-                snapshot.task_tree
-              );
+            if (receiptResponse.ok) {
+              const receipt = await receiptResponse.json() as NextPhaseCommitReceipt;
               if (!isCurrent()) return;
-              alignedTasks = allTasks;
-              const threadTasks = allTasks.filter(t => t.thread_id === threadId);
-              hasNewPhaseTasks = threadTasks.some(
-                task => task.phase_id === currentPhaseId
-              );
+              if (
+                receipt.thread_id === threadId &&
+                receipt.request_id === localPhaseRequestId &&
+                receipt.status === 'confirmed' &&
+                receipt.task_tree
+              ) {
+                alignedTasks = receipt.tasks;
+                alignedCommittedTaskTree = receipt.task_tree;
+                hasTerminalPhaseGenerationState = true;
+              }
             }
           } catch (e) {
-            console.error('alignState task verification failed:', e);
+            console.error('alignState commit receipt failed:', e);
           }
-        }
-
-        if (hasPhaseAdvanced && hasNewPhaseTasks) {
-          hasTerminalPhaseGenerationState = true;
         } else {
-          hasTerminalPhaseGenerationState = false;
-          alignedTasks = null;
+          hasTerminalPhaseGenerationState = true;
         }
       } else if (phaseGenerationStatus === 'cancelled' || phaseGenerationStatus === 'failed') {
         hasTerminalPhaseGenerationState = true;
@@ -1537,7 +1425,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isPending) {
         if (isNextPhasePreview) {
-          committedTaskTree = snapshot.task_tree || null;
+          committedTaskTree = alignedCommittedTaskTree || snapshot.task_tree || null;
           previewTaskTree = snapshot.interrupt_payload?.task_tree || null;
         } else {
           committedTaskTree = null;
@@ -1546,12 +1434,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         targetAppState = 'PENDING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else if (isNextPhaseRunning || isStalled || shouldPreserveLocalNextPhase || preserveInitialRunning) {
-        committedTaskTree = snapshot.task_tree || null;
+        committedTaskTree = alignedCommittedTaskTree || snapshot.task_tree || null;
         previewTaskTree = null;
         targetAppState = 'THINKING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else {
-        committedTaskTree = snapshot.task_tree || null;
+        committedTaskTree = alignedCommittedTaskTree || snapshot.task_tree || null;
         previewTaskTree = null;
         targetAppState = committedTaskTree ? 'INITIAL' : 'THINKING';
         targetView = (committedTaskTree && get().selectedProjectId) ? 'board' : get().view;

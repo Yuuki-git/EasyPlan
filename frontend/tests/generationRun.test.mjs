@@ -558,36 +558,24 @@ async function runTests() {
     assert.equal(state.phaseRequestId, 'req-current');
   }
 
-  // --- 测试场景 9: finishAgentRun - 匹配但未确认 the snapshot 不应清掉 preview ---
+  // --- 测试场景 9: finishAgentRun - 回执仍在提交时不应清掉 preview ---
   {
     const fetchMock = async (url) => {
-      if (url.includes('/api/threads/proj-proof')) {
+      if (url.includes('/api/threads/proj-proof/phases/next/commit')) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
             thread_id: 'proj-proof',
-            status: 'awaiting_confirmation',
-            interrupt_payload: {
-              type: 'phase_generation_state',
-              request_id: 'req-current',
-              status: 'running' // 未确认
-            }
+            request_id: 'req-current',
+            status: 'running',
+            current_phase_id: 'phase-1',
+            task_tree: null,
+            tasks: []
           })
         };
       }
-      if (url.includes('/api/tasks')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ([])
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({})
-      };
+      throw new Error(`unexpected URL: ${url}`);
     };
 
     const { useAppStore } = loadAppStoreModule(fetchMock, {
@@ -618,47 +606,34 @@ async function runTests() {
     });
 
     const state = useAppStore.getState();
-    assert.equal(state.previewMode, 'next_phase', 'unconfirmed snapshot should not clear preview');
-    assert.ok(state.error && state.error.includes('未检测到下一阶段的确认'));
+    assert.equal(state.previewMode, 'next_phase', 'pending receipt should not clear preview');
+    assert.ok(state.error && state.error.includes('仍在提交'));
   }
 
-  // --- 测试场景 10: finishAgentRun - 匹配且已确认但阶段未推进不应清掉 preview ---
+  // --- 测试场景 10: finishAgentRun - 后端回执不完整时不应清掉 preview ---
   {
     const fetchMock = async (url) => {
-      if (url.includes('/api/threads/proj-proof')) {
+      if (url.includes('/api/threads/proj-proof/phases/next/commit')) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
             thread_id: 'proj-proof',
-            status: 'succeeded',
-            interrupt_payload: {
-              type: 'phase_generation_state',
-              request_id: 'req-current',
-              status: 'confirmed'
-            },
+            request_id: 'req-current',
+            status: 'incomplete',
+            current_phase_id: 'phase-1',
             task_tree: {
               planning_context: {
                 current_phase: {
-                  phase_id: 'phase-1' // 仍是原阶段
+                  phase_id: 'phase-1'
                 }
               }
-            }
+            },
+            tasks: []
           })
         };
       }
-      if (url.includes('/api/tasks')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ([])
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({})
-      };
+      throw new Error(`unexpected URL: ${url}`);
     };
 
     const { useAppStore } = loadAppStoreModule(fetchMock, {
@@ -689,24 +664,24 @@ async function runTests() {
     });
 
     const state = useAppStore.getState();
-    assert.equal(state.previewMode, 'next_phase', 'snapshot without advanced phase should not clear preview');
+    assert.equal(state.previewMode, 'next_phase', 'incomplete receipt should not clear preview');
+    assert.ok(state.error && state.error.includes('未完整提交'));
   }
 
-  // --- 测试场景 11: finishAgentRun - 缺少可选 phase_id 时用 client_node_id 证明任务已持久化 ---
+  // --- 测试场景 11: finishAgentRun - 只消费后端原子提交回执 ---
   {
+    const requestedUrls = [];
     const fetchMock = async (url) => {
-      if (url.includes('/api/threads/proj-proof')) {
+      requestedUrls.push(url);
+      if (url.includes('/api/threads/proj-proof/phases/next/commit')) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
             thread_id: 'proj-proof',
-            status: 'succeeded',
-            interrupt_payload: {
-              type: 'phase_generation_state',
-              request_id: 'req-current',
-              status: 'confirmed'
-            },
+            request_id: 'req-current',
+            status: 'confirmed',
+            current_phase_id: 'phase-2',
             task_tree: {
               root: {
                 client_node_id: 'phase-2-root',
@@ -718,28 +693,20 @@ async function runTests() {
                   phase_id: 'phase-2' // 已推进
                 }
               }
-            }
-          })
-        };
-      }
-      if (url.includes('/api/tasks')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ([
+            },
+            tasks: [
             {
               id: 'task-1',
               thread_id: 'proj-proof',
-              client_node_id: 'phase-2-root'
+              client_node_id: 'phase-2-root',
+              phase_id: 'phase-2',
+              source: 'ai'
             }
-          ])
+            ]
+          })
         };
       }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({})
-      };
+      throw new Error(`legacy synchronization endpoint called: ${url}`);
     };
 
     const { useAppStore } = loadAppStoreModule(fetchMock, {
@@ -774,24 +741,25 @@ async function runTests() {
     assert.equal(state.committedTaskTree?.root?.client_node_id, 'phase-2-root');
     assert.equal(state.boardTasks?.[0]?.phase_id, 'phase-2');
     assert.equal(state.boardTasks?.[0]?.source, 'ai');
+    assert.deepEqual(requestedUrls, [
+      '/api/threads/proj-proof/phases/next/commit?request_id=req-current'
+    ]);
   }
 
   // --- 测试场景 12: finishAgentRun - 全部条件匹配应成功提交 Phase 2 并清空 preview ---
   {
-    let taskFetchCount = 0;
+    let receiptFetchCount = 0;
     const fetchMock = async (url) => {
-      if (url.includes('/api/threads/proj-proof')) {
+      if (url.includes('/api/threads/proj-proof/phases/next/commit')) {
+        receiptFetchCount += 1;
         return {
           ok: true,
           status: 200,
           json: async () => ({
             thread_id: 'proj-proof',
-            status: 'succeeded',
-            interrupt_payload: {
-              type: 'phase_generation_state',
-              request_id: 'req-current',
-              status: 'confirmed'
-            },
+            request_id: 'req-current',
+            status: 'confirmed',
+            current_phase_id: 'phase-2',
             task_tree: {
               root: { title: 'Phase 2 Root' },
               planning_context: {
@@ -799,33 +767,18 @@ async function runTests() {
                   phase_id: 'phase-2'
                 }
               }
-            }
+            },
+            tasks: [
+              {
+                id: 'task-1',
+                thread_id: 'proj-proof',
+                phase_id: 'phase-2'
+              }
+            ]
           })
         };
       }
-      if (url.includes('/api/tasks')) {
-        taskFetchCount += 1;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => (
-            taskFetchCount === 1
-              ? []
-              : [
-                  {
-                    id: 'task-1',
-                    thread_id: 'proj-proof',
-                    phase_id: 'phase-2'
-                  }
-                ]
-          )
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({})
-      };
+      throw new Error(`unexpected URL: ${url}`);
     };
 
     const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
@@ -858,7 +811,7 @@ async function runTests() {
     assert.equal(state.previewMode, null, 'successful commit proof should clear previewMode');
     assert.equal(state.phaseRequestId, null);
     assert.equal(state.committedTaskTree?.root?.title, 'Phase 2 Root');
-    assert.equal(taskFetchCount, 2, 'finishAgentRun should retry transiently stale task reads');
+    assert.equal(receiptFetchCount, 1, 'finishAgentRun should consume one atomic receipt');
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
     assert.equal(localStorageValues.has('easyplan_base_phase_id'), false);
@@ -1161,15 +1114,16 @@ async function runTests() {
     {
       let fetchCalled = false;
       const fetchMock = async (url) => {
-        if (url.includes('/api/threads/proj-1')) {
+        if (url.includes('/api/threads/proj-1/phases/next/commit')) {
           fetchCalled = true;
           return {
             ok: true,
             status: 200,
             json: async () => ({
               thread_id: 'proj-1',
-              status: 'succeeded',
-              intent_text: 'intent-1',
+              request_id: 'req-1',
+              status: 'confirmed',
+              current_phase_id: 'phase-2',
               task_tree: {
                 root: { title: 'Committed Phase 2 Root' },
                 planning_context: {
@@ -1183,29 +1137,18 @@ async function runTests() {
                   current_phase: { phase_id: 'phase-2', title: 'Phase 2', objective: 'Objective 2' }
                 }
               },
-              interrupt_payload: {
-                type: 'phase_generation_state',
-                request_id: 'req-1',
-                status: 'confirmed'
-              }
+              tasks: [
+                {
+                  id: 'task-1',
+                  thread_id: 'proj-1',
+                  phase_id: 'phase-2',
+                  source: 'ai'
+                }
+              ]
             })
           };
         }
-        if (url.includes('/api/tasks')) {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => [
-              {
-                id: 'task-1',
-                thread_id: 'proj-1',
-                phase_id: 'phase-2',
-                source: 'ai'
-              }
-            ]
-          };
-        }
-        return { ok: true, status: 200, json: async () => ([]) };
+        throw new Error(`unexpected URL: ${url}`);
       };
 
       const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {

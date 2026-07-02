@@ -853,12 +853,15 @@ def _terminal_phase_envelope(
         "status": status,
         "updated_at": now.isoformat(),
     }
-    return {
+    envelope = {
         "type": "phase_generation_state",
         "request_id": request_id,
         "status": status,
         "history": history,
     }
+    if isinstance(payload.get("base_phase_id"), str):
+        envelope["base_phase_id"] = payload["base_phase_id"]
+    return envelope
 
 
 async def _persist_tasks_idempotently(

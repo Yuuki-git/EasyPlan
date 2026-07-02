@@ -15,6 +15,78 @@ from app.services.thread_repository import (
 )
 
 
+def test_get_next_phase_commit_receipt_returns_confirmed_tree_and_tasks_atomically():
+    user_id = uuid4()
+    request_id = str(uuid4())
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.task_tree["root"]["client_node_id"] = "phase_02_root"
+    thread.task_tree["root"]["title"] = "Phase 2"
+    context = thread.task_tree["planning_context"]
+    context["roadmap"][0]["status"] = "completed"
+    context["roadmap"][1]["status"] = "current"
+    context["current_phase"] = {
+        "phase_id": "phase_02",
+        "title": "Phase 2",
+        "objective": "Build",
+        "completion_rule": "all_ai_actions_completed",
+    }
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "base_phase_id": "phase_01",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    task = _phase_task(user_id=user_id, thread_id="thread-1", status="active")
+    task.client_node_id = "phase_02_root"
+    task.metadata_ = {"source": "ai", "phase_id": "phase_02", "phase_order": 2}
+    session = FakeThreadSession([thread, [task]])
+    repository = AgentThreadRepository(session)
+
+    receipt = asyncio.run(
+        repository.get_next_phase_commit_receipt(
+            user_id=user_id,
+            thread_id="thread-1",
+            request_id=request_id,
+        )
+    )
+
+    assert receipt is not None
+    assert receipt.status == "confirmed"
+    assert receipt.current_phase_id == "phase_02"
+    assert receipt.task_tree == thread.task_tree
+    assert receipt.tasks == [task]
+    assert len(session.select_statements) == 2
+
+
+def test_get_next_phase_commit_receipt_rejects_confirmed_tree_without_phase_advance():
+    user_id = uuid4()
+    request_id = str(uuid4())
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "base_phase_id": "phase_01",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    task = _phase_task(user_id=user_id, thread_id="thread-1", status="active")
+    task.client_node_id = "phase_01_root"
+    session = FakeThreadSession([thread, [task]])
+    repository = AgentThreadRepository(session)
+
+    receipt = asyncio.run(
+        repository.get_next_phase_commit_receipt(
+            user_id=user_id,
+            thread_id="thread-1",
+            request_id=request_id,
+        )
+    )
+
+    assert receipt is not None
+    assert receipt.status == "incomplete"
+
+
 def test_start_next_phase_generation_locks_thread_and_acquires_lease():
     user_id = uuid4()
     thread = _phase_thread(user_id=user_id, thread_id="thread-1")
@@ -36,6 +108,7 @@ def test_start_next_phase_generation_locks_thread_and_acquires_lease():
     assert result.status == "running"
     assert result.current_phase_task_summary == "1/1 AI actions completed"
     assert thread.lease_owner == str(request_id)
+    assert thread.interrupt_payload["base_phase_id"] == "phase_01"
     assert session.commit_count == 1
     assert "FOR UPDATE" in _compile(session.select_statements[0])
 

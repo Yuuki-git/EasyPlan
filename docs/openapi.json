@@ -292,6 +292,76 @@
         }
       }
     },
+    "/api/threads/{thread_id}/phases/next/commit": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Get Next Phase Commit Receipt",
+        "operationId": "get_next_phase_commit_receipt_api_threads__thread_id__phases_next_commit_get",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextPhaseCommitReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/threads/{thread_id}/events": {
       "get": {
         "tags": [
@@ -1145,6 +1215,70 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "NextPhaseCommitReceipt": {
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "incomplete",
+              "running",
+              "awaiting_confirmation",
+              "confirming",
+              "cancelled",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "current_phase_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Phase Id"
+          },
+          "task_tree": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskTree-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "type": "array",
+            "title": "Tasks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "thread_id",
+          "request_id",
+          "status",
+          "current_phase_id",
+          "task_tree",
+          "tasks"
+        ],
+        "title": "NextPhaseCommitReceipt"
       },
       "NextPhaseRequest": {
         "properties": {

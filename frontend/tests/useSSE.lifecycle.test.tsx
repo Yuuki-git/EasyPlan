@@ -65,6 +65,33 @@ describe('useSSE hook lifecycle tests', () => {
 
     let isDoneDispatched = false;
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/api/threads/proj-1/phases/next/commit')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-1',
+            request_id: 'req-next-phase',
+            status: 'confirmed',
+            current_phase_id: 'phase-2',
+            task_tree: {
+              root: { client_node_id: 'root', title: 'Phase 2 Root', verb: 'start', estimated_minutes: 0, node_type: 'group' },
+              summary: 'summary',
+              planning_context: {
+                schema_version: 1,
+                intent_type: 'exploration_decision',
+                time_horizon: 'days',
+                roadmap: [
+                  { phase_id: 'phase-1', order: 1, title: 'Phase 1', objective: 'Objective 1', status: 'completed' },
+                  { phase_id: 'phase-2', order: 2, title: 'Phase 2', objective: 'Objective 2', status: 'current' },
+                ],
+                current_phase: { phase_id: 'phase-2', title: 'Phase 2', objective: 'Objective 2' }
+              }
+            },
+            tasks: tasksMock
+          })
+        };
+      }
       if (url.includes('/api/threads/proj-1')) {
         if (!isDoneDispatched) {
           const res = {

@@ -289,6 +289,7 @@ def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypat
             "type": "phase_generation_state",
             "request_id": request_id,
             "status": "running",
+            "base_phase_id": "phase_01",
             "history": {},
         },
     )
@@ -319,6 +320,7 @@ def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypat
     assert thread.status == "awaiting_confirmation"
     assert thread.interrupt_payload["type"] == "next_phase_review"
     assert thread.interrupt_payload["status"] == "awaiting_confirmation"
+    assert thread.interrupt_payload["base_phase_id"] == "phase_01"
     assert thread.interrupt_payload["task_tree"] == {"summary": "proposed phase"}
     locked_select = next(
         statement for statement in session.statements if isinstance(statement, Select)

@@ -270,6 +270,24 @@ class TaskResponse(BaseModel):
         return payload
 
 
+class NextPhaseCommitReceipt(BaseModel):
+    thread_id: str
+    request_id: str
+    status: Literal[
+        "confirmed",
+        "incomplete",
+        "running",
+        "awaiting_confirmation",
+        "confirming",
+        "cancelled",
+        "failed",
+        "unknown",
+    ]
+    current_phase_id: str | None
+    task_tree: TaskTree | None
+    tasks: list[TaskResponse]
+
+
 class TaskUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

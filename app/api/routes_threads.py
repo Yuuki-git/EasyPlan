@@ -10,6 +10,7 @@ from app.api.dependencies import get_user_timezone
 from app.api.schemas import (
     ConfirmationRequest,
     ConfirmationResponse,
+    NextPhaseCommitReceipt,
     NextPhaseRequest,
     NextPhaseResponse,
     ThreadSnapshot,
@@ -56,6 +57,33 @@ async def get_thread_snapshot(
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return ThreadSnapshot(**thread_to_snapshot_payload(thread))
+
+
+@router.get(
+    "/{thread_id}/phases/next/commit",
+    response_model=NextPhaseCommitReceipt,
+)
+async def get_next_phase_commit_receipt(
+    thread_id: Annotated[str, Path(min_length=1)],
+    request_id: Annotated[str, Query(min_length=8, max_length=128)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
+    repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
+) -> NextPhaseCommitReceipt:
+    receipt = await repository.get_next_phase_commit_receipt(
+        user_id=current_user.id,
+        thread_id=thread_id,
+        request_id=request_id,
+    )
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return NextPhaseCommitReceipt(
+        thread_id=receipt.thread_id,
+        request_id=receipt.request_id,
+        status=receipt.status,
+        current_phase_id=receipt.current_phase_id,
+        task_tree=receipt.task_tree,
+        tasks=receipt.tasks,
+    )
 
 
 @router.get(

@@ -706,6 +706,7 @@ class AgentRuntime:
                     "type": "next_phase_review",
                     "request_id": request_id,
                     "status": "awaiting_confirmation",
+                    "base_phase_id": existing_payload.get("base_phase_id"),
                     "task_tree": interrupt_payload.get("task_tree"),
                     "history": history,
                 }

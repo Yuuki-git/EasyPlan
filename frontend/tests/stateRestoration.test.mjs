@@ -375,8 +375,45 @@ async function runTests() {
   // --- Scenario 8: confirmed next-phase snapshot should clear stale local preview restore state ---
   {
     let fetchCalled = false;
+    let receiptCalled = false;
     const fetchMock = async (url) => {
       fetchCalled = true;
+      if (url.includes('/api/threads/thread-confirmed/phases/next/commit')) {
+        receiptCalled = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'thread-confirmed',
+            request_id: 'req-confirmed',
+            status: 'confirmed',
+            current_phase_id: 'phase_02',
+            task_tree: {
+              root: {
+                client_node_id: 'phase-2-root',
+                title: 'Phase 2 Root',
+                children: []
+              },
+              planning_context: {
+                roadmap: [
+                  { phase_id: 'phase_01', order: 1, title: 'Phase 1', objective: 'Start', status: 'completed' },
+                  { phase_id: 'phase_02', order: 2, title: 'Phase 2', objective: 'Build', status: 'current' },
+                ],
+                current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' },
+              },
+            },
+            tasks: [
+              {
+                id: 'task-new',
+                thread_id: 'thread-confirmed',
+                client_node_id: 'phase-2-root',
+                phase_id: 'phase_02',
+                source: 'ai'
+              }
+            ]
+          })
+        };
+      }
       if (url.includes('/api/threads/thread-confirmed')) {
         return {
           ok: true,
@@ -410,24 +447,7 @@ async function runTests() {
           }),
         };
       }
-      if (url.includes('/api/tasks')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => [
-            {
-              id: 'task-new',
-              thread_id: 'thread-confirmed',
-              client_node_id: 'phase-2-root'
-            }
-          ]
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({})
-      };
+      throw new Error(`legacy synchronization endpoint called: ${url}`);
     };
 
     const initialLocal = {
@@ -445,6 +465,7 @@ async function runTests() {
 
     const updatedState = useAppStore.getState();
     assert.ok(fetchCalled);
+    assert.ok(receiptCalled);
     assert.equal(updatedState.view, 'board');
     assert.equal(updatedState.appState, 'INITIAL');
     assert.equal(updatedState.previewMode, null, 'Confirmed snapshot should exit preview mode');

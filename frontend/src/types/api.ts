@@ -150,6 +150,23 @@ export interface ThreadSnapshot {
   latest_checkpoint_id?: string | null;
 }
 
+export interface NextPhaseCommitReceipt {
+  thread_id: string;
+  request_id: string;
+  status:
+    | 'confirmed'
+    | 'incomplete'
+    | 'running'
+    | 'awaiting_confirmation'
+    | 'confirming'
+    | 'cancelled'
+    | 'failed'
+    | 'unknown';
+  current_phase_id: string | null;
+  task_tree: TaskTree | null;
+  tasks: TaskResponse[];
+}
+
 export interface RegisterRequest {
   email: string;
   password: string;
