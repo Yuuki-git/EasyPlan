@@ -1,5 +1,7 @@
 # Next-Phase Cross-Run SSE and Snapshot Fix Implementation Plan
 
+> **Status: Partially implemented, then superseded for the remaining P0 on 2026-07-01.** Run-scoped backend buffering, event identity checks, snapshot request fencing, and commit proof remain valid. The remaining subscription-lifecycle defect is tracked in `docs/superpowers/plans/2026-07-01-active-run-sse-lifecycle-fix.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ensure a next-phase run can only be completed by its own SSE events and its own confirmed snapshot, so historical terminal events and stale snapshot responses can never return the board from phase2 to phase1.

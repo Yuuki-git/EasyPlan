@@ -83,10 +83,15 @@ def test_sse_thread_events_accept_token_query_for_eventsource_clients():
         intent_text="写论文",
     )
 
-    response = client.get(f"/api/threads/thread-1/events?token={token}")
+    request_id = "11111111-1111-1111-1111-111111111111"
+    response = client.get(
+        f"/api/threads/thread-1/events?token={token}"
+        f"&run_type=initial&request_id={request_id}"
+    )
 
     assert response.status_code == 200
     assert "event: reasoning" in response.text
+    assert runtime.streamed[0]["request_id"] == request_id
 
 
 def test_regular_thread_snapshot_rejects_token_query_to_avoid_url_token_leakage():

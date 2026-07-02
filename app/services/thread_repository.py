@@ -127,25 +127,63 @@ class AgentThreadRepository:
             await self.session.rollback()
             raise
 
-    async def cancel_pending_preview(self, *, thread: AgentThread) -> AgentThread:
-        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else None
-        if not payload or payload.get("type") != "next_phase_review":
-            raise ThreadStateConflictError(
-                code="NO_PENDING_PREVIEW",
-                message="Thread has no pending preview to cancel",
+    async def cancel_next_phase_request(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: str,
+        request_id: str,
+    ) -> AgentThread | None:
+        result = await self.session.execute(
+            select(AgentThread)
+            .where(
+                AgentThread.user_id == user_id,
+                AgentThread.thread_id == thread_id,
             )
-        if payload.get("status") != "awaiting_confirmation":
+            .with_for_update()
+        )
+        thread = result.scalar_one_or_none()
+        if thread is None:
+            return None
+
+        payload = (
+            thread.interrupt_payload
+            if isinstance(thread.interrupt_payload, dict)
+            else {}
+        )
+        current_request_id = str(payload.get("request_id") or "")
+        if current_request_id != request_id:
             raise ThreadStateConflictError(
-                code="PREVIEW_ALREADY_CONFIRMED",
-                message="This next-phase preview has already been confirmed or cancelled",
+                code="REQUEST_ID_MISMATCH",
+                message="Next-phase request_id does not match the current lifecycle",
             )
+
+        payload_type = payload.get("type")
+        payload_status = payload.get("status")
+        if payload_type == "phase_generation_state" and payload_status == "cancelled":
+            return thread
+        cancellable = (
+            payload_type == "phase_generation_state"
+            and payload_status == "running"
+        ) or (
+            payload_type == "next_phase_review"
+            and payload_status == "awaiting_confirmation"
+        )
+        if not cancellable:
+            if payload_status in {"confirming", "confirmed"}:
+                code = "PREVIEW_ALREADY_CONFIRMED"
+                message = "This next-phase request has already been confirmed"
+            else:
+                code = "NO_CANCELLABLE_PHASE"
+                message = "Thread has no cancellable next-phase lifecycle for this request"
+            raise ThreadStateConflictError(code=code, message=message)
 
         now = datetime.now(timezone.utc)
         thread.status = "succeeded"
         thread.current_node = "persist_internal_tasks"
         thread.interrupt_payload = _cancelled_phase_envelope(
             payload,
-            request_id=str(payload.get("request_id") or ""),
+            request_id=request_id,
             now=now,
         )
         thread.lease_owner = None

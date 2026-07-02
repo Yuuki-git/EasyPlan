@@ -16,6 +16,18 @@ export function matchesRunIdentity(
   );
 }
 
+export function matchesActiveRun(
+  run1: { threadId: string; runType: string; requestId: string } | null | undefined,
+  run2: { threadId: string; runType: string; requestId: string } | null | undefined
+): boolean {
+  if (!run1 || !run2) return false;
+  return (
+    run1.threadId === run2.threadId &&
+    run1.runType === run2.runType &&
+    run1.requestId === run2.requestId
+  );
+}
+
 export function createRunEventTracker() {
   const seen = new Set<string>();
   return {

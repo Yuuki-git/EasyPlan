@@ -20,7 +20,6 @@ from app.services.llm_service import create_planner_client
 logger = logging.getLogger(__name__)
 _global_checkpointer = TenantAwareMemorySaver()
 SAFE_PLANNING_ERROR_MESSAGE = "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。"
-INITIAL_RUN_REQUEST_ID = "initial"
 RunType = Literal["initial", "next_phase"]
 
 
@@ -34,7 +33,11 @@ class EventRunKey:
 @dataclass
 class _EventSubscriber:
     loop: asyncio.AbstractEventLoop
-    queue: asyncio.Queue[str]
+    queue: asyncio.Queue[str | None]
+
+
+class PhaseGenerationCancelled(Exception):
+    """Raised when a cancelled next-phase run attempts a late state transition."""
 
 
 class AgentRuntime:
@@ -53,6 +56,8 @@ class AgentRuntime:
             lambda: deque(maxlen=max_events_per_thread)
         )
         self._subscribers: dict[EventRunKey, list[_EventSubscriber]] = defaultdict(list)
+        self._active_runs: set[EventRunKey] = set()
+        self._cancelled_runs: set[EventRunKey] = set()
         self._planner_selection: dict[str, tuple[str | None, str | None]] = {}
         self._counter = itertools.count(1)
         self._lock = threading.Lock()
@@ -62,6 +67,7 @@ class AgentRuntime:
         *,
         user_id: str,
         thread_id: str,
+        request_id: str,
         intent_text: str,
         selected_provider: str,
         planner_provider: str | None = None,
@@ -72,6 +78,7 @@ class AgentRuntime:
         await self._run_new_thread(
             user_id=user_id,
             thread_id=thread_id,
+            request_id=request_id,
             intent_text=intent_text,
             selected_provider=selected_provider,
             planner_provider=planner_provider,
@@ -83,6 +90,7 @@ class AgentRuntime:
         *,
         user_id: str,
         thread_id: str,
+        request_id: str,
         intent_text: str,
         selected_provider: str,
         planner_provider: str | None,
@@ -110,14 +118,14 @@ class AgentRuntime:
                     thread_id=thread_id,
                     chunk=chunk,
                     run_type="initial",
-                    request_id=INITIAL_RUN_REQUEST_ID,
+                    request_id=request_id,
                 )
             if not interrupted and not emitted_terminal:
                 self._append_done(
                     thread_id,
                     status="completed",
                     run_type="initial",
-                    request_id=INITIAL_RUN_REQUEST_ID,
+                    request_id=request_id,
                 )
         except Exception:
             logger.exception("agent_thread_run_failed", extra={"thread_id": thread_id, "user_id": user_id})
@@ -126,7 +134,7 @@ class AgentRuntime:
                 code="AGENT_RUN_FAILED",
                 message=SAFE_PLANNING_ERROR_MESSAGE,
                 run_type="initial",
-                request_id=INITIAL_RUN_REQUEST_ID,
+                request_id=request_id,
             )
 
     async def run_next_phase(
@@ -139,6 +147,42 @@ class AgentRuntime:
         committed_task_tree: dict[str, Any],
         current_phase_task_summary: str,
     ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type="next_phase",
+            request_id=request_id,
+        )
+        with self._lock:
+            self._active_runs.add(run_key)
+        try:
+            await self._run_active_next_phase(
+                user_id=user_id,
+                thread_id=thread_id,
+                request_id=request_id,
+                intent_text=intent_text,
+                committed_task_tree=committed_task_tree,
+                current_phase_task_summary=current_phase_task_summary,
+            )
+        finally:
+            with self._lock:
+                self._active_runs.discard(run_key)
+                self._cancelled_runs.discard(run_key)
+
+    async def _run_active_next_phase(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        request_id: str,
+        intent_text: str,
+        committed_task_tree: dict[str, Any],
+        current_phase_task_summary: str,
+    ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type="next_phase",
+            request_id=request_id,
+        )
         with self._lock:
             self._planner_selection[thread_id] = ("deepseek", None)
             # Reclaim old next_phase EventRunKeys and subscribers for this thread_id
@@ -149,6 +193,8 @@ class AgentRuntime:
             for k in old_keys:
                 self._events.pop(k, None)
                 self._subscribers.pop(k, None)
+        if self._is_run_cancelled(run_key):
+            return
         graph = self._build_graph(planner_provider="deepseek", planner_model=None)
         config = create_graph_config(user_id=user_id, thread_id=thread_id)
         planning_context = committed_task_tree.get("planning_context") or {}
@@ -171,23 +217,35 @@ class AgentRuntime:
             interrupted = False
             emitted_terminal = False
             async for chunk in graph.astream(initial_state, config):
+                if self._is_run_cancelled(run_key):
+                    return
                 interrupted = interrupted or "__interrupt__" in chunk
                 emitted_terminal = emitted_terminal or "failed_validation" in chunk
-                await self._append_chunk(
+                processed = await self._append_chunk(
                     user_id=user_id,
                     thread_id=thread_id,
                     chunk=chunk,
                     run_type="next_phase",
                     request_id=request_id,
                 )
-            if not interrupted and not emitted_terminal:
+                if not processed or self._is_run_cancelled(run_key):
+                    return
+            if (
+                not interrupted
+                and not emitted_terminal
+                and not self._is_run_cancelled(run_key)
+            ):
                 self._append_done(
                     thread_id,
                     status="completed",
                     run_type="next_phase",
                     request_id=request_id,
                 )
+        except PhaseGenerationCancelled:
+            return
         except Exception:
+            if self._is_run_cancelled(run_key):
+                return
             logger.exception(
                 "agent_next_phase_run_failed",
                 extra={"thread_id": thread_id, "user_id": user_id, "request_id": request_id},
@@ -211,6 +269,38 @@ class AgentRuntime:
                 request_id=request_id,
             )
 
+    def cancel_run(
+        self,
+        *,
+        thread_id: str,
+        run_type: RunType,
+        request_id: str,
+    ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type=run_type,
+            request_id=request_id,
+        )
+        with self._lock:
+            if run_key in self._active_runs:
+                self._cancelled_runs.add(run_key)
+            subscribers = self._subscribers.pop(run_key, [])
+        for subscriber in subscribers:
+            try:
+                subscriber.loop.call_soon_threadsafe(
+                    subscriber.queue.put_nowait,
+                    None,
+                )
+            except RuntimeError:
+                logger.debug(
+                    "sse_subscriber_loop_closed_during_cancellation",
+                    extra={
+                        "thread_id": thread_id,
+                        "run_type": run_type,
+                        "request_id": request_id,
+                    },
+                )
+
     async def resume_thread(
         self,
         *,
@@ -218,7 +308,7 @@ class AgentRuntime:
         thread_id: str,
         decision: dict[str, Any],
         run_type: RunType = "initial",
-        request_id: str | None = None,
+        request_id: str,
     ) -> None:
         with self._lock:
             planner_provider, planner_model = self._planner_selection.get(thread_id, (None, None))
@@ -241,7 +331,7 @@ class AgentRuntime:
         planner_provider: str | None,
         planner_model: str | None,
         run_type: RunType,
-        request_id: str | None,
+        request_id: str,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
         config = create_graph_config(user_id=user_id, thread_id=thread_id)
@@ -287,7 +377,7 @@ class AgentRuntime:
         thread_id: str,
         last_event_id: str | None = None,
         run_type: RunType = "initial",
-        request_id: str | None = None,
+        request_id: str,
     ) -> AsyncIterator[str]:
         run_key = _event_run_key(
             thread_id=thread_id,
@@ -296,9 +386,13 @@ class AgentRuntime:
         )
         subscriber = _EventSubscriber(loop=asyncio.get_running_loop(), queue=asyncio.Queue())
         snapshot_event: str | None = None
+        cancelled = False
         with self._lock:
-            events = list(self._events.get(run_key, []))
-            if not events and last_event_id:
+            cancelled = run_key in self._cancelled_runs
+            events = [] if cancelled else list(self._events.get(run_key, []))
+            if cancelled:
+                pass
+            elif not events and last_event_id:
                 snapshot_event = self._format_run_event(
                     run_key,
                     "snapshot_required",
@@ -317,6 +411,8 @@ class AgentRuntime:
                     self._subscribers[run_key].append(subscriber)
             else:
                 self._subscribers[run_key].append(subscriber)
+        if cancelled:
+            return
         if snapshot_event:
             yield snapshot_event
             return
@@ -327,6 +423,8 @@ class AgentRuntime:
                     return
             while True:
                 event = await subscriber.queue.get()
+                if event is None:
+                    return
                 yield event
                 if _is_terminal_event(event):
                     return
@@ -343,8 +441,15 @@ class AgentRuntime:
         thread_id: str,
         chunk: dict[str, Any],
         run_type: RunType,
-        request_id: str | None,
-    ) -> None:
+        request_id: str,
+    ) -> bool:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type=run_type,
+            request_id=request_id,
+        )
+        if self._is_run_cancelled(run_key):
+            return False
         if "__interrupt__" in chunk:
             interrupt_payload = chunk["__interrupt__"][0].value
             try:
@@ -352,7 +457,11 @@ class AgentRuntime:
                     user_id=user_id,
                     thread_id=thread_id,
                     interrupt_payload=interrupt_payload,
+                    run_type=run_type,
+                    request_id=request_id,
                 )
+            except PhaseGenerationCancelled:
+                return False
             except Exception:
                 logger.exception("agent_thread_interrupt_persist_failed", extra={"thread_id": thread_id, "user_id": user_id})
                 if interrupt_payload.get("planning_mode") == "next_phase":
@@ -374,7 +483,8 @@ class AgentRuntime:
                     run_type=run_type,
                     request_id=request_id,
                 )
-            self._append_event(
+                return False
+            return self._append_event(
                 thread_id,
                 "plan_ready",
                 {
@@ -385,7 +495,6 @@ class AgentRuntime:
                 run_type=run_type,
                 request_id=request_id,
             )
-            return
         if "failed_validation" in chunk:
             error = chunk["failed_validation"].get("error", {})
             logger.warning(
@@ -397,18 +506,17 @@ class AgentRuntime:
                     "raw_message": error.get("message"),
                 },
             )
-            self._append_error(
+            return self._append_error(
                 thread_id,
                 code=error.get("code", "TASK_TREE_VALIDATION_FAILED"),
                 message=_safe_sse_error_message(error.get("message")),
                 run_type=run_type,
                 request_id=request_id,
             )
-            return
         for node_name, payload in chunk.items():
             if isinstance(payload, dict) and payload.get("reasoning_events"):
                 for event in payload["reasoning_events"]:
-                    self._append_event(
+                    if not self._append_event(
                         thread_id,
                         "reasoning",
                         {
@@ -417,9 +525,10 @@ class AgentRuntime:
                         },
                         run_type=run_type,
                         request_id=request_id,
-                    )
+                    ):
+                        return False
             else:
-                self._append_event(
+                if not self._append_event(
                     thread_id,
                     "checkpoint",
                     {
@@ -428,7 +537,9 @@ class AgentRuntime:
                     },
                     run_type=run_type,
                     request_id=request_id,
-                )
+                ):
+                    return False
+        return True
 
     def _append_error(
         self,
@@ -436,10 +547,10 @@ class AgentRuntime:
         *,
         code: str,
         message: str,
-        run_type: RunType = "initial",
-        request_id: str | None = None,
-    ) -> None:
-        self._append_event(
+        run_type: RunType,
+        request_id: str,
+    ) -> bool:
+        return self._append_event(
             thread_id,
             "agent_error",
             {
@@ -456,10 +567,10 @@ class AgentRuntime:
         thread_id: str,
         *,
         status: str,
-        run_type: RunType = "initial",
-        request_id: str | None = None,
-    ) -> None:
-        self._append_event(
+        run_type: RunType,
+        request_id: str,
+    ) -> bool:
+        return self._append_event(
             thread_id,
             "done",
             {
@@ -476,24 +587,26 @@ class AgentRuntime:
         event: str,
         data: dict[str, Any],
         *,
-        run_type: RunType = "initial",
-        request_id: str | None = None,
-    ) -> None:
+        run_type: RunType,
+        request_id: str,
+    ) -> bool:
         run_key = _event_run_key(
             thread_id=thread_id,
             run_type=run_type,
             request_id=request_id,
         )
-        event_sequence = next(self._counter)
-        event_id = f"evt_{event_sequence:08d}"
-        formatted_event = self._format_run_event(
-            run_key,
-            event,
-            data,
-            event_id=event_id,
-            default_state_version=event_sequence,
-        )
         with self._lock:
+            if run_key in self._cancelled_runs:
+                return False
+            event_sequence = next(self._counter)
+            event_id = f"evt_{event_sequence:08d}"
+            formatted_event = self._format_run_event(
+                run_key,
+                event,
+                data,
+                event_id=event_id,
+                default_state_version=event_sequence,
+            )
             self._events[run_key].append(formatted_event)
             subscribers = list(self._subscribers.get(run_key, []))
         for subscriber in subscribers:
@@ -508,6 +621,7 @@ class AgentRuntime:
                         "request_id": run_key.request_id,
                     },
                 )
+        return True
 
     def _format_run_event(
         self,
@@ -536,6 +650,8 @@ class AgentRuntime:
         user_id: str,
         thread_id: str,
         interrupt_payload: dict[str, Any],
+        run_type: RunType,
+        request_id: str,
     ) -> None:
         from app.db.session import async_session
 
@@ -549,30 +665,60 @@ class AgentRuntime:
                 "updated_at": now,
             }
             if interrupt_payload.get("planning_mode") == "next_phase":
-                request_id = str(interrupt_payload.get("phase_request_id") or "")
+                interrupt_request_id = str(
+                    interrupt_payload.get("phase_request_id") or ""
+                )
+                if interrupt_request_id != request_id:
+                    raise PhaseGenerationCancelled
                 result = await session.execute(
-                    select(AgentThread).where(
+                    select(AgentThread)
+                    .where(
                         AgentThread.user_id == UUID(user_id),
                         AgentThread.thread_id == thread_id,
                     )
+                    .with_for_update()
                 )
                 thread = result.scalar_one_or_none()
+                if thread is None:
+                    raise PhaseGenerationCancelled
                 existing_payload = (
                     thread.interrupt_payload
-                    if thread is not None and isinstance(thread.interrupt_payload, dict)
+                    if isinstance(thread.interrupt_payload, dict)
                     else {}
                 )
-                update_values["interrupt_payload"] = {
+                history = dict(existing_payload.get("history") or {})
+                history_entry = history.get(request_id)
+                if (
+                    existing_payload.get("type") != "phase_generation_state"
+                    or str(existing_payload.get("request_id") or "") != request_id
+                    or existing_payload.get("status") != "running"
+                    or (
+                        isinstance(history_entry, dict)
+                        and history_entry.get("status") == "cancelled"
+                    )
+                ):
+                    raise PhaseGenerationCancelled
+                thread.status = "awaiting_confirmation"
+                thread.current_node = "human_review"
+                thread.interrupted_at = now
+                thread.updated_at = now
+                thread.interrupt_payload = {
                     "type": "next_phase_review",
                     "request_id": request_id,
                     "status": "awaiting_confirmation",
                     "task_tree": interrupt_payload.get("task_tree"),
-                    "history": dict(existing_payload.get("history") or {}),
+                    "history": history,
                 }
+                await session.commit()
+                return
             else:
                 update_values.update(
                     task_tree=interrupt_payload.get("task_tree"),
-                    interrupt_payload=interrupt_payload,
+                    interrupt_payload={
+                        **interrupt_payload,
+                        "request_id": request_id,
+                        "run_type": run_type,
+                    },
                 )
             await session.execute(
                 update(AgentThread)
@@ -583,6 +729,10 @@ class AgentRuntime:
                 .values(**update_values)
             )
             await session.commit()
+
+    def _is_run_cancelled(self, run_key: EventRunKey) -> bool:
+        with self._lock:
+            return run_key in self._cancelled_runs
 
     async def _release_phase_failure(
         self,
@@ -596,10 +746,12 @@ class AgentRuntime:
         now = datetime.now(timezone.utc)
         async with async_session() as session:
             result = await session.execute(
-                select(AgentThread).where(
+                select(AgentThread)
+                .where(
                     AgentThread.user_id == UUID(user_id),
                     AgentThread.thread_id == thread_id,
                 )
+                .with_for_update()
             )
             thread = result.scalar_one_or_none()
             current_payload = (
@@ -607,6 +759,18 @@ class AgentRuntime:
                 if thread is not None and isinstance(thread.interrupt_payload, dict)
                 else {}
             )
+            history_entry = dict(current_payload.get("history") or {}).get(request_id)
+            if (
+                thread is None
+                or current_payload.get("type") != "phase_generation_state"
+                or str(current_payload.get("request_id") or "") != request_id
+                or current_payload.get("status") != "running"
+                or (
+                    isinstance(history_entry, dict)
+                    and history_entry.get("status") == "cancelled"
+                )
+            ):
+                return
             await session.execute(
                 update(AgentThread)
                 .where(
@@ -643,16 +807,10 @@ def _event_run_key(
     *,
     thread_id: str,
     run_type: RunType,
-    request_id: str | None,
+    request_id: str,
 ) -> EventRunKey:
-    if run_type == "initial":
-        return EventRunKey(
-            thread_id=thread_id,
-            run_type=run_type,
-            request_id=INITIAL_RUN_REQUEST_ID,
-        )
     if not request_id:
-        raise ValueError("request_id is required for next_phase event streams")
+        raise ValueError("request_id is required for event streams")
     return EventRunKey(
         thread_id=thread_id,
         run_type=run_type,

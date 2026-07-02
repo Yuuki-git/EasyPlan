@@ -24,7 +24,9 @@ export const PlanningOverview: React.FC = () => {
     reasoningLogs,
     finishAgentRun,
     returnToCommittedPlan,
-    lastDoneEvent
+    lastDoneEvent,
+    isCancelPending,
+    collapsePlanningPanel
   } = useAppStore();
 
   const retrySync = () => {
@@ -144,9 +146,10 @@ export const PlanningOverview: React.FC = () => {
                     </button>
                     <button
                       onClick={() => cancelPlanPreview()}
-                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                      disabled={isCancelPending}
+                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      取消本次生成
+                      {isCancelPending ? '正在取消...' : '取消本次生成'}
                     </button>
                   </div>
                 </div>
@@ -182,15 +185,16 @@ export const PlanningOverview: React.FC = () => {
                         </button>
                         <button
                           onClick={() => cancelPlanPreview()}
-                          className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                          disabled={isCancelPending}
+                          className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          取消本次生成
+                          {isCancelPending ? '正在取消...' : '取消本次生成'}
                         </button>
                       </>
                     )}
                   </div>
                 </div>
-              ) : appState === 'THINKING' || appState === 'SYNCING' ? (
+              ) : appState === 'THINKING' ? (
                 <div className="p-4 rounded-lg bg-foreground/5 border border-foreground/10 h-full flex flex-col justify-center items-center text-center min-h-[140px]">
                   <div className="flex items-center gap-2 text-foreground font-medium mb-2">
                     <svg className="animate-spin h-4 w-4 text-foreground" fill="none" viewBox="0 0 24 24">
@@ -206,9 +210,26 @@ export const PlanningOverview: React.FC = () => {
                   )}
                   <button
                     onClick={() => cancelPlanPreview()}
+                    disabled={isCancelPending}
+                    className="mt-4 px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isCancelPending ? '正在取消...' : '取消本次生成'}
+                  </button>
+                </div>
+              ) : appState === 'SYNCING' ? (
+                <div className="p-4 rounded-lg bg-foreground/5 border border-foreground/10 h-full flex flex-col justify-center items-center text-center min-h-[140px]">
+                  <div className="flex items-center gap-2 text-foreground font-medium mb-2">
+                    <svg className="animate-spin h-4 w-4 text-foreground" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>正在提交下一阶段至 Provider...</span>
+                  </div>
+                  <button
+                    onClick={() => collapsePlanningPanel()}
                     className="mt-4 px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-full transition-colors"
                   >
-                    取消本次生成
+                    返回当前计划
                   </button>
                 </div>
               ) : appState === 'PENDING' ? (
@@ -249,9 +270,10 @@ export const PlanningOverview: React.FC = () => {
                     </button>
                     <button
                       onClick={() => cancelPlanPreview()}
-                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                      disabled={isCancelPending}
+                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      取消本次生成
+                      {isCancelPending ? '正在取消...' : '取消本次生成'}
                     </button>
                   </div>
                 </div>

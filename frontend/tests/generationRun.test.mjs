@@ -479,7 +479,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-race',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-race',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-race', runType: 'next_phase', requestId: 'req-race' })
     });
 
     useAppStore.setState({
@@ -492,7 +493,8 @@ async function runTests() {
       basePhaseId: 'phase-1',
       boardTasks: [],
       committedTaskTree: { planning_context: { current_phase: { phase_id: 'phase-1' } } },
-      previewTaskTree: { planning_context: {} }
+      previewTaskTree: { planning_context: {} },
+      activeRun: { threadId: 'proj-race', runType: 'next_phase', requestId: 'req-race' }
     });
 
     await useAppStore.getState().alignState('proj-race');
@@ -529,7 +531,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-current',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
 
     useAppStore.setState({
@@ -538,7 +541,8 @@ async function runTests() {
       threadId: 'proj-proof',
       previewMode: 'next_phase',
       phaseRequestId: 'req-current',
-      basePhaseId: 'phase-1'
+      basePhaseId: 'phase-1',
+      activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });
 
     // 历史 done 事件：requestId 为 req-old
@@ -592,7 +596,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-current',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
 
     useAppStore.setState({
@@ -601,7 +606,8 @@ async function runTests() {
       threadId: 'proj-proof',
       previewMode: 'next_phase',
       phaseRequestId: 'req-current',
-      basePhaseId: 'phase-1'
+      basePhaseId: 'phase-1',
+      activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });
 
     await useAppStore.getState().finishAgentRun({
@@ -661,7 +667,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-current',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
 
     useAppStore.setState({
@@ -670,7 +677,8 @@ async function runTests() {
       threadId: 'proj-proof',
       previewMode: 'next_phase',
       phaseRequestId: 'req-current',
-      basePhaseId: 'phase-1'
+      basePhaseId: 'phase-1',
+      activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });
 
     await useAppStore.getState().finishAgentRun({
@@ -729,7 +737,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-current',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
 
     useAppStore.setState({
@@ -738,7 +747,8 @@ async function runTests() {
       threadId: 'proj-proof',
       previewMode: 'next_phase',
       phaseRequestId: 'req-current',
-      basePhaseId: 'phase-1'
+      basePhaseId: 'phase-1',
+      activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });
 
     await useAppStore.getState().finishAgentRun({
@@ -805,7 +815,8 @@ async function runTests() {
       'easyplan_thread_id': 'proj-proof',
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-current',
-      'easyplan_base_phase_id': 'phase-1'
+      'easyplan_base_phase_id': 'phase-1',
+      'easyplan_active_run': JSON.stringify({ threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' })
     });
 
     useAppStore.setState({
@@ -814,7 +825,8 @@ async function runTests() {
       threadId: 'proj-proof',
       previewMode: 'next_phase',
       phaseRequestId: 'req-current',
-      basePhaseId: 'phase-1'
+      basePhaseId: 'phase-1',
+      activeRun: { threadId: 'proj-proof', runType: 'next_phase', requestId: 'req-current' }
     });
 
     await useAppStore.getState().finishAgentRun({
@@ -831,6 +843,394 @@ async function runTests() {
     assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
     assert.equal(localStorageValues.has('easyplan_phase_request_id'), false);
     assert.equal(localStorageValues.has('easyplan_base_phase_id'), false);
+  }
+
+  // --- 测试场景 13: confirmPlan() 始终复用已恢复的 activeRun.requestId ---
+  {
+    let confirmUrl = null;
+    let confirmBody = null;
+    const fetchMock = async (url, options = {}) => {
+      if (url.includes('/api/threads/thread-initial/confirm')) {
+        confirmUrl = url;
+        confirmBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({})
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({})
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_selected_project_id': 'thread-initial',
+      'easyplan_thread_id': 'thread-initial',
+      'easyplan_preview_mode': 'initial',
+      'easyplan_active_run': JSON.stringify({
+        threadId: 'thread-initial',
+        runType: 'initial',
+        requestId: 'request-a'
+      })
+    };
+
+    const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
+
+    useAppStore.setState({
+      view: 'board',
+      selectedProjectId: 'thread-initial',
+      threadId: 'thread-initial',
+      previewMode: 'initial',
+      syncRequestId: null,
+      activeRun: {
+        threadId: 'thread-initial',
+        runType: 'initial',
+        requestId: 'request-a'
+      }
+    });
+
+    await useAppStore.getState().confirmPlan();
+
+    assert.ok(confirmUrl);
+    assert.equal(confirmBody.request_id, 'request-a');
+    assert.equal(confirmBody.action, 'approve');
+    assert.equal(useAppStore.getState().activeRun?.requestId, 'request-a');
+  }
+
+  // --- 测试场景 14: exit paths 必须同时清空 activeRun 与 easyplan_active_run ---
+  {
+    // A. cancelPlanPreview
+    {
+      const fetchMock = async (url) => {
+        if (url.includes('/cancel')) {
+          assert.ok(url.includes('request_id=req-1'));
+          return { ok: true, status: 200, json: async () => ({ thread_id: 'proj-1', intent_text: 'intent-1' }) };
+        }
+        return { ok: true, status: 200, json: async () => ([]) };
+      };
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' })
+      });
+      useAppStore.setState({ selectedProjectId: 'proj-1', activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' } });
+      await useAppStore.getState().cancelPlanPreview();
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // B. returnToCommittedPlan (with project)
+    {
+      const fetchMock = async (url) => {
+        if (url.includes('/api/threads/proj-1')) {
+          return { ok: true, status: 200, json: async () => ({}) };
+        }
+        return { ok: true, status: 200, json: async () => ([]) };
+      };
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ selectedProjectId: 'proj-1', activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      await useAppStore.getState().returnToCommittedPlan();
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // C. returnToCommittedPlan (without project)
+    {
+      const { useAppStore, localStorageValues } = loadAppStoreModule(() => {}, {
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ selectedProjectId: null, activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      await useAppStore.getState().returnToCommittedPlan();
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // D. startNewIntent
+    {
+      const { useAppStore, localStorageValues } = loadAppStoreModule(() => {}, {
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      useAppStore.getState().startNewIntent();
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // E. setSelectedProjectId(null)
+    {
+      const { useAppStore, localStorageValues } = loadAppStoreModule(() => {}, {
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      useAppStore.getState().setSelectedProjectId(null);
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // F. setView('board') leaving generation
+    {
+      const fetchMock = async () => ({ ok: true, status: 200, json: async () => ([]) });
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ selectedProjectId: null, activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      useAppStore.getState().setView('board');
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+
+    // G. deleteThread of the active thread
+    {
+      const fetchMock = async () => ({ ok: true, status: 200, json: async () => ({}) });
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+      useAppStore.setState({ threadId: 'proj-1', activeRun: { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' } });
+      await useAppStore.getState().deleteThread('proj-1');
+      assert.equal(useAppStore.getState().activeRun, null);
+      assert.equal(localStorageValues.has('easyplan_active_run'), false);
+    }
+  }
+
+  // --- 测试场景 15: cancelPlanPreview() 防重复提交与 409 对齐解决 ---
+  {
+    // A. 防重复提交
+    {
+      let fetchCount = 0;
+      let resolveFetch;
+      const fetchPromise = new Promise(r => { resolveFetch = r; });
+      const fetchMock = async (url) => {
+        if (url.includes('/cancel')) {
+          fetchCount++;
+          await fetchPromise;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ thread_id: 'proj-1', intent_text: 'intent-1' })
+        };
+      };
+
+      const { useAppStore } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' })
+      });
+      useAppStore.setState({ selectedProjectId: 'proj-1', activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' } });
+
+      const store = useAppStore.getState();
+      const cancelPromise1 = store.cancelPlanPreview();
+      assert.equal(useAppStore.getState().isCancelPending, true, 'isCancelPending should be true while request is in flight');
+
+      // Call it again
+      const cancelPromise2 = store.cancelPlanPreview();
+      resolveFetch();
+      await Promise.all([cancelPromise1, cancelPromise2]);
+
+      assert.equal(fetchCount, 1, 'Only one fetch should be sent for cancelPlanPreview');
+      assert.equal(useAppStore.getState().isCancelPending, false, 'isCancelPending should be restored to false');
+    }
+
+    // B. 409 Conflict Reconcile - 已确认状态
+    {
+      let cancelCalled = false;
+      let alignCalled = false;
+      const fetchMock = async (url) => {
+        if (url.includes('/cancel')) {
+          cancelCalled = true;
+          return { ok: true, status: 409 };
+        }
+        if (url.includes('/api/threads/proj-1')) {
+          alignCalled = true;
+          // Return confirmed Phase 2 snapshot (where previewMode resolves to null, activeRun becomes null)
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              thread_id: 'proj-1',
+              status: 'succeeded',
+              intent_text: 'intent-1',
+              task_tree: { root: { title: 'Confirmed Phase 2 Root' } },
+              interrupt_payload: null
+            })
+          };
+        }
+        return { ok: true, status: 200, json: async () => ([]) };
+      };
+
+      const { useAppStore } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' })
+      });
+      useAppStore.setState({
+        selectedProjectId: 'proj-1',
+        previewMode: 'next_phase',
+        activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' }
+      });
+
+      await useAppStore.getState().cancelPlanPreview();
+
+      assert.ok(cancelCalled);
+      assert.ok(alignCalled);
+
+      const state = useAppStore.getState();
+      assert.equal(state.previewMode, null, 'previewMode should be null');
+      assert.equal(state.committedTaskTree?.root?.title, 'Confirmed Phase 2 Root');
+      assert.equal(state.error, null);
+    }
+
+    // C. 409 Conflict Reconcile - 未决/不匹配状态，报告错误
+    {
+      let cancelCalled = false;
+      let alignCalled = false;
+      const fetchMock = async (url) => {
+        if (url.includes('/cancel')) {
+          cancelCalled = true;
+          return { ok: true, status: 409 };
+        }
+        if (url.includes('/api/threads/proj-1')) {
+          alignCalled = true;
+          // Return running/unconfirmed snapshot where previewMode remains next_phase
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              thread_id: 'proj-1',
+              status: 'running',
+              intent_text: 'intent-1',
+              task_tree: null,
+              interrupt_payload: {
+                type: 'phase_generation_state',
+                request_id: 'req-other',
+                status: 'running'
+              }
+            })
+          };
+        }
+        return { ok: true, status: 200, json: async () => ([]) };
+      };
+
+      const { useAppStore } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_preview_mode': 'next_phase',
+        'easyplan_phase_request_id': 'req-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' })
+      });
+      useAppStore.setState({
+        selectedProjectId: 'proj-1',
+        previewMode: 'next_phase',
+        phaseRequestId: 'req-1',
+        activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' }
+      });
+
+      await useAppStore.getState().cancelPlanPreview();
+
+      assert.ok(cancelCalled);
+      assert.ok(alignCalled);
+
+      const state = useAppStore.getState();
+      assert.equal(state.error, '当前生成状态已变化，请重试。');
+      assert.equal(state.appState, 'PENDING');
+      assert.notEqual(state.activeRun, null, 'Should not blindly clear activeRun');
+    }
+
+    // D. collapsePlanningPanel 在 SYNCING 时被调用，保留 activeRun，此后 done 事件成功触发对齐
+    {
+      let fetchCalled = false;
+      const fetchMock = async (url) => {
+        if (url.includes('/api/threads/proj-1')) {
+          fetchCalled = true;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              thread_id: 'proj-1',
+              status: 'succeeded',
+              intent_text: 'intent-1',
+              task_tree: {
+                root: { title: 'Committed Phase 2 Root' },
+                planning_context: {
+                  schema_version: 1,
+                  intent_type: 'exploration_decision',
+                  time_horizon: 'days',
+                  roadmap: [
+                    { phase_id: 'phase-1', order: 1, title: 'Phase 1', objective: 'Objective 1', status: 'completed' },
+                    { phase_id: 'phase-2', order: 2, title: 'Phase 2', objective: 'Objective 2', status: 'current' }
+                  ],
+                  current_phase: { phase_id: 'phase-2', title: 'Phase 2', objective: 'Objective 2' }
+                }
+              },
+              interrupt_payload: {
+                type: 'phase_generation_state',
+                request_id: 'req-1',
+                status: 'confirmed'
+              }
+            })
+          };
+        }
+        if (url.includes('/api/tasks')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              {
+                id: 'task-1',
+                thread_id: 'proj-1',
+                phase_id: 'phase-2',
+                source: 'ai'
+              }
+            ]
+          };
+        }
+        return { ok: true, status: 200, json: async () => ([]) };
+      };
+
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_preview_mode': 'next_phase',
+        'easyplan_phase_request_id': 'req-1',
+        'easyplan_base_phase_id': 'phase-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' }),
+        'auth_token': 'mock-token'
+      });
+      useAppStore.setState({
+        selectedProjectId: 'proj-1',
+        previewMode: 'next_phase',
+        phaseRequestId: 'req-1',
+        basePhaseId: 'phase-1',
+        appState: 'SYNCING',
+        activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' }
+      });
+
+      // Call collapsePlanningPanel
+      useAppStore.getState().collapsePlanningPanel();
+
+      // Assert panel is collapsed but context remains
+      let state = useAppStore.getState();
+      assert.equal(state.previewMode, null);
+      assert.equal(state.appState, 'INITIAL');
+      assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
+      assert.equal(state.activeRun?.requestId, 'req-1');
+      assert.equal(state.phaseRequestId, 'req-1');
+
+      // Now dispatch done event to finishAgentRun
+      await useAppStore.getState().finishAgentRun({
+        thread_id: 'proj-1',
+        run_type: 'next_phase',
+        request_id: 'req-1',
+        state_version: 2
+      });
+
+      assert.ok(fetchCalled);
+      state = useAppStore.getState();
+      assert.equal(state.committedTaskTree?.root?.title, 'Committed Phase 2 Root');
+      assert.equal(state.activeRun, null);
+      assert.equal(state.appState, 'INITIAL');
+    }
   }
 
   console.log('generationRun tests passed');

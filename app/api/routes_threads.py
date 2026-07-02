@@ -15,7 +15,7 @@ from app.api.schemas import (
     ThreadSnapshot,
 )
 from app.db.session import get_db
-from app.services.agent_runtime import INITIAL_RUN_REQUEST_ID, AgentRuntime, agent_runtime
+from app.services.agent_runtime import AgentRuntime, agent_runtime
 from app.services.phase_planning import phase_planning_enabled
 from app.services.thread_repository import (
     AgentThreadRepository,
@@ -64,7 +64,7 @@ async def get_thread_snapshot(
         "Server-Sent Events stream. Events include reasoning, checkpoint, "
         "plan_ready, done, snapshot_required, and agent_error. "
         "Every event payload contains thread_id, run_type, request_id, and state_version. "
-        "Next-phase streams require run_type=next_phase and the matching request_id. "
+        "Every stream requires the matching request_id. "
         "The agent_error event payload also contains code and message."
     ),
 )
@@ -73,22 +73,14 @@ async def stream_thread_events(
     current_user: Annotated[AuthUser, Depends(get_user_for_sse)],
     repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
+    request_id: Annotated[str, Query(min_length=1, max_length=128)],
     last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     last_event_id_query: Annotated[str | None, Query(alias="last_event_id")] = None,
     run_type: Annotated[Literal["initial", "next_phase"], Query()] = "initial",
-    request_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
 ) -> StreamingResponse:
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    if run_type == "next_phase" and not request_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "error_code": "REQUEST_ID_REQUIRED",
-                "message": "request_id is required for next_phase event streams",
-            },
-        )
     return StreamingResponse(
         runtime.stream_thread_events(
             user_id=str(current_user.id),
@@ -122,7 +114,6 @@ async def confirm_thread(
     run_type: Literal["initial", "next_phase"] = (
         "next_phase" if pending_payload.get("type") == "next_phase_review" else "initial"
     )
-    event_request_id = payload.request_id if run_type == "next_phase" else INITIAL_RUN_REQUEST_ID
     try:
         await repository.mark_confirmation_accepted(
             thread=thread,
@@ -137,7 +128,7 @@ async def confirm_thread(
         thread_id=thread_id,
         decision=payload.model_dump(mode="json", exclude_none=True),
         run_type=run_type,
-        request_id=event_request_id,
+        request_id=payload.request_id,
     )
     return ConfirmationResponse(
         thread_id=thread_id,
@@ -154,14 +145,24 @@ async def cancel_next_phase_preview(
     thread_id: Annotated[str, Path(min_length=1)],
     current_user: Annotated[AuthUser, Depends(get_current_user)],
     repository: Annotated[AgentThreadRepository, Depends(get_thread_repository)],
+    runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
+    request_id: Annotated[str, Query(min_length=8, max_length=128)],
 ) -> ThreadSnapshot:
-    thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
-    if thread is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     try:
-        thread = await repository.cancel_pending_preview(thread=thread)
+        thread = await repository.cancel_next_phase_request(
+            user_id=current_user.id,
+            thread_id=thread_id,
+            request_id=request_id,
+        )
     except ThreadStateConflictError as error:
         raise _thread_conflict_http_exception(error) from error
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    runtime.cancel_run(
+        thread_id=thread_id,
+        run_type="next_phase",
+        request_id=request_id,
+    )
     return ThreadSnapshot(**thread_to_snapshot_payload(thread))
 
 

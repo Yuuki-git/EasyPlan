@@ -298,7 +298,7 @@
           "threads"
         ],
         "summary": "Stream Thread Events",
-        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. Every event payload contains thread_id, run_type, request_id, and state_version. Next-phase streams require run_type=next_phase and the matching request_id. The agent_error event payload also contains code and message.",
+        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. Every event payload contains thread_id, run_type, request_id, and state_version. Every stream requires the matching request_id. The agent_error event payload also contains code and message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -309,6 +309,17 @@
               "type": "string",
               "minLength": 1,
               "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Request Id"
             }
           },
           {
@@ -339,24 +350,6 @@
               "type": "string",
               "default": "initial",
               "title": "Run Type"
-            }
-          },
-          {
-            "name": "request_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 128
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Request Id"
             }
           },
           {
@@ -526,6 +519,17 @@
               "type": "string",
               "minLength": 1,
               "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Request Id"
             }
           },
           {
@@ -1095,6 +1099,11 @@
             "type": "string",
             "title": "Thread Id"
           },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
           "status": {
             "type": "string",
             "const": "running",
@@ -1108,6 +1117,7 @@
         "type": "object",
         "required": [
           "thread_id",
+          "request_id",
           "status",
           "events_url"
         ],

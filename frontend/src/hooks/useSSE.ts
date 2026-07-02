@@ -1,13 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, PreviewMode } from '../store/useAppStore';
-import { createRunEventTracker, matchesRunIdentity } from '../lib/runEvents';
+import { createRunEventTracker, matchesRunIdentity, matchesActiveRun } from '../lib/runEvents';
 import { getFriendlyErrorMessage } from '../lib/errorHelper';
 import { reconcileSseCursor } from '../lib/sseCursor';
 import { TaskTree, AgentRunEventMeta } from '../types/api';
 
 export const useSSE = () => {
   const {
-    threadId,
     addReasoningLog,
     setPreviewTaskTree,
     setAppState,
@@ -17,10 +16,8 @@ export const useSSE = () => {
     token,
     setView,
     finishAgentRun,
-    phaseRequestId,
-    syncRequestId,
-    previewMode,
-    setRunStalled
+    setRunStalled,
+    activeRun
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<Record<string, string | null>>({});
@@ -31,18 +28,20 @@ export const useSSE = () => {
   const prevRequestIdRef = useRef<string | null>(null);
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const currentRequestId = phaseRequestId || syncRequestId || '';
+  const activeRequestId = activeRun?.requestId || '';
 
-  if (currentRequestId !== prevRequestIdRef.current) {
+  if (activeRequestId && activeRequestId !== prevRequestIdRef.current) {
     trackerRef.current.reset();
-    prevRequestIdRef.current = currentRequestId;
+    prevRequestIdRef.current = activeRequestId;
   }
 
   const resetStallTimer = () => {
     if (stallTimerRef.current) {
       clearTimeout(stallTimerRef.current);
     }
-    const { appState } = useAppStore.getState();
+    const currentStore = useAppStore.getState();
+    if (!currentStore.activeRun) return;
+    const { appState } = currentStore;
     if (appState === 'THINKING') {
       stallTimerRef.current = setTimeout(() => {
         setRunStalled(true);
@@ -62,13 +61,25 @@ export const useSSE = () => {
     resetStallTimer();
   };
 
-  const activeThreadId = threadId;
-  const activeRunType = previewMode || 'initial';
-  const activeRequestId = previewMode === 'next_phase' ? (phaseRequestId || '') : 'initial';
+  const activeThreadId = activeRun?.threadId || '';
+  const activeRunType = activeRun?.runType || 'initial';
 
-  const cursorKey = `${activeThreadId || ''}:${activeRunType}:${activeRequestId}`;
+  const cursorKey = `${activeThreadId}:${activeRunType}:${activeRequestId}`;
 
   useEffect(() => {
+    if (!activeRun) {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      clearStallTimer();
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      return;
+    }
+
     const prevCursorKey = prevCursorKeyRef.current;
     if (cursorKey !== prevCursorKey) {
       const prevCursor = prevCursorKey ? (lastEventIdRef.current[prevCursorKey] || null) : null;
@@ -92,17 +103,11 @@ export const useSSE = () => {
       prevCursorKeyRef.current = cursorKey;
     }
 
-    if (!activeThreadId) {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      return;
-    }
-
     let isMounted = true;
 
     const scheduleReconnect = (delayMs: number) => {
+      const currentStore = useAppStore.getState();
+      if (currentStore.activeRun === null) return;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
       }
@@ -112,16 +117,24 @@ export const useSSE = () => {
       }, delayMs);
     };
 
+    const capturedRun = activeRun ? { ...activeRun } : null;
+
     async function connect() {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
 
+      if (!capturedRun) return;
+
       // 1. Align State first to ensure UI is in sync
-      await alignState(activeThreadId as string);
+      await alignState(activeThreadId);
 
       if (!isMounted) return;
+      const currentStore = useAppStore.getState();
+      if (!currentStore.activeRun || !matchesActiveRun(currentStore.activeRun, capturedRun)) {
+        return;
+      }
 
       handleEventActivity();
 
@@ -142,6 +155,7 @@ export const useSSE = () => {
 
       es.addEventListener('reasoning', (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         let parsedData: {
           thread_id?: string;
@@ -183,6 +197,7 @@ export const useSSE = () => {
 
       es.addEventListener('plan_ready', (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         let parsedData: { thread_id?: string; run_type?: 'initial' | 'next_phase'; request_id?: string; task_tree?: TaskTree } | null = null;
         try {
@@ -215,6 +230,7 @@ export const useSSE = () => {
 
       es.addEventListener('sync_status', (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
           return;
@@ -227,6 +243,7 @@ export const useSSE = () => {
 
       es.addEventListener('sync_complete', (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
           return;
@@ -240,6 +257,7 @@ export const useSSE = () => {
 
       es.addEventListener('done', async (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         let parsedData: AgentRunEventMeta | null = null;
         try {
@@ -272,6 +290,7 @@ export const useSSE = () => {
 
       es.addEventListener('snapshot_required', async () => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         console.warn('SSE Snapshot Required. Re-aligning state and reconnecting...');
         lastEventIdRef.current[cursorKey] = null;
@@ -280,12 +299,13 @@ export const useSSE = () => {
           eventSourceRef.current = null;
         }
         clearStallTimer();
-        await alignState(activeThreadId as string);
+        await alignState(activeThreadId);
         scheduleReconnect(250);
       });
 
       es.addEventListener('agent_error', (e) => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         let parsedData: { thread_id?: string; run_type?: 'initial' | 'next_phase'; request_id?: string; message?: string; code?: string } | null = null;
         try {
@@ -324,6 +344,7 @@ export const useSSE = () => {
 
       es.addEventListener('error', () => {
         if (!isMounted || eventSourceRef.current !== es) return;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
 
         console.warn('SSE Disconnected. Attempting to align and reconnect...');
         es.close();
@@ -363,6 +384,7 @@ export const useSSE = () => {
     token,
     setView,
     finishAgentRun,
-    setRunStalled
+    setRunStalled,
+    activeRun
   ]);
 };

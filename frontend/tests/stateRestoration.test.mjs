@@ -516,6 +516,52 @@ async function runTests() {
     assert.equal(finalState.view, 'board');
   }
 
+  // --- 测试场景 7: initial running 且尚无 interrupt 时保留 active run ---
+  {
+    let fetchCalled = false;
+    const fetchMock = async (url) => {
+      fetchCalled = true;
+      assert.ok(url.includes('/api/threads/thread-initial'));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: 'thread-initial',
+          status: 'running',
+          task_tree: null,
+          interrupt_payload: null
+        })
+      };
+    };
+
+    const initialLocal = {
+      'easyplan_selected_project_id': 'thread-initial',
+      'easyplan_thread_id': 'thread-initial',
+      'easyplan_active_run': JSON.stringify({
+        threadId: 'thread-initial',
+        runType: 'initial',
+        requestId: 'request-a'
+      })
+    };
+
+    const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);
+
+    const state = useAppStore.getState();
+    assert.equal(state.activeRun?.threadId, 'thread-initial');
+    assert.equal(state.activeRun?.runType, 'initial');
+    assert.equal(state.activeRun?.requestId, 'request-a');
+
+    await state.alignState('thread-initial');
+
+    const updatedState = useAppStore.getState();
+    assert.ok(fetchCalled);
+    assert.equal(updatedState.activeRun?.threadId, 'thread-initial');
+    assert.equal(updatedState.activeRun?.runType, 'initial');
+    assert.equal(updatedState.activeRun?.requestId, 'request-a');
+    assert.equal(updatedState.appState, 'THINKING');
+    assert.equal(localStorageValues.has('easyplan_active_run'), true);
+  }
+
   console.log('stateRestoration tests passed');
 }
 

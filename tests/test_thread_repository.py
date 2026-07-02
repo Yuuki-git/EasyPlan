@@ -8,7 +8,11 @@ from sqlalchemy.sql import Select
 
 from app.models.task import Task
 from app.models.thread import AgentThread
-from app.services.thread_repository import AgentThreadRepository, thread_to_snapshot_payload
+from app.services.thread_repository import (
+    AgentThreadRepository,
+    ThreadStateConflictError,
+    thread_to_snapshot_payload,
+)
 
 
 def test_start_next_phase_generation_locks_thread_and_acquires_lease():
@@ -276,57 +280,161 @@ def test_mark_confirmation_accepted_rejects_duplicate_next_phase_confirmation():
     assert session.commit_count == 0
 
 
-def test_cancel_pending_preview_records_cancelled_tombstone_and_restores_thread():
+@pytest.mark.parametrize(
+    ("payload_type", "payload_status", "thread_status", "lease_expires_at"),
+    [
+        (
+            "phase_generation_state",
+            "running",
+            "running",
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        ),
+        (
+            "phase_generation_state",
+            "running",
+            "running",
+            datetime.now(timezone.utc) - timedelta(seconds=5),
+        ),
+        (
+            "next_phase_review",
+            "awaiting_confirmation",
+            "awaiting_confirmation",
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        ),
+    ],
+)
+def test_cancel_next_phase_request_records_tombstone_for_cancellable_lifecycle(
+    payload_type,
+    payload_status,
+    thread_status,
+    lease_expires_at,
+):
     user_id = uuid4()
-    request_id = "22222222-2222-2222-2222-222222222222"
+    request_id = "request-a"
     thread = _phase_thread(user_id=user_id, thread_id="thread-1")
-    thread.status = "awaiting_confirmation"
-    thread.current_node = "human_review"
+    committed_task_tree = thread.task_tree
+    thread.status = thread_status
+    thread.current_node = (
+        "human_review" if payload_type == "next_phase_review" else "next_phase_planner"
+    )
     thread.lease_owner = request_id
-    thread.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    thread.lease_expires_at = lease_expires_at
     thread.interrupt_payload = {
-        "type": "next_phase_review",
+        "type": payload_type,
         "request_id": request_id,
-        "status": "awaiting_confirmation",
-        "task_tree": {"summary": "preview"},
+        "status": payload_status,
         "history": {
-            "11111111-1111-1111-1111-111111111111": {
+            "request-old": {
                 "status": "confirmed",
-                "updated_at": "2026-06-25T00:00:00+00:00",
+                "updated_at": "2026-07-01T00:00:00+00:00",
             }
         },
     }
-    committed_task_tree = thread.task_tree
-    session = FakeThreadSession([])
+    session = FakeThreadSession([thread])
     repository = AgentThreadRepository(session)
 
-    result = asyncio.run(repository.cancel_pending_preview(thread=thread))
+    result = asyncio.run(
+        repository.cancel_next_phase_request(
+            user_id=user_id,
+            thread_id=thread.thread_id,
+            request_id=request_id,
+        )
+    )
 
     assert result is thread
     assert thread.status == "succeeded"
     assert thread.current_node == "persist_internal_tasks"
+    assert thread.task_tree == committed_task_tree
+    assert thread.lease_owner is None
+    assert thread.lease_expires_at is None
     assert thread.interrupt_payload["type"] == "phase_generation_state"
     assert thread.interrupt_payload["request_id"] == request_id
     assert thread.interrupt_payload["status"] == "cancelled"
-    assert thread.interrupt_payload["history"]["11111111-1111-1111-1111-111111111111"]["status"] == "confirmed"
+    assert thread.interrupt_payload["history"]["request-old"]["status"] == "confirmed"
     assert thread.interrupt_payload["history"][request_id]["status"] == "cancelled"
-    assert "cancelled_at" in thread.interrupt_payload["history"][request_id]
-    assert thread.lease_owner is None
-    assert thread.lease_expires_at is None
-    assert thread.task_tree == committed_task_tree
     assert session.commit_count == 1
+    assert "FOR UPDATE" in _compile(session.select_statements[0])
 
 
-def test_cancel_pending_preview_rejects_when_no_pending_preview_exists():
+def test_cancel_next_phase_request_is_idempotent_for_same_cancelled_request():
     user_id = uuid4()
+    request_id = "request-a"
     thread = _phase_thread(user_id=user_id, thread_id="thread-1")
-    committed_task_tree = thread.task_tree
-    session = FakeThreadSession([])
+    thread.status = "succeeded"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "cancelled",
+        "history": {
+            request_id: {
+                "status": "cancelled",
+                "cancelled_at": "2026-07-01T00:00:00+00:00",
+            }
+        },
+    }
+    original_payload = thread.interrupt_payload
+    session = FakeThreadSession([thread])
     repository = AgentThreadRepository(session)
 
-    with pytest.raises(RuntimeError, match="pending preview"):
-        asyncio.run(repository.cancel_pending_preview(thread=thread))
+    result = asyncio.run(
+        repository.cancel_next_phase_request(
+            user_id=user_id,
+            thread_id=thread.thread_id,
+            request_id=request_id,
+        )
+    )
 
+    assert result is thread
+    assert thread.interrupt_payload == original_payload
+    assert session.commit_count == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "type": "phase_generation_state",
+            "request_id": "request-a",
+            "status": "running",
+            "history": {},
+        },
+        {
+            "type": "next_phase_review",
+            "request_id": "request-a",
+            "status": "confirming",
+            "history": {},
+        },
+        {
+            "type": "phase_generation_state",
+            "request_id": "request-a",
+            "status": "failed",
+            "history": {},
+        },
+    ],
+)
+def test_cancel_next_phase_request_rejects_mismatch_confirmed_and_failed_states(payload):
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.interrupt_payload = payload
+    committed_task_tree = thread.task_tree
+    session = FakeThreadSession([thread])
+    repository = AgentThreadRepository(session)
+    request_id = (
+        "request-b"
+        if payload["status"] == "running"
+        else payload["request_id"]
+    )
+
+    with pytest.raises(ThreadStateConflictError):
+        asyncio.run(
+            repository.cancel_next_phase_request(
+                user_id=user_id,
+                thread_id=thread.thread_id,
+                request_id=request_id,
+            )
+        )
+
+    assert thread.interrupt_payload == payload
     assert thread.task_tree == committed_task_tree
     assert session.commit_count == 0
 

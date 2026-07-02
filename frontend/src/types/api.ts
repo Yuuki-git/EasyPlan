@@ -36,6 +36,7 @@ export interface IntentCreateRequest {
 
 export interface IntentCreateResponse {
   thread_id: string;
+  request_id: string;
   status: 'running';
   events_url: string;
 }
@@ -215,4 +216,12 @@ export interface AgentRunEventMeta {
   run_type: 'initial' | 'next_phase';
   request_id: string;
   state_version: number;
+}
+
+export type AgentRunType = 'initial' | 'next_phase';
+
+export interface ActiveRun {
+  threadId: string;
+  runType: AgentRunType;
+  requestId: string;
 }

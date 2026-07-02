@@ -144,6 +144,7 @@ class IntentCreateRequest(BaseModel):
 
 class IntentCreateResponse(BaseModel):
     thread_id: str
+    request_id: UUID
     status: Literal["running"]
     events_url: str
 
