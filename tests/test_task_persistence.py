@@ -495,7 +495,12 @@ def test_graph_resume_approve_persists_next_phase_as_committed_plan(monkeypatch)
         planner=StaticPlanner(),
         checkpointer=TenantAwareMemorySaver(),
     )
-    config = create_graph_config(user_id=USER_ID, thread_id="thread-1")
+    config = create_graph_config(
+        user_id=USER_ID,
+        thread_id="thread-1",
+        run_type="next_phase",
+        request_id=request_id,
+    )
 
     first_chunks = asyncio.run(
         _collect_astream(

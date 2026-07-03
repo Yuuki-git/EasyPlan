@@ -148,16 +148,23 @@ def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
     assert graph.inputs[0][0]["user_id"] == "11111111-1111-1111-1111-111111111111"
     assert graph.inputs[0][0]["thread_id"] == "thread-1"
     assert graph.inputs[0][0]["planning_mode"] == "initial"
+    assert (
+        graph.inputs[0][1]["configurable"]["checkpoint_ns"]
+        == "initial"
+    )
     assert "event: reasoning" in "".join(events)
     assert "event: plan_ready" in "".join(events)
 
 
 def test_agent_runtime_reuses_one_checkpointer_across_initial_run_and_resume():
     checkpointers = []
+    graphs = []
 
     def graph_factory(*, planner, checkpointer):
         checkpointers.append(checkpointer)
-        return AsyncStreamGraph()
+        graph = AsyncStreamGraph()
+        graphs.append(graph)
+        return graph
 
     runtime = AgentRuntime(graph_factory=graph_factory)
 
@@ -183,6 +190,11 @@ def test_agent_runtime_reuses_one_checkpointer_across_initial_run_and_resume():
 
     assert len(checkpointers) == 2
     assert checkpointers[0] is checkpointers[1]
+    assert (
+        graphs[0].inputs[0][1]["configurable"]["checkpoint_ns"]
+        == graphs[1].inputs[0][1]["configurable"]["checkpoint_ns"]
+        == "initial"
+    )
 
 
 def test_agent_runtime_builds_planner_from_requested_provider_and_model():
@@ -316,6 +328,10 @@ def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypat
     assert created_planners == [{"provider": "deepseek", "model": None}]
     assert graph.inputs[0][0]["planning_mode"] == "next_phase"
     assert graph.inputs[0][0]["committed_task_tree"] == committed_tree
+    assert (
+        graph.inputs[0][1]["configurable"]["checkpoint_ns"]
+        == f"next_phase:{request_id}"
+    )
     assert thread.task_tree == committed_tree
     assert thread.status == "awaiting_confirmation"
     assert thread.interrupt_payload["type"] == "next_phase_review"

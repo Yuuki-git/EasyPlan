@@ -23,6 +23,25 @@ from app.agents.nodes import (
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
+def test_graph_config_isolates_checkpoint_state_by_run_identity():
+    initial = create_graph_config(
+        user_id="user_1",
+        thread_id="thread_1",
+        run_type="initial",
+        request_id="request-initial",
+    )
+    next_phase = create_graph_config(
+        user_id="user_1",
+        thread_id="thread_1",
+        run_type="next_phase",
+        request_id="request-phase-2",
+    )
+
+    assert initial["configurable"]["checkpoint_ns"] == "initial"
+    assert next_phase["configurable"]["checkpoint_ns"] == "next_phase:request-phase-2"
+    assert initial["configurable"]["checkpoint_ns"] != next_phase["configurable"]["checkpoint_ns"]
+
+
 class CapturingPlanner(PlannerClient):
     def __init__(self, plans: list[dict[str, Any]]) -> None:
         self.plans = plans

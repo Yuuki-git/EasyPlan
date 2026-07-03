@@ -97,7 +97,12 @@ class AgentRuntime:
         planner_model: str | None,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
-        config = create_graph_config(user_id=user_id, thread_id=thread_id)
+        config = create_graph_config(
+            user_id=user_id,
+            thread_id=thread_id,
+            run_type="initial",
+            request_id=request_id,
+        )
         initial_state = {
             "user_id": user_id,
             "thread_id": thread_id,
@@ -196,7 +201,12 @@ class AgentRuntime:
         if self._is_run_cancelled(run_key):
             return
         graph = self._build_graph(planner_provider="deepseek", planner_model=None)
-        config = create_graph_config(user_id=user_id, thread_id=thread_id)
+        config = create_graph_config(
+            user_id=user_id,
+            thread_id=thread_id,
+            run_type="next_phase",
+            request_id=request_id,
+        )
         planning_context = committed_task_tree.get("planning_context") or {}
         initial_state = {
             "user_id": user_id,
@@ -334,7 +344,12 @@ class AgentRuntime:
         request_id: str,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
-        config = create_graph_config(user_id=user_id, thread_id=thread_id)
+        config = create_graph_config(
+            user_id=user_id,
+            thread_id=thread_id,
+            run_type=run_type,
+            request_id=request_id,
+        )
         command = resume_with_human_input(**decision)
         try:
             interrupted = False
