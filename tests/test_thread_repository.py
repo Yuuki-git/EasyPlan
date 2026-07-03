@@ -267,8 +267,11 @@ def test_mark_confirmation_accepted_binds_next_phase_request_id_and_marks_confir
     session = FakeThreadSession([])
     repository = AgentThreadRepository(session)
 
-    asyncio.run(repository.mark_confirmation_accepted(thread=thread, request_id=request_id))
+    should_schedule = asyncio.run(
+        repository.mark_confirmation_accepted(thread=thread, request_id=request_id)
+    )
 
+    assert should_schedule is True
     assert thread.status == "running"
     assert thread.interrupt_payload["request_id"] == request_id
     assert thread.interrupt_payload["status"] == "confirming"
@@ -330,7 +333,7 @@ def test_mark_confirmation_accepted_rejects_next_phase_request_id_mismatch():
     assert session.commit_count == 0
 
 
-def test_mark_confirmation_accepted_rejects_duplicate_next_phase_confirmation():
+def test_mark_confirmation_accepted_retries_same_confirming_next_phase_request():
     user_id = uuid4()
     request_id = "22222222-2222-2222-2222-222222222222"
     thread = _phase_thread(user_id=user_id, thread_id="thread-1")
@@ -345,11 +348,35 @@ def test_mark_confirmation_accepted_rejects_duplicate_next_phase_confirmation():
     session = FakeThreadSession([])
     repository = AgentThreadRepository(session)
 
-    with pytest.raises(RuntimeError, match="already"):
-        asyncio.run(repository.mark_confirmation_accepted(thread=thread, request_id=request_id))
+    should_schedule = asyncio.run(
+        repository.mark_confirmation_accepted(thread=thread, request_id=request_id)
+    )
 
+    assert should_schedule is True
     assert thread.status == "running"
     assert thread.interrupt_payload["status"] == "confirming"
+    assert session.commit_count == 0
+
+
+def test_mark_confirmation_accepted_does_not_reschedule_confirmed_next_phase_request():
+    user_id = uuid4()
+    request_id = "22222222-2222-2222-2222-222222222222"
+    thread = _phase_thread(user_id=user_id, thread_id="thread-1")
+    thread.status = "succeeded"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    session = FakeThreadSession([])
+    repository = AgentThreadRepository(session)
+
+    should_schedule = asyncio.run(
+        repository.mark_confirmation_accepted(thread=thread, request_id=request_id)
+    )
+
+    assert should_schedule is False
     assert session.commit_count == 0
 
 

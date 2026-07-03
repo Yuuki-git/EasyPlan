@@ -139,25 +139,62 @@ async def confirm_thread(
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     pending_payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
-    run_type: Literal["initial", "next_phase"] = (
-        "next_phase" if pending_payload.get("type") == "next_phase_review" else "initial"
+    is_next_phase_payload = pending_payload.get("type") == "next_phase_review" or (
+        pending_payload.get("type") == "phase_generation_state"
+        and str(pending_payload.get("request_id") or "") == payload.request_id
     )
+    run_type: Literal["initial", "next_phase"] = (
+        "next_phase" if is_next_phase_payload else "initial"
+    )
+    next_phase_task_tree = (
+        pending_payload.get("task_tree")
+        if pending_payload.get("type") == "next_phase_review"
+        and payload.action.value == "approve"
+        else None
+    )
+    if (
+        pending_payload.get("type") == "next_phase_review"
+        and payload.action.value == "approve"
+        and not isinstance(next_phase_task_tree, dict)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "NEXT_PHASE_PREVIEW_MISSING",
+                "message": "Next-phase preview is missing and cannot be committed",
+            },
+        )
     try:
-        await repository.mark_confirmation_accepted(
+        should_schedule = await repository.mark_confirmation_accepted(
             thread=thread,
             request_id=payload.request_id,
             action=payload.action.value,
         )
     except ThreadStateConflictError as error:
         raise _thread_conflict_http_exception(error) from error
-    background_tasks.add_task(
-        runtime.resume_thread,
-        user_id=str(current_user.id),
-        thread_id=thread_id,
-        decision=payload.model_dump(mode="json", exclude_none=True),
-        run_type=run_type,
-        request_id=payload.request_id,
-    )
+    if not should_schedule:
+        return ConfirmationResponse(
+            thread_id=thread_id,
+            request_id=payload.request_id,
+            status="accepted",
+        )
+    if run_type == "next_phase" and next_phase_task_tree is not None:
+        background_tasks.add_task(
+            runtime.commit_next_phase,
+            user_id=str(current_user.id),
+            thread_id=thread_id,
+            request_id=payload.request_id,
+            task_tree=next_phase_task_tree,
+        )
+    else:
+        background_tasks.add_task(
+            runtime.resume_thread,
+            user_id=str(current_user.id),
+            thread_id=thread_id,
+            decision=payload.model_dump(mode="json", exclude_none=True),
+            run_type=run_type,
+            request_id=payload.request_id,
+        )
     return ConfirmationResponse(
         thread_id=thread_id,
         request_id=payload.request_id,

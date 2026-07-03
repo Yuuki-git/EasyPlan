@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import select, update
 
 from app.agents.graph import build_task_graph, create_graph_config, resume_with_human_input
+from app.agents.nodes import persist_internal_tasks_node
 from app.api.sse import format_sse_event
 from app.models.thread import AgentThread
 from app.services.checkpoint_service import TenantAwareMemorySaver
@@ -172,6 +173,59 @@ class AgentRuntime:
             with self._lock:
                 self._active_runs.discard(run_key)
                 self._cancelled_runs.discard(run_key)
+
+    async def commit_next_phase(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        request_id: str,
+        task_tree: dict[str, Any],
+    ) -> None:
+        try:
+            await persist_internal_tasks_node(
+                {
+                    "user_id": user_id,
+                    "thread_id": thread_id,
+                    "task_tree": task_tree,
+                    "planning_mode": "next_phase",
+                    "phase_request_id": request_id,
+                }
+            )
+        except Exception:
+            logger.exception(
+                "agent_next_phase_commit_failed",
+                extra={"thread_id": thread_id, "user_id": user_id, "request_id": request_id},
+            )
+            try:
+                await self._release_phase_failure(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    request_id=request_id,
+                )
+            except Exception:
+                logger.exception(
+                    "agent_next_phase_commit_failure_release_failed",
+                    extra={
+                        "thread_id": thread_id,
+                        "user_id": user_id,
+                        "request_id": request_id,
+                    },
+                )
+            self._append_error(
+                thread_id,
+                code="NEXT_PHASE_COMMIT_FAILED",
+                message=SAFE_PLANNING_ERROR_MESSAGE,
+                run_type="next_phase",
+                request_id=request_id,
+            )
+            return
+        self._append_done(
+            thread_id,
+            status="completed",
+            run_type="next_phase",
+            request_id=request_id,
+        )
 
     async def _run_active_next_phase(
         self,
@@ -776,17 +830,32 @@ class AgentRuntime:
                 else {}
             )
             history_entry = dict(current_payload.get("history") or {}).get(request_id)
+            is_generation_failure = (
+                current_payload.get("type") == "phase_generation_state"
+                and current_payload.get("status") == "running"
+            )
+            is_commit_failure = (
+                current_payload.get("type") == "next_phase_review"
+                and current_payload.get("status") == "confirming"
+            )
             if (
                 thread is None
-                or current_payload.get("type") != "phase_generation_state"
                 or str(current_payload.get("request_id") or "") != request_id
-                or current_payload.get("status") != "running"
+                or not (is_generation_failure or is_commit_failure)
                 or (
                     isinstance(history_entry, dict)
                     and history_entry.get("status") == "cancelled"
                 )
             ):
                 return
+            failed_payload: dict[str, Any] = {
+                "type": "phase_generation_state",
+                "request_id": request_id,
+                "status": "failed",
+                "history": dict(current_payload.get("history") or {}),
+            }
+            if isinstance(current_payload.get("base_phase_id"), str):
+                failed_payload["base_phase_id"] = current_payload["base_phase_id"]
             await session.execute(
                 update(AgentThread)
                 .where(
@@ -798,12 +867,7 @@ class AgentRuntime:
                     current_node="next_phase_failed",
                     lease_owner=None,
                     lease_expires_at=None,
-                    interrupt_payload={
-                        "type": "phase_generation_state",
-                        "request_id": request_id,
-                        "status": "failed",
-                        "history": dict(current_payload.get("history") or {}),
-                    },
+                    interrupt_payload=failed_payload,
                     error_code="NEXT_PHASE_RUN_FAILED",
                     error_message=SAFE_PLANNING_ERROR_MESSAGE,
                     updated_at=now,

@@ -166,7 +166,7 @@ class AgentThreadRepository:
         thread: AgentThread,
         request_id: str,
         action: str | None = None,
-    ) -> None:
+    ) -> bool:
         payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else None
         if payload and payload.get("type") == "next_phase_review":
             expected_request_id = str(payload.get("request_id") or "")
@@ -175,6 +175,8 @@ class AgentThreadRepository:
                     code="REQUEST_ID_MISMATCH",
                     message="Next-phase preview request_id does not match the current pending preview",
                 )
+            if payload.get("status") == "confirming":
+                return True
             if payload.get("status") != "awaiting_confirmation":
                 raise ThreadStateConflictError(
                     code="PREVIEW_ALREADY_CONFIRMED",
@@ -185,6 +187,14 @@ class AgentThreadRepository:
                 "status": "confirming",
             }
             thread.current_node = "next_phase_planner"
+        elif payload and payload.get("type") == "phase_generation_state":
+            expected_request_id = str(payload.get("request_id") or "")
+            if expected_request_id == request_id and payload.get("status") == "confirmed":
+                return False
+            raise ThreadStateConflictError(
+                code="PREVIEW_ALREADY_CONFIRMED",
+                message="This next-phase preview has already been confirmed, failed, or cancelled",
+            )
         elif payload and payload.get("type") == "task_tree_review":
             next_payload = {
                 **payload,
@@ -209,6 +219,7 @@ class AgentThreadRepository:
         except Exception:
             await self.session.rollback()
             raise
+        return True
 
     async def cancel_next_phase_request(
         self,

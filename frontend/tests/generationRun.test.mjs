@@ -560,20 +560,51 @@ async function runTests() {
 
   // --- 测试场景 9: finishAgentRun - 回执仍在提交时不应清掉 preview ---
   {
-    const fetchMock = async (url) => {
+    let receiptFetchCount = 0;
+    let confirmRetryCount = 0;
+    const fetchMock = async (url, options = {}) => {
       if (url.includes('/api/threads/proj-proof/phases/next/commit')) {
+        receiptFetchCount += 1;
         return {
           ok: true,
           status: 200,
-          json: async () => ({
-            thread_id: 'proj-proof',
-            request_id: 'req-current',
-            status: 'running',
-            current_phase_id: 'phase-1',
-            task_tree: null,
-            tasks: []
-          })
+          json: async () => receiptFetchCount === 1
+            ? {
+                thread_id: 'proj-proof',
+                request_id: 'req-current',
+                status: 'confirming',
+                current_phase_id: 'phase-1',
+                task_tree: null,
+                tasks: []
+              }
+            : {
+                thread_id: 'proj-proof',
+                request_id: 'req-current',
+                status: 'confirmed',
+                current_phase_id: 'phase-2',
+                task_tree: {
+                  root: {
+                    client_node_id: 'phase-2-root',
+                    title: 'Phase 2 Root',
+                    children: []
+                  },
+                  planning_context: {
+                    current_phase: { phase_id: 'phase-2' }
+                  }
+                },
+                tasks: [{
+                  id: 'task-1',
+                  thread_id: 'proj-proof',
+                  client_node_id: 'phase-2-root',
+                  phase_id: 'phase-2',
+                  source: 'ai'
+                }]
+              }
         };
+      }
+      if (url === '/api/threads/proj-proof/confirm' && options.method === 'POST') {
+        confirmRetryCount += 1;
+        return { ok: true, status: 202, json: async () => ({ status: 'accepted' }) };
       }
       throw new Error(`unexpected URL: ${url}`);
     };
@@ -606,8 +637,11 @@ async function runTests() {
     });
 
     const state = useAppStore.getState();
-    assert.equal(state.previewMode, 'next_phase', 'pending receipt should not clear preview');
-    assert.ok(state.error && state.error.includes('仍在提交'));
+    assert.equal(confirmRetryCount, 1, 'confirming receipt should retry the same durable commit');
+    assert.equal(receiptFetchCount, 2);
+    assert.equal(state.previewMode, null);
+    assert.equal(state.error, null);
+    assert.equal(state.committedTaskTree?.planning_context?.current_phase?.phase_id, 'phase-2');
   }
 
   // --- 测试场景 10: finishAgentRun - 后端回执不完整时不应清掉 preview ---

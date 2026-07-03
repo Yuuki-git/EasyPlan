@@ -84,6 +84,8 @@ class FakeThreadRepository:
                     code="REQUEST_ID_MISMATCH",
                     message="Next-phase preview request_id does not match the current pending preview",
                 )
+            if payload.get("status") == "confirming":
+                return True
             if payload.get("status") != "awaiting_confirmation":
                 raise ThreadStateConflictError(
                     code="PREVIEW_ALREADY_CONFIRMED",
@@ -94,6 +96,16 @@ class FakeThreadRepository:
                 "status": "confirming",
             }
             thread.current_node = "next_phase_planner"
+        elif payload.get("type") == "phase_generation_state":
+            if (
+                payload.get("request_id") == request_id
+                and payload.get("status") == "confirmed"
+            ):
+                return False
+            raise ThreadStateConflictError(
+                code="PREVIEW_ALREADY_CONFIRMED",
+                message="This next-phase preview has already been confirmed, failed, or cancelled",
+            )
         elif payload.get("type") == "task_tree_review":
             next_payload = {
                 **payload,
@@ -112,6 +124,7 @@ class FakeThreadRepository:
                 next_payload["status"] = "cancelled"
             thread.interrupt_payload = next_payload
         thread.status = "running"
+        return True
 
     async def cancel_next_phase_request(self, *, user_id, thread_id, request_id):
         thread = self.threads.get((str(user_id), thread_id))
@@ -298,6 +311,7 @@ class FakeRuntime:
         self.resumed: list[dict] = []
         self.streamed: list[dict] = []
         self.phase_runs: list[dict] = []
+        self.phase_commits: list[dict] = []
         self.cancelled: list[dict] = []
         self.events = ["event: reasoning\ndata: {\"state_version\":1,\"message\":\"running\"}\n\n"]
 
@@ -309,6 +323,9 @@ class FakeRuntime:
 
     async def run_next_phase(self, **kwargs):
         self.phase_runs.append(kwargs)
+
+    async def commit_next_phase(self, **kwargs):
+        self.phase_commits.append(kwargs)
 
     def cancel_run(self, **kwargs):
         self.cancelled.append(kwargs)
@@ -617,7 +634,7 @@ def test_confirm_thread_requires_matching_next_phase_request_id():
     assert thread.interrupt_payload["status"] == "awaiting_confirmation"
 
 
-def test_confirm_thread_does_not_resume_same_next_phase_preview_twice():
+def test_confirm_thread_commits_durable_next_phase_preview_without_graph_resume():
     repository = FakeThreadRepository()
     runtime = FakeRuntime()
     client, user = _client_with_overrides(repository, runtime)
@@ -638,10 +655,37 @@ def test_confirm_thread_does_not_resume_same_next_phase_preview_twice():
     second = client.post(f"/api/threads/{thread.thread_id}/confirm", headers=headers, json=payload)
 
     assert first.status_code == 202
-    assert second.status_code == 409
-    assert len(runtime.resumed) == 1
-    assert runtime.resumed[0]["run_type"] == "next_phase"
-    assert runtime.resumed[0]["request_id"] == payload["request_id"]
+    assert second.status_code == 202
+    assert runtime.resumed == []
+    assert len(runtime.phase_commits) == 2
+    assert runtime.phase_commits[0]["request_id"] == payload["request_id"]
+    assert runtime.phase_commits[0]["task_tree"] == {"summary": "preview"}
+
+
+def test_confirm_thread_does_not_reschedule_already_confirmed_next_phase():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.status = "succeeded"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.post(
+        f"/api/threads/{thread.thread_id}/confirm",
+        headers={"X-User-Timezone": "Asia/Shanghai"},
+        json={"request_id": request_id, "action": "approve"},
+    )
+
+    assert response.status_code == 202
+    assert runtime.phase_commits == []
+    assert runtime.resumed == []
 
 
 def test_cancel_next_phase_preview_returns_latest_snapshot():

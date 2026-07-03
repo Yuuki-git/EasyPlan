@@ -345,6 +345,142 @@ def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypat
     assert session.commits == 1
 
 
+def test_commit_next_phase_persists_durable_preview_without_graph_checkpoint(monkeypatch):
+    request_id = "22222222-2222-2222-2222-222222222222"
+    preview_tree = {"summary": "durable phase preview"}
+    persisted_states = []
+
+    async def fake_persist_internal_tasks_node(state):
+        persisted_states.append(state)
+        return {"task_persistence_status": "succeeded"}
+
+    import app.services.agent_runtime as agent_runtime_module
+
+    monkeypatch.setattr(
+        agent_runtime_module,
+        "persist_internal_tasks_node",
+        fake_persist_internal_tasks_node,
+        raising=False,
+    )
+    runtime = AgentRuntime(
+        graph_factory=lambda **_: pytest.fail("durable phase commit must not build a graph")
+    )
+
+    asyncio.run(
+        runtime.commit_next_phase(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            request_id=request_id,
+            task_tree=preview_tree,
+        )
+    )
+
+    assert persisted_states == [
+        {
+            "user_id": "11111111-1111-1111-1111-111111111111",
+            "thread_id": "thread-1",
+            "task_tree": preview_tree,
+            "planning_mode": "next_phase",
+            "phase_request_id": request_id,
+        }
+    ]
+    terminal_event = runtime._events[
+        EventRunKey(
+            thread_id="thread-1",
+            run_type="next_phase",
+            request_id=request_id,
+        )
+    ][-1]
+    assert "event: done" in terminal_event
+
+
+def test_commit_next_phase_failure_releases_confirmation_and_emits_error(monkeypatch):
+    request_id = "22222222-2222-2222-2222-222222222222"
+    released = []
+
+    async def fail_persist_internal_tasks_node(state):
+        raise RuntimeError("database write failed")
+
+    async def capture_release(**kwargs):
+        released.append(kwargs)
+
+    import app.services.agent_runtime as agent_runtime_module
+
+    monkeypatch.setattr(
+        agent_runtime_module,
+        "persist_internal_tasks_node",
+        fail_persist_internal_tasks_node,
+    )
+    runtime = AgentRuntime()
+    monkeypatch.setattr(runtime, "_release_phase_failure", capture_release)
+
+    asyncio.run(
+        runtime.commit_next_phase(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            request_id=request_id,
+            task_tree={"summary": "durable phase preview"},
+        )
+    )
+
+    assert released == [
+        {
+            "user_id": "11111111-1111-1111-1111-111111111111",
+            "thread_id": "thread-1",
+            "request_id": request_id,
+        }
+    ]
+    terminal_event = runtime._events[
+        EventRunKey(
+            thread_id="thread-1",
+            run_type="next_phase",
+            request_id=request_id,
+        )
+    ][-1]
+    assert "event: agent_error" in terminal_event
+    assert "event: done" not in terminal_event
+
+
+def test_release_phase_failure_marks_confirming_preview_failed(monkeypatch):
+    request_id = "22222222-2222-2222-2222-222222222222"
+    session = _patch_async_session(
+        monkeypatch,
+        thread=SimpleNamespace(
+            interrupt_payload={
+                "type": "next_phase_review",
+                "request_id": request_id,
+                "status": "confirming",
+                "base_phase_id": "phase_01",
+                "task_tree": {"summary": "durable phase preview"},
+                "history": {},
+            }
+        ),
+    )
+    runtime = AgentRuntime()
+
+    asyncio.run(
+        runtime._release_phase_failure(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            request_id=request_id,
+        )
+    )
+
+    update_statement = next(
+        statement for statement in session.statements if isinstance(statement, Update)
+    )
+    values = list(update_statement.compile().params.values())
+    failed_payload = next(
+        value
+        for value in values
+        if isinstance(value, dict) and value.get("request_id") == request_id
+    )
+    assert failed_payload["type"] == "phase_generation_state"
+    assert failed_payload["status"] == "failed"
+    assert failed_payload["base_phase_id"] == "phase_01"
+    assert "task_tree" not in failed_payload
+
+
 def test_next_phase_runtime_failure_releases_lease_without_overwriting_tree(monkeypatch):
     request_id = "22222222-2222-2222-2222-222222222222"
     session = _patch_async_session(

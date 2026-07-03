@@ -589,6 +589,105 @@ async function runTests() {
     assert.equal(localStorageValues.has('easyplan_active_run'), true);
   }
 
+  // --- Scenario 13: refresh should recover a next-phase preview stuck in confirming ---
+  {
+    let receiptCount = 0;
+    let confirmRetryCount = 0;
+    const phaseOneTree = {
+      root: { client_node_id: 'phase-1-root', title: 'Phase 1', children: [] },
+      planning_context: {
+        current_phase: { phase_id: 'phase_01', title: 'Phase 1', objective: 'Start' }
+      }
+    };
+    const phaseTwoTree = {
+      root: { client_node_id: 'phase-2-root', title: 'Phase 2', children: [] },
+      planning_context: {
+        current_phase: { phase_id: 'phase_02', title: 'Phase 2', objective: 'Build' }
+      }
+    };
+    const fetchMock = async (url, options = {}) => {
+      if (url.includes('/api/threads/thread-confirming/phases/next/commit')) {
+        receiptCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => receiptCount === 1
+            ? {
+                thread_id: 'thread-confirming',
+                request_id: 'req-confirming',
+                status: 'confirming',
+                current_phase_id: 'phase_01',
+                task_tree: phaseOneTree,
+                tasks: []
+              }
+            : {
+                thread_id: 'thread-confirming',
+                request_id: 'req-confirming',
+                status: 'confirmed',
+                current_phase_id: 'phase_02',
+                task_tree: phaseTwoTree,
+                tasks: [{
+                  id: 'task-phase-2',
+                  thread_id: 'thread-confirming',
+                  client_node_id: 'phase-2-root',
+                  phase_id: 'phase_02',
+                  source: 'ai'
+                }]
+              }
+        };
+      }
+      if (url === '/api/threads/thread-confirming/confirm' && options.method === 'POST') {
+        confirmRetryCount += 1;
+        return { ok: true, status: 202, json: async () => ({ status: 'accepted' }) };
+      }
+      if (url === '/api/threads/thread-confirming') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'thread-confirming',
+            status: 'succeeded',
+            intent_text: 'long-term plan',
+            task_tree: phaseOneTree,
+            interrupt_payload: {
+              type: 'next_phase_review',
+              request_id: 'req-confirming',
+              status: 'confirming',
+              base_phase_id: 'phase_01',
+              task_tree: phaseTwoTree,
+              history: {}
+            }
+          })
+        };
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    };
+    const initialLocal = {
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'thread-confirming',
+      'easyplan_thread_id': 'thread-confirming',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-confirming',
+      'easyplan_base_phase_id': 'phase_01',
+      'easyplan_active_run': JSON.stringify({
+        threadId: 'thread-confirming',
+        runType: 'next_phase',
+        requestId: 'req-confirming'
+      })
+    };
+    const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
+    useAppStore.setState({ selectedProjectId: 'thread-confirming', view: 'board' });
+
+    await useAppStore.getState().alignState('thread-confirming');
+
+    const state = useAppStore.getState();
+    assert.equal(confirmRetryCount, 1);
+    assert.equal(receiptCount, 2);
+    assert.equal(state.previewMode, null);
+    assert.equal(state.activeRun, null);
+    assert.equal(state.committedTaskTree?.planning_context?.current_phase?.phase_id, 'phase_02');
+  }
+
   console.log('stateRestoration tests passed');
 }
 

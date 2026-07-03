@@ -10,6 +10,7 @@ from app.agents.graph import build_task_graph, create_graph_config
 from app.agents.nodes import flatten_task_tree_for_persistence, persist_internal_tasks_node
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.agent_runtime import AgentRuntime
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
@@ -550,6 +551,67 @@ def test_graph_resume_approve_persists_next_phase_as_committed_plan(monkeypatch)
     assert persisted_tree["planning_context"]["current_phase"]["phase_id"] == "phase_02"
     assert persisted_tree["planning_context"]["roadmap"][0]["status"] == "completed"
     assert persisted_tree["planning_context"]["roadmap"][1]["status"] == "current"
+    assert envelope["status"] == "confirmed"
+    assert envelope["history"][request_id]["status"] == "confirmed"
+
+
+def test_runtime_commits_durable_next_phase_preview_without_checkpoint(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    preview_tree = next_phase_tree()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="running",
+        current_node="next_phase_planner",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "confirming",
+            "base_phase_id": "phase_01",
+            "task_tree": preview_tree,
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    asyncio.run(
+        AgentRuntime().commit_next_phase(
+            user_id=USER_ID,
+            thread_id="thread-1",
+            request_id=request_id,
+            task_tree=preview_tree,
+        )
+    )
+
+    update_values = list(session.executed_updates[-1].compile().params.values())
+    persisted_tree = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and "planning_context" in value
+    )
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "phase_generation_state"
+    )
+    assert persisted_tree["planning_context"]["current_phase"]["phase_id"] == "phase_02"
     assert envelope["status"] == "confirmed"
     assert envelope["history"][request_id]["status"] == "confirmed"
 

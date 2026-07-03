@@ -452,7 +452,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           });
           return;
         }
-        const receipt = await response.json() as NextPhaseCommitReceipt;
+        let receipt = await response.json() as NextPhaseCommitReceipt;
         if (!isCurrent()) return;
         if (
           receipt.thread_id !== selectedProjectId ||
@@ -464,6 +464,58 @@ export const useAppStore = create<AppStore>((set, get) => ({
             lastDoneEvent: event
           });
           return;
+        }
+        if (receipt.status === 'confirming') {
+          set({ error: null, appState: 'SYNCING' });
+          const retryResponse = await fetch(`/api/threads/${selectedProjectId}/confirm`, {
+            method: 'POST',
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              request_id: event.request_id,
+              action: 'approve'
+            })
+          });
+          if (isUnauthorizedResponse(retryResponse)) {
+            if (!isCurrent()) return;
+            get().setToken(null, false);
+            set({
+              showAuthModal: true,
+              error: '登录已失效，请重新登录',
+              appState: 'ERROR',
+              lastDoneEvent: event
+            });
+            return;
+          }
+          if (!retryResponse.ok && retryResponse.status !== 409) {
+            if (!isCurrent()) return;
+            set({
+              error: '重新提交下一阶段失败，请返回当前计划后重试。',
+              appState: 'ERROR',
+              lastDoneEvent: event
+            });
+            return;
+          }
+
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const retryReceiptResponse = await fetch(receiptUrl, {
+              headers,
+              cache: 'no-store'
+            });
+            if (!retryReceiptResponse.ok) break;
+            receipt = await retryReceiptResponse.json() as NextPhaseCommitReceipt;
+            if (!isCurrent()) return;
+            if (
+              receipt.thread_id !== selectedProjectId ||
+              receipt.request_id !== event.request_id ||
+              receipt.status !== 'confirming'
+            ) {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
         }
         if (receipt.status !== 'confirmed' || !receipt.task_tree) {
           const error =
@@ -1273,11 +1325,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const localPhaseRequestId = localStorage.getItem('easyplan_phase_request_id');
       const localBasePhaseId = localStorage.getItem('easyplan_base_phase_id');
 
-      const isPending = snapshot.status === 'awaiting_confirmation';
-      const isNextPhasePreview = isPending && snapshot.interrupt_payload?.type === 'next_phase_review';
-
       const envelope = snapshot.interrupt_payload;
       const isMatchingRequest = envelope && envelope.request_id === localPhaseRequestId;
+      const isPending = snapshot.status === 'awaiting_confirmation';
+      const isNextPhaseConfirming =
+        envelope?.type === 'next_phase_review'
+        && envelope.status === 'confirming'
+        && (!localPhaseRequestId || isMatchingRequest);
+      const isNextPhasePreview =
+        envelope?.type === 'next_phase_review'
+        && (isPending || isNextPhaseConfirming);
       const phaseGenerationStatus =
         (envelope?.type === 'phase_generation_state' && (localPreviewMode !== 'next_phase' || isMatchingRequest))
           ? envelope.status
@@ -1342,7 +1399,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       let recoveredBasePhaseId: string | null = null;
       let recoveredActiveRun: ActiveRun | null = null;
 
-      if (isPending) {
+      if (isPending || isNextPhaseConfirming) {
         if (isNextPhasePreview) {
           savedPreviewMode = 'next_phase';
           localStorage.setItem('easyplan_preview_mode', 'next_phase');
@@ -1423,7 +1480,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       let targetAppState: AppState = 'INITIAL';
       let targetView = get().view;
 
-      if (isPending) {
+      if (isPending || isNextPhaseConfirming) {
         if (isNextPhasePreview) {
           committedTaskTree = alignedCommittedTaskTree || snapshot.task_tree || null;
           previewTaskTree = snapshot.interrupt_payload?.task_tree || null;
@@ -1431,7 +1488,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           committedTaskTree = null;
           previewTaskTree = snapshot.interrupt_payload?.task_tree || null;
         }
-        targetAppState = 'PENDING';
+        targetAppState = isNextPhaseConfirming ? 'SYNCING' : 'PENDING';
         targetView = get().selectedProjectId ? 'board' : get().view;
       } else if (isNextPhaseRunning || isStalled || shouldPreserveLocalNextPhase || preserveInitialRunning) {
         committedTaskTree = alignedCommittedTaskTree || snapshot.task_tree || null;
@@ -1462,6 +1519,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         activeRun: finalActiveRun,
       });
       localStorage.setItem('easyplan_view', targetView);
+      if (isNextPhaseConfirming && recoveredPhaseRequestId) {
+        await get().finishAgentRun({
+          thread_id: snapshot.thread_id,
+          run_type: 'next_phase',
+          request_id: recoveredPhaseRequestId,
+          state_version: snapshot.state_version || 0
+        });
+      }
     } catch (err) {
       if (!isCurrent()) return;
       set({ error: (err as Error).message, appState: 'ERROR' });

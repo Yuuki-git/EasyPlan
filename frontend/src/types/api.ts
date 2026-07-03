@@ -110,7 +110,7 @@ export interface PhaseGenerationEnvelope {
 export interface NextPhaseReviewEnvelope {
   type: 'next_phase_review';
   request_id: string;
-  status: 'awaiting_confirmation';
+  status: 'awaiting_confirmation' | 'confirming';
   task_tree: TaskTree;
   history?: Record<string, PhaseHistoryItem>;
 }
