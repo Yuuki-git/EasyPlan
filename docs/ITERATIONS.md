@@ -90,7 +90,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **Schema Enum Drift Repair**：将 `pydantic.ValidationError` 纳入 JSON Repair 重试链路，防范小模型幻觉枚举值（如输出 `node_type="leader"`）。
 *   **Checklist 强制聚合**：在 Validator 中对 `context_checklist` 加入强校验，任务数 >=2 时必须存在 `group` 节点。
 
-#### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning) (RC.2 Candidate)
+#### ✅ v1.2.5: 三层规划与阶段视野 (Three-Tier Planning) (Completed)
 *   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。
 *   **条件触发的 Roadmap UI**：路线图绝非全局标配，严格由 Intent Profile 决定显示逻辑：
     *   `long_term_growth`：默认显示 3-5 个高层阶段路线图，提供长期方向感但不展开。
@@ -113,14 +113,6 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **确认边界**：确认后进入不可撤销 `SYNCING`；用户可返回当前计划，后台继续完成并最终更新 Phase 2。
 *   **跨视图一致性**：全部计划、项目和我的一天共享同一任务 ID 与完成状态，不因视图切换破坏项目结构。
 
-**2026-07-04 本地验收**：
-*   Backend：`259 passed`
-*   Frontend Node 状态测试：通过
-*   Mounted `useSSE` Hook：`9 passed`
-*   Build、lint、`git diff --check`：通过
-*   DeepSeek 32/32 为此前成功基准；本轮未完成外部联网复跑。
-*   RC 已知收尾：next-phase `SYNCING` 已正确只允许返回当前计划；初始规划 `ActionLayer` 仍显示本地取消入口，Stable 前需要统一确认后的不可撤销语义。
-
 #### 🩹 v1.2.5.1: Generation Experience Patch (Closed / Absorbed into v1.2.5 RC.2)
 *   **范围定位**：v1.2.5.1 只负责收口生成态稳定性与信息架构边界，不再增加新的核心功能。
 *   **已收口问题**：
@@ -131,7 +123,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   `exploration_decision` 场景下的 `time_horizon` 漂移与 raw validation error 暴露问题已专项修复。
 *   **收口结果**：该补丁后续发现的 cross-run SSE、旧快照覆盖、active-run 恢复和生成取消问题已在 v1.2.5 RC.2 修复并纳入自动化测试。
 
-#### 📍 v1.2.6: 总览层与回答层 (Portfolio Overview & Answer Layer)
+#### ✅ v1.2.6: 总览层与回答层 (Portfolio Overview & Answer Layer) (RC.1)
 *   **全部计划升级为总览层**：
     *   “全部计划”不再只是任务聚合流，而是所有计划的 portfolio overview。
     *   展示计划标题、当前阶段摘要、下一步动作或最近任务，并支持点击进入对应项目。
@@ -142,7 +134,17 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   `Retry` 降级为异常恢复按钮，仅在失败、卡住或 SSE 中断时出现。
     *   非异常场景如用户想换一种拆法，应提供“重新生成”而不是泛化 `Retry`。
 *   **生成态信息降噪**：
-    *   重新生成后默认只展示当前 run，旧 run 折叠成摘要，避免前端信息越堆越多。
+    *   每次新生成只展示当前 run；旧 reasoning、节点状态、预览树和错误不会进入新 run。
+    *   stalled 状态重连同一 request，不创建重复规划请求。
+*   **2026-07-05 RC 验收**：
+    *   Backend：`265 passed`
+    *   Frontend Node 状态测试：全部通过
+    *   Mounted `useSSE` Hook：`11 passed`
+    *   Portfolio 组件测试：`11 passed`
+    *   Frontend build、lint：通过
+    *   DeepSeek Eval：`32/32`，Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality 和 Done Criteria Coverage 均为 `100%`
+    *   Average Actionability Score：`99.85%`
+    *   Abstract Task Violation Rate：`0.75%`
 
 #### 📍 v1.2.7: 规划模型 2.0 (Planning Model Differentiation)
 *   **长期目标高层化**：

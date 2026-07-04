@@ -72,6 +72,9 @@ EXPLORATION_EXECUTION_NEGATION_SUFFIX = re.compile(
     r"(?:暂不建议|不建议|不应|不宜|避免|不要|无需|不必|不是|并非|暂不适合|不适合)"
     r"[^，。；！？]{0,16}$"
 )
+EXPLORATION_EXECUTION_CAUTION_PREFIX = re.compile(
+    r"^(?:的)?(?:风险|成本|代价|不确定性)(?:很|较|过于)?(?:高|大)"
+)
 EXPLORATION_DISCOVERY_TERMS = (
     "澄清",
     "写下",
@@ -725,7 +728,11 @@ def _contains_non_negated_pattern(
     for pattern in patterns:
         for match in pattern.finditer(text):
             prefix = text[max(0, match.start() - 32) : match.start()]
-            if EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix):
+            suffix = text[match.end() : match.end() + 16]
+            if (
+                EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix)
+                or EXPLORATION_EXECUTION_CAUTION_PREFIX.search(suffix)
+            ):
                 continue
             return True
     return False

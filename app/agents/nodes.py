@@ -73,6 +73,9 @@ EXPLORATION_EXECUTION_NEGATION_SUFFIX = re.compile(
     r"(?:暂不建议|不建议|不应|不宜|避免|不要|无需|不必|不是|并非|暂不适合|不适合)"
     r"[^，。；！？]{0,16}$"
 )
+EXPLORATION_EXECUTION_CAUTION_PREFIX = re.compile(
+    r"^(?:的)?(?:风险|成本|代价|不确定性)(?:很|较|过于)?(?:高|大)"
+)
 EXPLORATION_DISCOVERY_TERMS = (
     "澄清",
     "写下",
@@ -306,9 +309,9 @@ exploration_decision 输出措辞：
 - 任务标题应使用“澄清/列出/收集/访谈/比较/验证/决策记录”，不要使用“制定计划/开始执行/报名课程/投递岗位”。
 
 <正面教材>
-动作：「列出辞职做自媒体的 3 个核心担忧」，耗时：15 分钟。
-动作：「找一位自媒体从业者聊现状」，耗时：60 分钟。
-动作：「用一页纸比较继续上班和做自媒体的成本收益」，耗时：30 分钟。
+动作：「列出方向A的 3 个核心担忧」，耗时：15 分钟。
+动作：「找一位方向A相关从业者聊现状」，耗时：60 分钟。
+动作：「用一页纸比较当前选择与方向A的成本收益」，耗时：30 分钟。
 
 <反面教材>
 错误：直接制定 6 个月转行产品经理学习计划。
@@ -316,11 +319,11 @@ exploration_decision 输出措辞：
 
 <正面教材>
 正确：
-1. 写下转行产品经理的 3 个原因，10 分钟
-2. 找 3 个产品经理 JD，20 分钟
+1. 写下考虑方向A的 3 个原因，10 分钟
+2. 找 3 个方向A相关岗位 JD，20 分钟
 3. 标出这些 JD 的共同要求，15 分钟
 4. 约一位从业者聊 20 分钟，60 分钟
-5. 用一页纸比较转行与不转行的成本收益，30 分钟""",
+5. 用一页纸比较当前选择与方向A的成本收益，30 分钟""",
     "general": """策略：用户意图不够明确。
 请生成保守、短小、可执行的启动计划。
 不要输出过多任务。
@@ -1672,7 +1675,11 @@ def _contains_exploration_execution_language(task_tree: TaskTree) -> bool:
     for pattern in EXPLORATION_EXECUTION_PATTERNS:
         for match in re.finditer(pattern, text):
             prefix = text[max(0, match.start() - 32) : match.start()]
-            if EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix):
+            suffix = text[match.end() : match.end() + 16]
+            if (
+                EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix)
+                or EXPLORATION_EXECUTION_CAUTION_PREFIX.search(suffix)
+            ):
                 continue
             return True
     return False

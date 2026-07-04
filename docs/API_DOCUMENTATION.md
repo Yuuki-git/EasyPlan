@@ -1,6 +1,6 @@
 # EasyPlan Backend API
 
-版本：`v1.2.5-rc.2 Candidate`
+版本：`v1.2.6-rc.1`
 OpenAPI：[`docs/openapi.json`](./openapi.json)
 本地地址：`http://localhost:8000`
 

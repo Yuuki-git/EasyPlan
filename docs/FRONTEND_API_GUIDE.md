@@ -1,6 +1,6 @@
 # EasyPlan 前端 API 接入指南
 
-版本：`v1.2.6-rc.1 Candidate`
+版本：`v1.2.6-rc.1`
 
 本文描述当前前端与后端的真实契约。字段定义以
 [`docs/openapi.json`](./openapi.json) 和

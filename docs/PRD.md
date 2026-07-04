@@ -1,7 +1,7 @@
 # EasyPlan 产品需求规格说明书
 
-版本：`v1.2.5-rc.2 Candidate`
-更新时间：2026-07-04
+版本：`v1.2.6-rc.1`
+更新时间：2026-07-05
 
 ## 1. 产品定义
 
@@ -156,14 +156,17 @@ SYNCING  -> 已确认，不允许取消
 - 旧快照响应不得覆盖更新阶段。
 - 刷新可恢复 running、pending 和 committed 状态。
 - stalled 或 error 必须提供退出或恢复动作。
+- stalled 时只重连当前 request，不创建新的规划 run。
 - Retry 只用于异常恢复；正常换一种拆法使用“重新生成”。
+- 新 run 只展示自身 reasoning、节点状态和预览，不拼接历史 run。
 
 ## 8. 信息架构
 
 ### 8.1 全部计划
 
 - 跨项目 portfolio overview。
-- 展示项目摘要和进入项目的入口。
+- 每个项目卡片展示计划标题、当前阶段、阶段进度和 Next Action 或最近任务。
+- 点击卡片进入对应项目。
 - 不拥有独立 Roadmap 或 Current Phase。
 
 ### 8.2 项目
@@ -216,26 +219,20 @@ SYNCING  -> 已确认，不允许取消
 
 ## 11. 当前验收状态
 
-2026-07-04 本地验证：
+2026-07-05 RC 验证：
 
-- Backend：`259 passed`
+- Backend：`265 passed`
 - Frontend Node 状态测试：通过
-- Mounted `useSSE` Hook：`9 passed`
+- Mounted `useSSE` Hook：`11 passed`
+- Portfolio 组件测试：`11 passed`
 - Build、lint、`git diff --check`：通过
 
-此前 DeepSeek 32-case 成功基准为核心指标 100%。本轮文档审查未完成外部联网复跑。
-
-已知 RC 收尾：next-phase 已实现 `SYNCING` 不可取消；初始规划 `ActionLayer`
-仍在该状态显示本地取消入口。Stable 前应统一确认后的不可撤销语义。
+DeepSeek 32-case：`32/32`。Pass Rate、Intent Classification、Strategy
+Compliance、JSON Parse、Horizon Accuracy、Action Quality 和 Done Criteria
+Coverage 均为 `100%`；Average Actionability Score 为 `99.85%`，Abstract Task
+Violation Rate 为 `0.75%`。
 
 ## 12. 后续版本
-
-### v1.2.6 - Portfolio Overview & Answer Layer
-
-- 全部计划升级为更清晰的 portfolio overview。
-- exploration decision 强化为“当前判断 -> 判断依据 -> 下一步探索”。
-- Retry 与 Regenerate 语义彻底拆开。
-- 当前 run 默认展开，旧 run 折叠为摘要。
 
 ### v1.2.7 - Planning Model Differentiation
 

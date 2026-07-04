@@ -430,6 +430,25 @@ def test_exploration_eval_accepts_negated_immediate_execution_judgment():
     assert result.passed is True
 
 
+def test_exploration_eval_accepts_immediate_execution_risk_warning():
+    runner = _load_eval_runner()
+
+    assert (
+        runner._contains_non_negated_pattern(
+            "判断依据：信息不足，直接辞职风险高，应该先做低成本验证。",
+            runner.EXPLORATION_EXECUTION_PATTERNS,
+        )
+        is False
+    )
+    assert (
+        runner._contains_non_negated_pattern(
+            "当前判断：建议立即辞职，风险可控。",
+            runner.EXPLORATION_EXECUTION_PATTERNS,
+        )
+        is True
+    )
+
+
 def test_failure_diagnostics_include_actionable_eval_context():
     runner = _load_eval_runner()
     result = runner.EvalResult(

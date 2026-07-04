@@ -526,6 +526,20 @@ def test_exploration_prompt_requires_judgment_first_summary_before_route():
     assert "不要只给探索路线、不回答问题本身" in prompt
 
 
+def test_exploration_prompt_positive_examples_use_neutral_option_language():
+    prompt = build_planner_prompt(
+        "我最近很迷茫，不知道是否应该辞职转行",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "动作：「列出辞职做自媒体的 3 个核心担忧」" not in prompt
+    assert "写下转行产品经理的 3 个原因" not in prompt
+    assert "用一页纸比较转行与不转行的成本收益" not in prompt
+    assert "列出方向A的 3 个核心担忧" in prompt
+    assert "写下考虑方向A的 3 个原因" in prompt
+    assert "用一页纸比较当前选择与方向A的成本收益" in prompt
+
+
 def test_initial_long_term_prompt_requires_roadmap_but_short_term_does_not():
     long_prompt = build_planner_prompt(
         "学习日语 N3",
@@ -1196,6 +1210,27 @@ def test_validator_accepts_negated_immediate_execution_in_exploration_judgment()
     plan["summary"] = (
         "当前判断：现在并不是直接辞职转行的时机，更适合先做低成本探索。"
         "判断依据：岗位要求和个人成本收益仍缺少可靠信息。"
+        "下一步探索：先收集岗位信息、访谈从业者，再形成阶段性判断。"
+    )
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan,
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
+
+
+def test_validator_accepts_immediate_execution_risk_warning() -> None:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = (
+        "当前判断：可以探索方向 A，但暂不建议立即行动。"
+        "判断依据：当前信息不足，直接辞职风险高。"
         "下一步探索：先收集岗位信息、访谈从业者，再形成阶段性判断。"
     )
 

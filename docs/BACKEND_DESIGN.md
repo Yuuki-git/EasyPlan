@@ -1,6 +1,6 @@
 # EasyPlan 后端设计
 
-版本：`v1.2.5-rc.2 Candidate`
+版本：`v1.2.6-rc.1`
 
 ## 1. 系统职责
 
@@ -209,13 +209,13 @@ python -m pytest tests -q
 python tests/run_evals.py --provider deepseek
 ```
 
-当前代码审查时本地 pytest 为 `259 passed`。最近一次已记录的 DeepSeek 主验收
-基线为 `32/32`，核心六项指标均为 `100%`；发布候选仍应在具备外网和密钥的环境
-重新运行并保存结果。
+2026-07-05 发布验证的本地 pytest 为 `265 passed`。DeepSeek 主验收为
+`32/32`，Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality 和 Done
+Criteria Coverage 均为 `100%`。
 
 ## 13. 非目标与后续
 
 - 不恢复 Todoist、Microsoft To Do、MCP 或 OAuth 外部同步主线。
-- v1.2.5 不加入“下一阶段前补充进展、偏差、新约束”的新交互。
-- v1.2.6 聚焦 Portfolio Overview 与 Answer Layer。
-- 更强的阶段复盘和个性化规划放入后续版本。
+- “下一阶段前补充进展、偏差、新约束”的交互留到后续阶段复盘版本。
+- v1.2.7 聚焦长期、短期与探索目标的规划模型差异化。
+- 更强的阶段复盘和个性化规划继续放入后续版本。

@@ -27,9 +27,10 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Action Quality Guardrails**: Runtime validation for concrete, startable, and completable tasks with `done_criteria`, `start_hint`, and `fallback_action`.
 - **Three-Tier Planning**: `Roadmap → Current Phase → Next Action` separates long-term direction, near-term planning, and the immediate step.
 - **Phase Progression**: Generate, preview, and append the next phase inside the same project.
+- **Exploration Answer Layer**: Give a current judgment, supporting evidence, and next exploration steps before breaking uncertainty into low-cost validation actions.
 - **Natural Language Refinement**: Adjust a plan conversationally without rebuilding the task tree by hand.
-- **Native Task Views**: All Plans provides a portfolio view, projects hold individual plans, and My Day collects today's actions.
-- **Resilient Generation**: Request-scoped SSE supports refresh recovery, duplicate-event filtering, cancellation, and retry.
+- **Native Task Views**: All Plans summarizes phase, progress, and next action by project; projects hold individual plans; My Day collects today's actions.
+- **Resilient Generation**: Request-scoped SSE supports refresh recovery, reconnecting the current run, duplicate-event filtering, cancellation, and retry.
 - **Secure Multi-Tenancy**: Strict JWT authentication and tenant-scoped data access.
 
 ## 📊 Planning Eval
@@ -147,11 +148,11 @@ docker-compose logs -f backend
 
 ## 📅 Roadmap
 
-### v1.2.6 - Portfolio Overview & Answer Layer
+### v1.2.7 - Planning Model Differentiation
 
-- Upgrade All Plans into a clearer cross-project overview.
-- Strengthen “current judgment → evidence → next exploration” for exploration decisions.
-- Separate failure retry from normal regeneration and reduce repeated generation noise.
+- Use higher-level phase maps for long-term goals while expanding only the current phase.
+- Model short-term goals as deliverables, workstreams, and execution lanes instead of long-term roadmaps.
+- Give exploration decisions their own judgment and validation route.
 
 ### Future Directions
 
