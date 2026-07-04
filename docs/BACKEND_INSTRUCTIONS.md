@@ -1,126 +1,147 @@
-# 后端开发任务指令集（For Codex）
+# EasyPlan 后端开发指令
 
-## 1. 当前产品方向
+适用版本：`v1.2.5-rc.2 Candidate` 及后续维护补丁
 
-EasyPlan v1.2.0 已转向原生任务看板闭环。后端不再优先建设 Todoist、Microsoft To Do、MCP 或 OAuth 同步能力；所有规划结果都应沉淀到 EasyPlan 自己的 PostgreSQL 任务数据中。
+## 1. 当前目标
 
-PM 文档中的后端重点：
+当前主线是稳定意图驱动规划与同 thread 阶段推进。不要在 RC 修复中加入新产品
+能力，也不要恢复外部任务平台同步。
 
-- 原生任务引擎：支持“我的一天”“计划中”等看板视图。
-- Scope Horizon：宏大目标首次只规划启动阶段。
-- Fog of War：阶段完成后再动态解锁下一阶段。
-- Deep Immersion：reasoning 只做安全、短暂、用户可见的进度安抚。
+主流程：
 
-## 2. 核心技术要求
+```text
+Intent -> Profile -> Strategy -> Plan -> Validate -> Review -> Persist
+                                               |
+                                               `-> Next Phase in same thread
+```
 
-- **语言**：Python 3.10+，建议 Python 3.11+
-- **网关**：FastAPI，异步优先
-- **工作流**：LangGraph，必须使用 Checkpointer 机制实现 HITL
-- **校验**：Pydantic v2，约束模型输出与 API 契约
-- **数据库**：PostgreSQL + SQLAlchemy 2.x async
-- **鉴权**：JWT，所有 thread/checkpoint/task 操作绑定 `user_id`
-- **实时通信**：SSE + Async Queue，支持 `Last-Event-ID` 与 query fallback
+DeepSeek 是当前主验收 provider。
 
-## 3. LangGraph 节点要求
+## 2. 必须保持的业务不变量
 
-当前链路：
+### 意图与规划
 
-1. `intent_profiler_node` (新增)
-   - 提取用户的 `intent_type` 和 `confidence_score`。
+- 只使用四类 intent：`long_term_growth`、`short_term_delivery`、
+  `context_checklist`、`exploration_decision`。
+- `planning_context.time_horizon` 必须匹配 `IntentProfile`。
+- long-term 默认只展开当前 phase，不一次性生成完整执行路线。
+- short-term 不复制 long-term Roadmap。
+- exploration 应先给当前判断，再给探索与决策路径。
 
-2. `planner_node`
-   - 异步调用 LLM。
-   - 强制输出 `TaskTree`。
-   - 动态路由：根据 `intent_type` 注入专属 Few-Shot 样本。
-   - 严控规模：必须在 prompt 中约束最大节点数量。
+### Action Quality
 
-3. `task_tree_validator_node`
-   - **重大变更**：废除 action 节点 `estimated_minutes < 5` 的暴毙式硬校验。
-   - 升级为“策略守门员”：校验大模型是否违反了当前 Intent Profile 的策略红线（如短期冲刺生成了低智破冰动作）。
-   - 保留：校验 ID 唯一、依赖存在、依赖无环。
+- 保留 `done_criteria`、`start_hint`、`fallback_action`。
+- validator 只修复低质量任务，保持 intent 和策略。
+- 较长 action 缺完成标准时必须 replan。
 
-3. `human_review_node`
-   - 必须调用 `interrupt()`。
-   - 支持 `approve`、`edit`、`refine`、`reject`。
-   - `refine` 接收自然语言反馈，回到 `planner_node`。
+### Thread 与任务
 
-4. `persist_internal_tasks_node`
-   - 在用户 `approve` 后展开 `TaskTree`。
-   - 写入 `tasks` 和 `task_dependencies`。
-   - 写入时必须绑定 `user_id + thread_id`。
-   - 为后续 My Day / Planned / Fog of War 保留 metadata。
+- 所有查询和写入绑定 `user_id`。
+- 下一阶段必须追加到当前 thread。
+- completed phase 不得被后续模型修改。
+- next-phase `client_node_id` 必须与 thread 内既有节点不冲突。
+- task、task tree 和 confirmed envelope 必须事务一致。
+- 禁止用静默冲突忽略制造“确认成功但任务未写入”。
 
-## 4. API 契约要求
+## 3. Agent Run 与 SSE
 
-已暴露接口：
+每个 run 由以下组合唯一标识：
 
-- `POST /api/auth/register`
-- `POST /api/auth/token`
-- `POST /api/intents`
-- `GET /api/threads/{thread_id}`
-- `GET /api/threads/{thread_id}/events`
-- `POST /api/threads/{thread_id}/confirm`
-- `GET /api/tasks?view_bucket=planned|my_day|backlog`
-- `PATCH /api/tasks/{task_id}`
-- `GET /health`
+```text
+thread_id + run_type + request_id
+```
 
-SSE 事件名：
+要求：
 
-- `reasoning`
-- `checkpoint`
-- `plan_ready`
-- `done`
-- `agent_error`
-- `snapshot_required`
+- initial、refine、next phase 都使用真实且可区分的 request id。
+- 所有 SSE 业务事件携带 run identity 与 `state_version`。
+- 事件缓存和终态按 run 隔离。
+- 历史 `done` 不能结束当前 run。
+- `Last-Event-ID` 只在同一 run 内解释。
+- 业务错误事件名固定为 `agent_error`。
+- 无法增量恢复时发送 `snapshot_required`。
 
-禁止发送 `event: error` 作为业务错误事件名，因为它会与浏览器原生保留事件冲突。
+## 4. 下一阶段状态边界
 
-v1.2 后续接口草案：
+- `running` / `awaiting_confirmation` 可以取消。
+- `confirming` 表示确认已接受，不允许取消。
+- 取消必须同时校验 thread、user、run type 和 request id。
+- `cancel_run()` 只为仍在进程内执行的 active run 保留取消标记。
+- `run_next_phase()` 必须在 `finally` 清理 active/cancelled run key。
+- commit receipt 是前端确认 next phase 真正提交的权威来源。
 
-- `POST /api/tasks/{task_id}/complete`
-- `POST /api/threads/{thread_id}/unlock-next-phase`
+## 5. API 契约
 
-在实现任何新接口或修改字段结构时，必须第一时间更新：
+当前核心接口：
+
+```text
+POST   /api/intents
+GET    /api/threads/{thread_id}
+GET    /api/threads/{thread_id}/events
+POST   /api/threads/{thread_id}/confirm
+POST   /api/threads/{thread_id}/phases/next
+DELETE /api/threads/{thread_id}/phases/next/cancel
+GET    /api/threads/{thread_id}/phases/next/commit
+DELETE /api/threads/{thread_id}
+GET    /api/tasks
+POST   /api/tasks
+PATCH  /api/tasks/{task_id}
+DELETE /api/tasks/{task_id}
+```
+
+修改接口或 schema 时同步更新：
 
 - `app/api/schemas.py`
+- 路由测试
 - `docs/openapi.json`
 - `docs/API_DOCUMENTATION.md`
-- 对应测试
+- `docs/FRONTEND_API_GUIDE.md`
 
-## 5. 数据与多租户要求
+## 6. My Day 与项目
 
-- 所有查询必须绑定 `user_id`。
-- 恢复 checkpoint 时必须绑定 `user_id + thread_id`。
-- task 查询和更新必须绑定 `user_id + task_id`。
-- 不得只靠客户端传入的 `thread_id` 或 `task_id` 判定归属。
-- 所有时间戳使用带时区语义：API 使用 ISO 8601，数据库使用 `TIMESTAMPTZ`。
+- `my_day` 是虚拟视图，不改变任务原 thread。
+- 同一 `task_id` 在 planned / my_day 中共享状态。
+- 项目内新增 root task 必须使用传入的 `thread_id`。
+- 子任务继承父任务 thread。
+- 仅在没有任何项目或父任务上下文时，后端才允许创建 manual thread。
 
-## 6. 4C4G 稳健性要求
+## 7. Provider 与安全
 
-- 单用户同一时间最多运行一个 planner 图。
-- 全局 planner 并发需要信号量或队列保护。
-- AgentState 必须强剪裁：不保存 prompt、raw response、长推理文本。
-- Checkpoint 需要 7 天保留/清理策略。
-- SQLAlchemy 连接池保持小规模，避免 4G 内存被连接占满。
+- 发布验收使用 DeepSeek。
+- API key 只从环境变量读取，不写入仓库、日志或测试快照。
+- 仅保存必要 usage 元数据，不保存 raw prompt、完整推理或裸响应。
+- 模型返回必须经过 JSON 清理、repair retry、Pydantic 和业务 validator。
 
-## 7. LLM 与 Reasoning 要求
+## 8. 测试要求
 
-- OpenAI 使用 Structured Outputs。
-- DeepSeek / Xiaomi MiMo 使用 JSON mode 后再走 Pydantic 强校验。
-- 所有模型输出字段必须与用户输入语言一致。
-- reasoning message 是用户可见文案，禁止出现 `JSON mode`、`schema`、`token usage` 等内部实现词。
-- usage 埋点只记录 provider、model、operation、token 数，不记录 prompt 和原始响应。
+行为变更先补失败测试，再修改实现。至少运行：
 
-当前 reasoning 文案：
+```bash
+python -m pytest tests -q
+```
 
-- `正在分析您的核心目标...`
-- `正在将目标拆解为可执行的微行动...`
-- `正在为您评估每项任务的时间与依赖关系...`
-- `计划生成完毕，请查阅。`
+涉及 next-phase 时增加或维护以下覆盖：
 
-## 8. 交付要求
+- 同一 thread 的第二次 run
+- 历史 done 不截断当前 run
+- request id 不匹配返回冲突
+- running / pending 可取消
+- confirming 不可取消
+- cancelled run key 最终回收
+- client node id 跨 phase 冲突拒绝
+- phase task/tree/envelope 事务一致
+- 多租户越权拒绝
 
-- 代码必须模块化：`app/api`、`app/agents`、`app/models`、`app/services` 边界清晰。
-- 所有后端行为变更必须有测试。
-- 所有协议变更必须同步 OpenAPI 和接口文档。
-- 不要恢复已废弃的外部同步、MCP adapter 或 OAuth callback 代码。
+发布候选环境另运行：
+
+```bash
+python tests/run_evals.py --provider deepseek
+```
+
+## 9. 交付纪律
+
+- 只修改任务需要的模块。
+- 不绕过 repository 的 ownership 和事务边界。
+- 不通过放宽 schema、吞异常或移除校验让测试转绿。
+- 不把 provider-specific 兼容补丁混入无关 RC 修复。
+- 完成后报告测试命令、结果和仍存在的风险。

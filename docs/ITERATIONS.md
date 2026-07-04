@@ -90,7 +90,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **Schema Enum Drift Repair**：将 `pydantic.ValidationError` 纳入 JSON Repair 重试链路，防范小模型幻觉枚举值（如输出 `node_type="leader"`）。
 *   **Checklist 强制聚合**：在 Validator 中对 `context_checklist` 加入强校验，任务数 >=2 时必须存在 `group` 节点。
 
-#### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning)
+#### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning) (RC.2 Candidate)
 *   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。
 *   **条件触发的 Roadmap UI**：路线图绝非全局标配，严格由 Intent Profile 决定显示逻辑：
     *   `long_term_growth`：默认显示 3-5 个高层阶段路线图，提供长期方向感但不展开。
@@ -99,11 +99,29 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **执行反馈**：增加 Current Phase 目标说明、Next Action 高亮，把计划列表升级为“执行引导界面”。
 *   **生成态重定义**：生成界面按单次 run 管理，不复用上一次 intent、retry 或 next phase 的 reasoning 历史；SSE 重连允许恢复当前 run，但重复事件不得重复渲染。
 *   **探索决策先答后拆**：`exploration_decision` 不再只展示生成过程，首屏必须先给一句当前判断，再进入阶段路线与行动树。
-*   **全局逃生口**：AI 生成、下一阶段预览和 retry 都必须提供“返回当前计划”与“取消本次生成”，卡住时不允许把用户困在生成态。
+*   **生成态逃生口**：AI 生成与下一阶段预览支持取消；确认后的 `SYNCING` 是不可撤销提交，只允许返回当前计划并在后台继续完成。
 *   **时间表达降精度**：生成态优先显示“低投入 / 中投入 / 较重投入”等时间档位；正式进入看板后再展示 rounded 预计时长，避免伪精确。
 *   **信息架构澄清**：“全部计划”明确为跨项目聚合视图，“项目”保留为 thread 级长期容器；同一任务可同时存在于项目视图和“全部计划”视图中，但 Roadmap 与 Current Phase 只属于项目上下文。
 
-#### 🩹 v1.2.5.1: Generation Experience Patch (Closed / RC.1)
+**已完成工程闭环**：
+*   **同 thread 阶段推进**：下一阶段在原 thread 中生成、预览和确认追加，不再创建新的计划。
+*   **三层规划上下文**：`Roadmap / Current Phase / Next Action` 进入 TaskTree 契约；Next Action 由后端基于依赖和任务状态确定。
+*   **Committed / Preview 分离**：预览存放于 `interrupt_payload`，确认前不会覆盖已提交的 `task_tree`。
+*   **Run 身份协议**：initial、refine、next phase 均使用唯一 `request_id`；SSE 以 `thread_id + run_type + request_id` 隔离。
+*   **刷新与竞态恢复**：引入 active run、游标作用域、快照请求栅栏和 commit receipt，阻止历史事件或旧 Phase 1 快照覆盖 Phase 2。
+*   **请求级取消**：生成中和待确认预览支持幂等取消并写入 tombstone；迟到结果不能恢复已取消 run。
+*   **确认边界**：确认后进入不可撤销 `SYNCING`；用户可返回当前计划，后台继续完成并最终更新 Phase 2。
+*   **跨视图一致性**：全部计划、项目和我的一天共享同一任务 ID 与完成状态，不因视图切换破坏项目结构。
+
+**2026-07-04 本地验收**：
+*   Backend：`259 passed`
+*   Frontend Node 状态测试：通过
+*   Mounted `useSSE` Hook：`9 passed`
+*   Build、lint、`git diff --check`：通过
+*   DeepSeek 32/32 为此前成功基准；本轮未完成外部联网复跑。
+*   RC 已知收尾：next-phase `SYNCING` 已正确只允许返回当前计划；初始规划 `ActionLayer` 仍显示本地取消入口，Stable 前需要统一确认后的不可撤销语义。
+
+#### 🩹 v1.2.5.1: Generation Experience Patch (Closed / Absorbed into v1.2.5 RC.2)
 *   **范围定位**：v1.2.5.1 只负责收口生成态稳定性与信息架构边界，不再增加新的核心功能。
 *   **已收口问题**：
     *   `exploration_decision` 首屏先给“当前判断”，避免用户只看到 reasoning 却拿不到判断。
@@ -111,7 +129,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   SSE replay 去重、stalled 检测和“返回当前计划 / 取消本次生成”逃生口闭环。
     *   “全部计划”与“项目”语义拆清，避免看起来像两套并列容器。
     *   `exploration_decision` 场景下的 `time_horizon` 漂移与 raw validation error 暴露问题已专项修复。
-*   **后续处理**：仅保留非阻塞测试覆盖缺口进入 backlog，不再继续向 v1.2.5.1 混入新产品改动。
+*   **收口结果**：该补丁后续发现的 cross-run SSE、旧快照覆盖、active-run 恢复和生成取消问题已在 v1.2.5 RC.2 修复并纳入自动化测试。
 
 #### 📍 v1.2.6: 总览层与回答层 (Portfolio Overview & Answer Layer)
 *   **全部计划升级为总览层**：
