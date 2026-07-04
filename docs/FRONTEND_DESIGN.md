@@ -1,6 +1,6 @@
 # EasyPlan 前端设计
 
-版本：`v1.2.5-rc.2 Candidate`
+版本：`v1.2.6-rc.1 Candidate`
 
 ## 1. 设计目标
 
@@ -88,18 +88,16 @@ activeRun: {
 | `INITIAL` | 没有活动生成 | 提交意图、浏览看板 |
 | `THINKING` | 模型正在生成 | 取消本次生成 |
 | `PENDING` | 草案等待决定 | 确认、微调、取消 |
-| `SYNCING` | 确认已接受，正在提交 | 返回当前计划 |
-| `ERROR` | 当前 run 失败 | 重试、返回计划、播种新想法 |
+| `SYNCING` | 确认已接受，正在提交 | 返回计划/全部计划/当前计划 |
+| `ERROR` | 当前 run 失败 | 重试本次生成、返回计划、播种新想法 |
 
 产品边界：
 
-- `THINKING` 和 `PENDING` 可以取消。
-- `SYNCING` 已进入不可撤销提交，不显示“取消”。
-- `SYNCING` 的“返回当前计划”只收起面板，保留 `activeRun`，后台结果仍能落回
-  当前项目。
-
-当前 RC 中，next-phase 已符合上述边界；初始规划 `ActionLayer` 仍把 `THINKING`
-和 `SYNCING` 共用本地取消按钮。这是 Stable 前需要统一的已知 UI 差异。
+- `THINKING` 和 `PENDING` 的本地退出（放弃等待/放弃此计划）不暗示后端 run 已取消；对于 next_phase 可以发送取消请求。
+- `SYNCING` 已进入不可撤销提交，不显示任何“取消”或“放弃”按钮。
+- `SYNCING` 的“返回全部计划/返回当前计划”只改变视图，不清除 `activeRun`，后台同步和 SSE 依然保持，直到完成后通过 SSE 更新看板。
+- `isRunStalled` (stalled 状态) 提供“重新连接”选项，通过增加 `sseReconnectNonce` 重新订阅当前 request，避免触发新的 intent/next_phase 生成请求。
+- 每个新 run 开始前，均原子清空旧 reasoningLogs、previewTaskTree、nodeStatuses 和错误状态，不保留或堆积前序生成历史。
 
 ## 6. 下一阶段体验
 
@@ -169,10 +167,9 @@ npm run lint
 
 ## 11. 下一版本
 
-`v1.2.6` 聚焦 Portfolio Overview 与 Answer Layer：
+`v1.2.6` 已经收口：
+- 强化了“全部计划”的跨项目总览 (Portfolio Overview)，通过纯 selector 动态展示当前阶段、进度与 Next Action。
+- 优化了 SSE 卡住时的“重新连接”及“重试/重新生成”语义。
+- 实现初始/refine SYNCING 状态的优雅返回，保留 activeRun。
 
-- 强化“全部计划”的跨项目总览
-- 为 `exploration_decision` 提供更及时的当前判断
-- 优化重试和长等待的信息密度
-
-下一阶段生成前追加用户进展信息、偏差和新约束，保留到后续增强，不并入本次 RC。
+下一版本 `v1.2.7` 将聚焦长期、短期和探索规划模型的差异化。

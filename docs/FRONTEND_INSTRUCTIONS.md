@@ -1,6 +1,6 @@
 # EasyPlan 前端开发指令
 
-适用版本：`v1.2.5-rc.2 Candidate` 及后续维护补丁
+适用版本：`v1.2.6-rc.1 Candidate` 及后续维护补丁
 
 ## 1. 当前目标
 
@@ -67,18 +67,18 @@ activeRun
 
 | 状态 | 必须展示 | 禁止 |
 | --- | --- | --- |
-| `THINKING` | 轻量进度、取消 | 展示旧草案 |
-| `PENDING` | 确认、微调、取消 | 本地假确认 |
-| `SYNCING` | 返回当前计划 | 取消后端提交 |
-| `ERROR` | 重试、返回计划、播种新想法 | 堆叠旧 reasoning |
+| `THINKING` | 轻量进度、取消（如果是 next_phase）/放弃等待（如果是 initial） | 展示旧草案 |
+| `PENDING` | 确认、微调、取消/放弃此计划 | 本地假确认 |
+| `SYNCING` | 返回当前计划（如果是 refine 或 next_phase） / 返回全部计划（如果是 initial） | 取消后端提交 |
+| `ERROR` | 重试本次生成、返回计划、播种新想法 | 堆叠旧 reasoning |
 
-`SYNCING` 的“返回当前计划”只收起界面，不清除 `activeRun` 或
-`phaseRequestId`。后台提交完成后仍要更新当前项目。
+`SYNCING` 的返回（`dismissInitialSync()` 或 `collapsePlanningPanel()`）只收起界面，不清除 `activeRun` 或 `phaseRequestId`，确保后台任务在 SSE done 后正常落库看板。
 
 ## 5. SSE 防线
 
 - 只接受与当前 `threadId + runType + requestId` 完全匹配的事件。
 - handler 执行前检查 EventSource 仍是当前实例。
+- 支持 reconnect 逻辑，连接卡住（stalled）触发“重新连接”时不建立新 request 而是递增 `sseReconnectNonce` 重置 SSE。
 - 去重不能因为 request 清空而让旧 initial 终态重新生效。
 - Phase 2 完成后清空 active run，不能自动回落订阅 initial。
 - 退出、登出、返回全部计划和开始新意图时明确清理不再需要的 run。
@@ -155,8 +155,10 @@ npm run lint
 - 历史 done 被拒绝
 - 退出路径清理 active run
 - THINKING 取消
-- SYNCING 仅收起，不取消
+- SYNCING 仅收起，不取消（对于 initial 也是如此）
 - 乱序 snapshot 不覆盖新 phase
+- stalled 重新连接（sseReconnectNonce 增加、EventSource 重新连接、不重建请求）
+- dismissInitialSync 保留 activeRun 并最终由 done 成功同步项目到 Portfolio
 
 ## 12. 交付纪律
 

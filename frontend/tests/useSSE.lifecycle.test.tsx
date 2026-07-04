@@ -557,4 +557,176 @@ describe('useSSE hook lifecycle tests', () => {
 
     unmount();
   });
+
+  test('stalled reconnect does not create a new request and creates a new EventSource with the same parameters', async () => {
+    let fetchCount = 0;
+    const fetchSpy = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('/api/threads/proj-reconnect')) {
+        fetchCount++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-reconnect',
+            status: 'running',
+            intent_text: 'reconnect intent',
+            task_tree: null,
+            interrupt_payload: null
+          })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    act(() => {
+      useAppStore.getState().reset();
+      useAppStore.getState().setToken('mock-token');
+      useAppStore.getState().setSelectedProjectId('proj-reconnect');
+      useAppStore.getState().setActiveRun({
+        threadId: 'proj-reconnect',
+        runType: 'initial',
+        requestId: 'req-reconnect-a',
+      });
+      useAppStore.setState({
+        previewMode: 'initial',
+        isRunStalled: true
+      });
+    });
+
+    const { unmount } = render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    const firstInstance = MockEventSource.instances[MockEventSource.instances.length - 1];
+    expect(firstInstance.closed).toBe(false);
+    expect(firstInstance.url).toContain('request_id=req-reconnect-a');
+    expect(firstInstance.url).toContain('run_type=initial');
+
+    // Call reconnectActiveRun
+    await act(async () => {
+      useAppStore.getState().reconnectActiveRun();
+    });
+
+    // Assert the first source closes
+    expect(firstInstance.closed).toBe(true);
+
+    // Assert a second source opens with the same thread, run type, and request ID
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(1);
+    });
+
+    const secondInstance = MockEventSource.instances[MockEventSource.instances.length - 1];
+    expect(secondInstance.closed).toBe(false);
+    expect(secondInstance.url).toContain('request_id=req-reconnect-a');
+    expect(secondInstance.url).toContain('run_type=initial');
+
+    // Assert isRunStalled becomes false
+    expect(useAppStore.getState().isRunStalled).toBe(false);
+
+    // Assert no additional request was made except for alignState
+    expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining('/confirm'), expect.anything());
+    expect(fetchSpy).not.toHaveBeenCalledWith(expect.stringContaining('/cancel'), expect.anything());
+    expect(fetchCount).toBeGreaterThanOrEqual(1);
+
+    unmount();
+  });
+
+  test('dismissInitialSync preserves activeRun and finishes successfully on done event', async () => {
+    let fetchTasksCalled = false;
+    let alignStateCalled = false;
+
+    const fetchSpy = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('/api/threads/proj-sync')) {
+        alignStateCalled = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-sync',
+            status: 'running',
+            intent_text: 'sync intent',
+            task_tree: null,
+            interrupt_payload: null
+          })
+        };
+      }
+      if (url.includes('/api/tasks')) {
+        fetchTasksCalled = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => []
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    act(() => {
+      useAppStore.getState().reset();
+      useAppStore.getState().setToken('mock-token');
+      useAppStore.getState().setSelectedProjectId(null);
+      useAppStore.getState().setActiveRun({
+        threadId: 'proj-sync',
+        runType: 'initial',
+        requestId: 'req-sync-a',
+      });
+      useAppStore.setState({
+        previewMode: 'initial',
+        appState: 'SYNCING'
+      });
+    });
+
+    const { unmount } = render(<TestComponent />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    const esInstance = MockEventSource.instances[MockEventSource.instances.length - 1];
+    expect(esInstance.closed).toBe(false);
+
+    // Call dismissInitialSync()
+    act(() => {
+      useAppStore.getState().dismissInitialSync();
+    });
+
+    // Assert activeRun remains, view is board, selectedProjectId is null
+    const state = useAppStore.getState();
+    expect(state.activeRun).toEqual({
+      threadId: 'proj-sync',
+      runType: 'initial',
+      requestId: 'req-sync-a',
+    });
+    expect(state.view).toBe('board');
+    expect(state.selectedProjectId).toBeNull();
+    expect(state.appState).toBe('INITIAL');
+
+    // EventSource should still be open
+    expect(esInstance.closed).toBe(false);
+
+    // Dispatch matching done event
+    await act(async () => {
+      esInstance.dispatchEvent('done', {
+        thread_id: 'proj-sync',
+        run_type: 'initial',
+        request_id: 'req-sync-a',
+        state_version: 1
+      });
+    });
+
+    // Assert finishAgentRun was called, fetched tasks, cleared activeRun, and highlighted project
+    expect(fetchTasksCalled).toBe(true);
+    expect(alignStateCalled).toBe(true);
+    const finalState = useAppStore.getState();
+    expect(finalState.activeRun).toBeNull();
+    expect(finalState.highlightedProjectId).toBe('proj-sync');
+
+    unmount();
+  });
 });

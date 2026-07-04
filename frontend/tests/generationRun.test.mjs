@@ -1227,6 +1227,140 @@ async function runTests() {
       assert.equal(state.activeRun, null);
       assert.equal(state.appState, 'INITIAL');
     }
+
+    // E. reconnectActiveRun 状态变更
+    {
+      const { useAppStore } = loadAppStoreModule(async () => ({ ok: true, status: 200, json: async () => ({}) }), {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_preview_mode': 'next_phase',
+        'easyplan_phase_request_id': 'req-1',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' })
+      });
+
+      useAppStore.setState({
+        selectedProjectId: 'proj-1',
+        previewMode: 'next_phase',
+        phaseRequestId: 'req-1',
+        activeRun: { threadId: 'proj-1', runType: 'next_phase', requestId: 'req-1' },
+        isRunStalled: true,
+        sseReconnectNonce: 0
+      });
+
+      const before = useAppStore.getState().activeRun;
+      const previousNonce = useAppStore.getState().sseReconnectNonce;
+
+      useAppStore.getState().reconnectActiveRun();
+
+      const afterState = useAppStore.getState();
+      assert.deepEqual(afterState.activeRun, before);
+      assert.equal(
+        afterState.sseReconnectNonce,
+        previousNonce + 1,
+      );
+      assert.equal(afterState.isRunStalled, false);
+    }
+
+    // F. dismissInitialSync 状态与缓存保留
+    {
+      let fetchCalled = false;
+      const fetchMock = async (url) => {
+        if (url.includes('/api/tasks')) {
+          fetchCalled = true;
+          return { ok: true, status: 200, json: async () => ([]) };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+      };
+
+      const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, {
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_preview_mode': 'initial',
+        'easyplan_active_run': JSON.stringify({ threadId: 'proj-1', runType: 'initial', requestId: 'req-1' })
+      });
+
+      const initialRun = { threadId: 'proj-1', runType: 'initial', requestId: 'req-1' };
+      useAppStore.setState({
+        selectedProjectId: null,
+        previewMode: 'initial',
+        threadId: 'proj-1',
+        appState: 'SYNCING',
+        activeRun: initialRun
+      });
+
+      useAppStore.getState().dismissInitialSync();
+
+      const state = useAppStore.getState();
+      assert.deepEqual(state.activeRun, initialRun);
+      assert.equal(state.threadId, initialRun.threadId);
+      assert.equal(state.view, 'board');
+      assert.equal(state.selectedProjectId, null);
+      assert.equal(state.appState, 'INITIAL');
+      assert.equal(localStorageValues.has('easyplan_preview_mode'), false);
+    }
+
+    // G. 每个入口点在启动新 run 时会清空旧 reasoningLogs, previewTaskTree, nodeStatuses, error
+    {
+      const { useAppStore } = loadAppStoreModule(async () => ({ ok: true, status: 200, json: async () => ({}) }), {
+        'auth_token': 'mock-token',
+        'easyplan_selected_project_id': 'proj-1',
+        'easyplan_thread_id': 'proj-1'
+      });
+
+      const oldPreview = { root: { title: 'old preview' } };
+      const oldCommitted = { root: { title: 'old committed' }, planning_context: { schema_version: 1, intent_type: 'long_term_growth', roadmap: [], current_phase: { phase_id: 'ph1', title: 'Phase 1', objective: '', completion_rule: 'all_ai_actions_completed' }, next_action_client_node_id: null } };
+
+      // 1. Test submitIntent clears state
+      useAppStore.setState({
+        reasoningLogs: ['old run log'],
+        previewTaskTree: oldPreview,
+        nodeStatuses: { old: 'success' },
+        error: 'old error',
+        selectedProjectId: null,
+        threadId: null
+      });
+      // Do not await/block the actual request, just trigger and assert sync state setup
+      await useAppStore.getState().submitIntent('hello PM');
+      let state = useAppStore.getState();
+      assert.equal(state.reasoningLogs.length, 0);
+      assert.equal(state.previewTaskTree, null);
+      assert.equal(Object.keys(state.nodeStatuses).length, 0);
+      assert.equal(state.error, null);
+
+      // 2. Test refinePlan clears state
+      useAppStore.setState({
+        reasoningLogs: ['old run log'],
+        previewTaskTree: oldPreview,
+        nodeStatuses: { old: 'success' },
+        error: 'old error',
+        selectedProjectId: 'proj-1',
+        threadId: 'proj-1'
+      });
+      await useAppStore.getState().refinePlan('feedback');
+      state = useAppStore.getState();
+      assert.equal(state.reasoningLogs.length, 0);
+      assert.equal(state.previewTaskTree, null);
+      assert.equal(Object.keys(state.nodeStatuses).length, 0);
+      assert.equal(state.error, null);
+
+      // 3. Test generateNextPhasePlan clears state
+      useAppStore.setState({
+        reasoningLogs: ['old run log'],
+        previewTaskTree: oldPreview,
+        nodeStatuses: { old: 'success' },
+        error: 'old error',
+        selectedProjectId: 'proj-1',
+        threadId: 'proj-1',
+        committedTaskTree: oldCommitted,
+        boardTasks: [
+          { id: 't1', client_node_id: 'a1', thread_id: 'proj-1', phase_id: 'ph1', source: 'ai', node_type: 'action', status: 'completed', phase_order: 1, sort_order: 1 }
+        ]
+      });
+      await useAppStore.getState().generateNextPhasePlan();
+      state = useAppStore.getState();
+      assert.equal(state.reasoningLogs.length, 0);
+      assert.equal(state.previewTaskTree, null);
+      assert.equal(Object.keys(state.nodeStatuses).length, 0);
+      assert.equal(state.error, null);
+    }
   }
 
   console.log('generationRun tests passed');

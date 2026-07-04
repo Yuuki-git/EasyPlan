@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Command, AlertTriangle, RotateCw } from 'lucide-react';
+import { Command, AlertTriangle, RotateCw, RefreshCw } from 'lucide-react';
 
 export const ActionLayer: React.FC = () => {
   const {
@@ -18,19 +18,14 @@ export const ActionLayer: React.FC = () => {
     intent,
     startNewIntent,
     error,
-    selectedProjectId
+    selectedProjectId,
+    reconnectActiveRun,
+    dismissInitialSync,
+    activeRun
   } = useAppStore();
 
   const isVisible = (appState === 'PENDING' || appState === 'THINKING' || appState === 'ERROR' || appState === 'SYNCING' || isRunStalled)
     && previewMode !== 'next_phase';
-
-  const handleCancel = () => {
-    if (previewMode === 'next_phase') {
-      cancelPlanPreview();
-    } else {
-      reset();
-    }
-  };
 
   const handleRetry = () => {
     if (previewMode === 'next_phase') {
@@ -102,11 +97,27 @@ export const ActionLayer: React.FC = () => {
                     继续等待
                   </button>
                   <button
-                    onClick={handleCancel}
-                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                    onClick={reconnectActiveRun}
+                    className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-amber-500/50 hover:border-amber-500 rounded-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 transition-all shadow-sm"
                   >
-                    取消本次生成
+                    <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
+                    重新连接
                   </button>
+                  {activeRun?.runType === 'next_phase' ? (
+                    <button
+                      onClick={cancelPlanPreview}
+                      className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                    >
+                      取消本次生成
+                    </button>
+                  ) : (
+                    <button
+                      onClick={reset}
+                      className="flex items-center gap-2 text-sm font-medium px-4 py-2 border border-muted hover:border-foreground/30 rounded-full hover:bg-white/5 transition-all text-muted-foreground hover:text-foreground"
+                    >
+                      放弃等待
+                    </button>
+                  )}
                   {selectedProjectId && (
                     <button
                       onClick={returnToCommittedPlan}
@@ -119,7 +130,7 @@ export const ActionLayer: React.FC = () => {
               </motion.div>
             ) : (
               <div className="flex items-center gap-8 bg-background/50 backdrop-blur-md border border-muted px-6 py-3 rounded-full shadow-lg">
-                {appState === 'THINKING' || appState === 'SYNCING' ? (
+                {appState === 'THINKING' ? (
                   <>
                     {selectedProjectId && (
                       <>
@@ -133,14 +144,32 @@ export const ActionLayer: React.FC = () => {
                       </>
                     )}
                     <button
-                      onClick={handleCancel}
+                      onClick={reset}
                       className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
                     >
                       <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
                         ESC
                       </div>
-                      <span className="text-sm font-light">取消本次生成</span>
+                      <span className="text-sm font-light">放弃等待</span>
                     </button>
+                  </>
+                ) : appState === 'SYNCING' ? (
+                  <>
+                    {selectedProjectId ? (
+                      <button
+                        onClick={dismissInitialSync}
+                        className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                      >
+                        <span className="text-sm font-light">返回当前计划</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={dismissInitialSync}
+                        className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                      >
+                        <span className="text-sm font-light">返回全部计划</span>
+                      </button>
+                    )}
                   </>
                 ) : (
                   <>
@@ -156,13 +185,13 @@ export const ActionLayer: React.FC = () => {
                       </>
                     )}
                     <button
-                      onClick={handleCancel}
+                      onClick={reset}
                       className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
                     >
                       <div className="px-1.5 py-0.5 border border-muted rounded text-[10px] font-mono group-hover:border-muted-foreground transition-colors">
                         ESC
                       </div>
-                      <span className="text-sm font-light">取消本次生成</span>
+                      <span className="text-sm font-light">放弃此计划</span>
                     </button>
                     <div className="w-px h-4 bg-muted/60" />
                     <button

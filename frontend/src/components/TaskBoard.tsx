@@ -758,7 +758,7 @@ export const TaskBoard: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
             {currentViewBucket === 'planned' && selectedProjectId === null ? (
-              <PortfolioOverview projects={projects} />
+              <PortfolioOverview projects={projects} tasks={boardTasks ?? []} />
             ) : (
               <>
                 {currentViewBucket === 'planned' && selectedProjectId && (

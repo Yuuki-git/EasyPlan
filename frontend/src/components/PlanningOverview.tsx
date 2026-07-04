@@ -26,7 +26,8 @@ export const PlanningOverview: React.FC = () => {
     returnToCommittedPlan,
     lastDoneEvent,
     isCancelPending,
-    collapsePlanningPanel
+    collapsePlanningPanel,
+    reconnectActiveRun
   } = useAppStore();
 
   const retrySync = () => {
@@ -130,7 +131,7 @@ export const PlanningOverview: React.FC = () => {
               isRunStalled ? (
                 <div className="p-4 rounded-lg border border-amber-500/30 bg-amber-500/5 h-full flex flex-col justify-center items-center text-center">
                   <div className="text-amber-500 font-medium mb-1 animate-pulse">生成响应较慢，可能已卡住</div>
-                  <p className="text-xs text-muted-foreground mb-4">您可以选择继续等待，或者尝试重新生成。</p>
+                  <p className="text-xs text-muted-foreground mb-4">您可以选择继续等待，或者尝试重新连接。</p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <button
                       onClick={() => setRunStalled(false)}
@@ -139,10 +140,10 @@ export const PlanningOverview: React.FC = () => {
                       继续等待
                     </button>
                     <button
-                      onClick={() => generateNextPhasePlan()}
+                      onClick={() => reconnectActiveRun()}
                       className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
                     >
-                      重新生成
+                      重新连接
                     </button>
                     <button
                       onClick={() => cancelPlanPreview()}
@@ -151,6 +152,14 @@ export const PlanningOverview: React.FC = () => {
                     >
                       {isCancelPending ? '正在取消...' : '取消本次生成'}
                     </button>
+                    {selectedProjectId && (
+                      <button
+                        onClick={() => returnToCommittedPlan()}
+                        className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                      >
+                        返回当前计划
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : appState === 'ERROR' ? (

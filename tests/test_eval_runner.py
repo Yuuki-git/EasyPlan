@@ -83,6 +83,49 @@ def test_evaluate_plan_flags_valid_tree_top_level_limit_and_low_value_icebreaker
     assert result.short_term_delivery_without_low_value_icebreaker is False
 
 
+def test_low_value_icebreaker_detection_only_checks_first_action():
+    runner = _load_eval_runner()
+    task_tree = runner.TaskTree.model_validate(
+        {
+            "root": {
+                "client_node_id": "root",
+                "title": "完成面试准备",
+                "description": None,
+                "verb": "完成",
+                "estimated_minutes": 60,
+                "node_type": "group",
+                "depends_on": [],
+                "children": [
+                    {
+                        "client_node_id": "draft",
+                        "title": "撰写自我介绍",
+                        "description": "形成可朗读的完整稿件。",
+                        "verb": "撰写",
+                        "estimated_minutes": 30,
+                        "node_type": "action",
+                        "depends_on": [],
+                        "children": [],
+                    },
+                    {
+                        "client_node_id": "materials",
+                        "title": "准备面试资料",
+                        "description": "汇总作品和项目证据。",
+                        "verb": "准备",
+                        "estimated_minutes": 20,
+                        "node_type": "action",
+                        "depends_on": ["draft"],
+                        "children": [],
+                    },
+                ],
+            },
+            "summary": "完成面试准备",
+            "assumptions": [],
+        }
+    )
+
+    assert runner.contains_low_value_icebreaker(task_tree) is False
+
+
 def test_evaluate_plan_reports_invalid_task_tree_without_raising():
     runner = _load_eval_runner()
     case = runner.EvalCase(
@@ -330,6 +373,61 @@ def test_exploration_decision_eval_rejects_route_only_summary_without_answer_fir
 
     assert result.strategy_compliant is False
     assert any("answer the question first" in error for error in result.strategy_errors)
+
+
+def test_exploration_eval_accepts_negated_immediate_execution_judgment():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="我是否应该辞职转行",
+        expected_intent_type="exploration_decision",
+        expected_horizon="days",
+        must_have_icebreaker=False,
+        max_nodes=6,
+        description="否定立即执行是判断，不是提前执行",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "澄清转行决策",
+            "description": None,
+            "verb": "澄清",
+            "estimated_minutes": 30,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "research",
+                    "title": "收集 3 个目标岗位 JD",
+                    "description": "补齐岗位现实信息。",
+                    "verb": "收集",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+            ],
+        },
+        "summary": (
+            "当前判断：现在并不是直接辞职转行的时机，更适合先做低成本探索。"
+            "判断依据：岗位要求和个人成本收益仍缺少可靠信息。"
+            "下一步探索：先收集岗位信息，再形成阶段性判断。"
+        ),
+        "assumptions": [],
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert result.strategy_compliant is True
+    assert result.time_horizon_matches_expected is True
+    assert result.passed is True
 
 
 def test_failure_diagnostics_include_actionable_eval_context():

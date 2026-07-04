@@ -1,6 +1,6 @@
 # EasyPlan 前端 API 接入指南
 
-版本：`v1.2.5-rc.2 Candidate`
+版本：`v1.2.6-rc.1 Candidate`
 
 本文描述当前前端与后端的真实契约。字段定义以
 [`docs/openapi.json`](./openapi.json) 和
@@ -186,17 +186,13 @@ GET /api/threads/{thread_id}/phases/next/commit?request_id={request_id}
 | 状态 | 用户操作 | 网络语义 |
 | --- | --- | --- |
 | `INITIAL` | 提交新意图 | 无 active run 时不订阅 SSE |
-| `THINKING` | 取消或离开 | next phase 可后端取消；initial 当前只结束本地等待 |
-| `PENDING` | 确认、微调、取消 | 等待用户决定 |
-| `SYNCING` | 返回当前计划 | 已确认，不再允许取消 |
-| `ERROR` | 重试、返回计划、新想法 | 仅处理当前 request |
+| `THINKING` | 放弃等待（如果是 initial）或取消（如果是 next_phase） | next phase 可后端取消；initial 当前只结束本地等待 |
+| `PENDING` | 确认、微调、放弃此计划/取消 | 等待用户决定 |
+| `SYNCING` | 返回当前计划/返回全部计划 | 已确认，不再允许取消，后台提交依然进行 |
+| `ERROR` | 重试本次生成、返回当前计划、播种新想法 | 仅处理当前 request |
 
-`SYNCING` 的“返回当前计划”只是收起生成面板，不能清除 `activeRun`；后台完成后
-仍需由当前 request 的 `done` 和 commit receipt 更新项目。
-
-当前 RC 已知差异：初始规划使用的 `ActionLayer` 仍在 `SYNCING` 展示本地取消
-入口；这不是后端撤销。Stable 前应移除该入口或改成纯“离开等待界面”，并保留
-active run。
+- `SYNCING` 的“返回全部计划” (对于新 initial) 或“返回当前计划” (对于 refine/next_phase) 只是前台改变视图/收起生成面板，绝不能清除 `activeRun` 或 `phaseRequestId`；后台完成后仍需由当前 request 的 `done` 更新项目。
+- 在 `stalled` (连接卡住) 状态下触发的“重新连接”操作只增加 `sseReconnectNonce` 来重置 EventSource，绝不发送新的创建请求。
 
 ## 8. 原生任务 API
 
@@ -217,11 +213,11 @@ DELETE /api/tasks/{task_id}
 ```bash
 cd frontend
 npm run test:hooks
+npm run test:portfolio
 node tests/runEvents.test.mjs
 node tests/stateRestoration.test.mjs
 npm run build
 npm run lint
 ```
 
-涉及 SSE 生命周期的改动至少覆盖：历史终态回放、跨 run 隔离、刷新恢复、退出
-清理、乱序快照和 next-phase 提交后可见。
+涉及 SSE 生命周期的改动至少覆盖：历史终态回放、跨 run 隔离、刷新恢复、退出清理、乱序快照、next-phase 提交后可见、连接卡住（stalled）重新连接、初始确认后返回全部计划且保留 active run。

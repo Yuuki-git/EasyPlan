@@ -68,6 +68,10 @@ EXPLORATION_EXECUTION_PATTERNS = [
         r"(转行|创业|长期学习).{0,8}(执行计划|学习计划|路线图)",
     )
 ]
+EXPLORATION_EXECUTION_NEGATION_SUFFIX = re.compile(
+    r"(?:暂不建议|不建议|不应|不宜|避免|不要|无需|不必|不是|并非|暂不适合|不适合)"
+    r"[^，。；！？]{0,16}$"
+)
 EXPLORATION_DISCOVERY_TERMS = (
     "澄清",
     "写下",
@@ -424,15 +428,15 @@ def evaluate_phase_case(
     context = task_tree.planning_context
     roadmap_visible = context is not None and 3 <= len(context.roadmap) <= 5
     text = task_tree_text(task_tree)
-    horizon_patterns = (
-        LONG_TERM_HORIZON_PATTERNS
+    horizon_violation = (
+        any(pattern.search(text) for pattern in LONG_TERM_HORIZON_PATTERNS)
         if case.intent_profile.get("intent_type") == "long_term_growth"
-        else EXPLORATION_EXECUTION_PATTERNS
+        else _contains_non_negated_pattern(text, EXPLORATION_EXECUTION_PATTERNS)
     )
     current_phase_horizon_ok = (
         context is not None
         and context.current_phase is not None
-        and not any(pattern.search(text) for pattern in horizon_patterns)
+        and not horizon_violation
         and len(task_tree.root.children) <= 12
     )
     completed_phase_immutable = _completed_phases_are_immutable(
@@ -594,15 +598,22 @@ def iter_task_nodes(node: TaskNode):
 
 
 def contains_low_value_icebreaker(task_tree: TaskTree) -> bool:
-    for node in iter_task_nodes(task_tree.root):
-        text = " ".join(
-            value
-            for value in (node.title, node.description or "", node.verb)
-            if value
+    first_action = next(
+        (node for node in iter_task_nodes(task_tree.root) if node.node_type == "action"),
+        None,
+    )
+    if first_action is None:
+        return False
+    text = " ".join(
+        value
+        for value in (
+            first_action.title,
+            first_action.description or "",
+            first_action.verb,
         )
-        if any(pattern.search(text) for pattern in LOW_VALUE_ICEBREAKER_PATTERNS):
-            return True
-    return False
+        if value
+    )
+    return any(pattern.search(text) for pattern in LOW_VALUE_ICEBREAKER_PATTERNS)
 
 
 def has_first_step_icebreaker(task_tree: TaskTree) -> bool:
@@ -652,7 +663,7 @@ def collect_horizon_errors(case: EvalCase, task_tree: TaskTree) -> list[str]:
                 "long_term_growth top-level tasks look like a full curriculum roadmap instead of Phase 1 actions"
             )
     elif case.expected_intent_type == "exploration_decision":
-        if any(pattern.search(text) for pattern in EXPLORATION_EXECUTION_PATTERNS):
+        if _contains_non_negated_pattern(text, EXPLORATION_EXECUTION_PATTERNS):
             errors.append(
                 "exploration_decision output assumes an execution decision instead of staying in the clarification phase"
             )
@@ -688,7 +699,7 @@ def collect_strategy_errors(
             errors.append("context_checklist task tree is too deep")
     if case.expected_intent_type == "exploration_decision":
         text = task_tree_text(task_tree)
-        if any(pattern.search(text) for pattern in EXPLORATION_EXECUTION_PATTERNS):
+        if _contains_non_negated_pattern(text, EXPLORATION_EXECUTION_PATTERNS):
             errors.append("exploration_decision should not produce a long-term execution plan")
         if not any(term in text for term in EXPLORATION_DISCOVERY_TERMS):
             errors.append("exploration_decision lacks clarification, information gathering, experiment, or decision nodes")
@@ -705,6 +716,19 @@ def task_tree_text(task_tree: TaskTree) -> str:
             if value
         )
     return " ".join(parts)
+
+
+def _contains_non_negated_pattern(
+    text: str,
+    patterns: tuple[re.Pattern[str], ...] | list[re.Pattern[str]],
+) -> bool:
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            prefix = text[max(0, match.start() - 32) : match.start()]
+            if EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix):
+                continue
+            return True
+    return False
 
 
 def exploration_summary_errors(summary: str) -> list[str]:

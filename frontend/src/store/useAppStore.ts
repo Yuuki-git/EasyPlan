@@ -99,6 +99,7 @@ interface AppStore {
   highlightedProjectId: string | null;
   lastDoneEvent: AgentRunEventMeta | null;
   activeRun: ActiveRun | null;
+  sseReconnectNonce: number;
 
   // Actions
   setActiveRun: (run: ActiveRun | null) => void;
@@ -124,6 +125,8 @@ interface AppStore {
   setHighlightedProjectId: (id: string | null) => void;
   fetchProjectSnapshots: () => Promise<void>;
   reset: () => void;
+  reconnectActiveRun: () => void;
+  dismissInitialSync: () => void;
 
   // Actions
   alignState: (threadId: string) => Promise<void>;
@@ -237,6 +240,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     return null;
   })(),
+  sseReconnectNonce: 0,
 
   setActiveRun: (run) => {
     set({ activeRun: run });
@@ -391,6 +395,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       pendingIntent: null,
       isPhaseRequestPending: false,
       activeRun: null,
+      sseReconnectNonce: 0,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -399,6 +404,38 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.removeItem('easyplan_phase_request_id');
     localStorage.removeItem('easyplan_base_phase_id');
     localStorage.removeItem('easyplan_active_run');
+  },
+
+  reconnectActiveRun: () => {
+    if (!get().activeRun) return;
+    set((state) => ({
+      sseReconnectNonce: state.sseReconnectNonce + 1,
+      isRunStalled: false,
+      error: null,
+    }));
+  },
+
+  dismissInitialSync: () => {
+    const { activeRun: run, selectedProjectId } = get();
+    if (!run || run.runType !== 'initial') return;
+
+    set({
+      view: 'board',
+      currentViewBucket: 'planned',
+      previewMode: null,
+      appState: 'INITIAL',
+      error: null,
+      isRunStalled: false,
+    });
+
+    localStorage.setItem('easyplan_view', 'board');
+    localStorage.removeItem('easyplan_preview_mode');
+    if (selectedProjectId) {
+      void get().loadProjectSnapshot(selectedProjectId);
+    } else {
+      localStorage.removeItem('easyplan_selected_project_id');
+    }
+    void get().fetchTasks('planned');
   },
 
   finishAgentRun: async (event: AgentRunEventMeta) => {

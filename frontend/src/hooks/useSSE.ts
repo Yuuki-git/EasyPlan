@@ -17,7 +17,8 @@ export const useSSE = () => {
     setView,
     finishAgentRun,
     setRunStalled,
-    activeRun
+    activeRun,
+    sseReconnectNonce
   } = useAppStore();
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastEventIdRef = useRef<Record<string, string | null>>({});
@@ -385,6 +386,7 @@ export const useSSE = () => {
     setView,
     finishAgentRun,
     setRunStalled,
-    activeRun
+    activeRun,
+    sseReconnectNonce
   ]);
 };

@@ -69,6 +69,10 @@ EXPLORATION_EXECUTION_PATTERNS = (
     r"(报名|投递|辞职).{0,12}(课程|岗位|项目)",
     r"(转行|创业|长期学习).{0,8}(执行计划|学习计划|路线图)",
 )
+EXPLORATION_EXECUTION_NEGATION_SUFFIX = re.compile(
+    r"(?:暂不建议|不建议|不应|不宜|避免|不要|无需|不必|不是|并非|暂不适合|不适合)"
+    r"[^，。；！？]{0,16}$"
+)
 EXPLORATION_DISCOVERY_TERMS = (
     "澄清",
     "写下",
@@ -1665,7 +1669,13 @@ def _contains_overlong_long_term_action(task_tree: TaskTree) -> bool:
 
 def _contains_exploration_execution_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(re.search(pattern, text) for pattern in EXPLORATION_EXECUTION_PATTERNS)
+    for pattern in EXPLORATION_EXECUTION_PATTERNS:
+        for match in re.finditer(pattern, text):
+            prefix = text[max(0, match.start() - 32) : match.start()]
+            if EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix):
+                continue
+            return True
+    return False
 
 
 def _contains_exploration_discovery_language(task_tree: TaskTree) -> bool:

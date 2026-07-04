@@ -1189,3 +1189,24 @@ def test_validator_accepts_exploration_summary_with_judgment_basis_and_next_step
     )
 
     assert result["validation_status"] == "valid"
+
+
+def test_validator_accepts_negated_immediate_execution_in_exploration_judgment() -> None:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = (
+        "当前判断：现在并不是直接辞职转行的时机，更适合先做低成本探索。"
+        "判断依据：岗位要求和个人成本收益仍缺少可靠信息。"
+        "下一步探索：先收集岗位信息、访谈从业者，再形成阶段性判断。"
+    )
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan,
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
