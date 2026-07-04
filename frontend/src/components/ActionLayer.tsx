@@ -167,7 +167,7 @@ export const ActionLayer: React.FC = () => {
                         onClick={dismissInitialSync}
                         className="group flex items-center gap-2 text-muted-foreground/60 hover:text-foreground transition-colors"
                       >
-                        <span className="text-sm font-light">返回全部计划</span>
+                        <span className="text-sm font-light">返回想法画布</span>
                       </button>
                     )}
                   </>

@@ -56,8 +56,8 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({ projects, 
   return (
     <div className="space-y-6">
       <div className="mb-8">
-        <h2 className="text-2xl font-semibold text-foreground/90 tracking-tight">项目总览 / Portfolio Overview</h2>
-        <p className="text-sm text-muted-foreground mt-1">这里只做“看全局、找项目、进项目”，不承担项目内执行。</p>
+        <h2 className="text-2xl font-semibold text-foreground/90 tracking-tight">想法画布</h2>
+        <p className="text-sm text-muted-foreground mt-1">掌控所有想法的规划进度与下一行动，点击卡片进入详细计划。</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

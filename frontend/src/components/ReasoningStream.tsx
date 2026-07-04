@@ -42,7 +42,7 @@ export const ReasoningStream: React.FC = () => {
           {isRunStalled ? (
             <span className="text-xs font-mono text-amber-500/80 tracking-widest flex items-center gap-1.5">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
-              生成可能已卡住，您可以选择重试或返回当前计划
+              网络连接较慢，您可以选择重新连接或返回当前计划
             </span>
           ) : (
             <span className="text-xs font-mono text-muted-foreground/60 tracking-widest animate-pulse">

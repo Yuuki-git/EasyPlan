@@ -64,7 +64,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
             )}
           >
             <Calendar size={16} className={currentViewBucket === 'planned' && selectedProjectId === null ? "text-blue-500" : ""} />
-            <span>全部计划</span>
+            <span>想法画布</span>
           </button>        </div>
 
         {projects.length > 0 && (
