@@ -161,10 +161,11 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   下一阶段生成必须存在 finalized `proceed` 或 `override` review；override 理由长期保留在项目 Phase Records。
 *   **验收范围**：
     *   新增 10 条长期执行 Eval，用例总数扩展为 42。
-    *   Backend：`320 passed`。
+    *   Backend：`321 passed`。
     *   Frontend：全部 `.test.mjs`、Hook `11 passed`、Portfolio `12 passed`、长期执行 `15 passed`，build 与 lint 通过。
     *   `git diff --check` 通过；未发现硬编码 API key，临时 Eval 日志已清理。
-    *   DeepSeek 42-case 在当前受管环境中因租户级外发策略被阻止，未记录为通过；需在获准联网的宿主机执行 `python tests/run_evals.py --provider deepseek` 完成最终模型门禁。
+    *   DeepSeek 42-case 实测 `40/42`：Pass Rate 与 Strategy Compliance 为 `95.24%`；JSON Parse、Intent、Horizon、Action Quality 与 Done Criteria Coverage 均为 `100%`。
+    *   Long-Term Loop Contract Pass Rate 为 `94.44%`；case 34 的未来 occurrence 判定与 case 40 的有限交付 loop 误用仍使严格 `42/42` 门禁未关闭。
 
 #### 📍 v1.2.7-B/C: 短期交付与探索规划模型
 *   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。

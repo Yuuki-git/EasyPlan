@@ -240,11 +240,11 @@ python -m pytest tests -q
 python tests/run_evals.py --provider deepseek
 ```
 
-2026-07-06 v1.2.7-A 发布验证的本地 pytest 为 `320 passed`。评测集已扩展为
-42 条；最近一次完整记录的 DeepSeek 基线为 `32/32`，Pass Rate、Intent、
-Strategy、JSON、Horizon、Action Quality 和 Done Criteria Coverage 均为
-`100%`。42-case 必须在允许向 DeepSeek 发送评测输入的环境中重新执行后，才能
-标记模型门禁通过。
+2026-07-06 v1.2.7-A 发布验证的本地 pytest 为 `321 passed`。DeepSeek 42-case
+实测为 `40/42`：Pass Rate 与 Strategy Compliance 为 `95.24%`；Intent、JSON、
+Horizon、Action Quality 和 Done Criteria Coverage 均为 `100%`；Long-Term
+Loop Contract Pass Rate 为 `94.44%`。case 34 与 case 40 仍未通过，严格
+`42/42` 模型门禁尚未关闭。
 
 ## 14. 非目标与后续
 

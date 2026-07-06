@@ -36,16 +36,17 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 
 ## 📊 Planning Eval
 
-EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The suite now contains 42 cases; the latest fully recorded successful baseline remains 32/32.
+EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The 42-case run recorded on 2026-07-06 produced:
 
-- **Recorded Baseline Cases**: 32/32
-- **Current Suite Size**: 42
+- **Cases Passed**: 40/42
+- **Pass Rate**: 95.24%
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
-- **Strategy Compliance Rate**: 100.00%
+- **Strategy Compliance Rate**: 95.24%
 - **Horizon Accuracy**: 100.00%
 - **Action Quality Pass Rate**: 100.00%
 - **Done Criteria Coverage**: 100.00%
+- **Long-Term Loop Contract Pass Rate**: 94.44%
 - **Overall Pass Rate**: 100.00%
 
 ## 🛠️ Architecture

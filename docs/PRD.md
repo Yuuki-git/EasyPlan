@@ -232,17 +232,17 @@ SYNCING  -> 已确认，不允许取消
 
 2026-07-06 v1.2.7-A RC 本地验证：
 
-- Backend：`320 passed`
+- Backend：`321 passed`
 - Frontend Node 状态测试：全部通过
 - Mounted `useSSE` Hook：`11 passed`
 - Portfolio：`12 passed`
 - 长期执行：`15 passed`
 - Build、lint、`git diff --check`：通过
 
-评测集已从 32 条扩展为 42 条。最近一次完整记录的 DeepSeek 成功基线仍为
-`32/32`，各核心指标为 `100%`；本轮 42-case 外部调用被当前受管环境的租户级
-数据外发策略阻止，因此不能宣称通过，需在获准联网的宿主机执行
-`python tests/run_evals.py --provider deepseek` 完成最终模型门禁。
+DeepSeek 42-case 实测为 `40/42`：Pass Rate 与 Strategy Compliance 为
+`95.24%`；JSON Parse、Intent、Horizon、Action Quality 和 Done Criteria
+Coverage 均为 `100%`；Long-Term Loop Contract Pass Rate 为 `94.44%`。
+case 34 与 case 40 仍未通过，因此 Task 12 要求的严格 `42/42` 模型门禁尚未关闭。
 
 ## 12. 后续版本
 

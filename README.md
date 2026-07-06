@@ -36,16 +36,17 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 
 ## 📊 评测基准 (Planning Eval)
 
-DeepSeek 是当前主验收 Provider。评测集已扩展为 42 条；最近一次完整记录的成功基准仍为 32/32：
+DeepSeek 是当前主验收 Provider。2026-07-06 的 42-case 实测结果为：
 
-- **Recorded Baseline Cases**: 32/32
-- **Current Suite Size**: 42
+- **Cases Passed**: 40/42
+- **Pass Rate**: 95.24%
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
-- **Strategy Compliance Rate**: 100.00%
+- **Strategy Compliance Rate**: 95.24%
 - **Horizon Accuracy**: 100.00%
 - **Action Quality Pass Rate**: 100.00%
 - **Done Criteria Coverage**: 100.00%
+- **Long-Term Loop Contract Pass Rate**: 94.44%
 - **Overall Pass Rate**: 100.00%
 
 ## 🛠️ 技术架构
