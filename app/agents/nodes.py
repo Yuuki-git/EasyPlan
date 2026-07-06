@@ -122,6 +122,10 @@ FINITE_DELIVERABLE_PATTERN = re.compile(
     r"[一二两三四五六七八九十百\d]+\s*"
     r"(?:篇|份|个|首|项|章|页|部|套)"
 )
+EXPLICIT_WEEKLY_TARGET_PATTERN = re.compile(
+    r"每周[^，。；！？\d一二两三四五六七八九十]{0,12}"
+    r"([一二两三四五六七八九十\d]+)\s*次"
+)
 
 RULE_PRIORITY_PROMPT = """规则优先级：
 1. intent_type 对应策略高于普通任务拆解习惯。
@@ -1274,6 +1278,27 @@ def _collect_phase_contract_errors(
                     ),
                 )
             )
+        expected_weekly_target = _extract_explicit_weekly_target(intent_text)
+        if expected_weekly_target is not None and not any(
+            loop.target_per_week == expected_weekly_target
+            for loop in context.practice_loops
+        ):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="WEEKLY_TARGET_MISMATCH",
+                    intent_type=intent_type,
+                    failed_rule="Long-Term Execution Loop Contract",
+                    problem=(
+                        "用户明确给出了每周频率，但 practice_loop 没有原样保留："
+                        f"必须包含 target_per_week={expected_weekly_target}。"
+                    ),
+                    offender=task_tree.root,
+                    fix_suggestion=(
+                        "只修正对应 practice_loop 的 target_per_week；保持原 intent_type、"
+                        "Roadmap、Action 和 checkpoint 不变。"
+                    ),
+                )
+            )
 
     if planning_mode == "next_phase":
         if committed_task_tree is None:
@@ -1730,6 +1755,40 @@ def _has_explicit_finite_deliverable(intent_text: str | None) -> bool:
         if not re.search(r"(?:每天|每日|每周|每月)\s*$", prefix):
             return True
     return False
+
+
+def _extract_explicit_weekly_target(intent_text: str | None) -> int | None:
+    if not intent_text:
+        return None
+    match = EXPLICIT_WEEKLY_TARGET_PATTERN.search(intent_text)
+    if match is None:
+        return None
+    return _parse_small_count(match.group(1))
+
+
+def _parse_small_count(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+    digits = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if value == "十":
+        return 10
+    if "十" in value:
+        tens_text, ones_text = value.split("十", 1)
+        tens = digits.get(tens_text, 1) if tens_text else 1
+        ones = digits.get(ones_text, 0) if ones_text else 0
+        return tens * 10 + ones
+    return digits.get(value)
 
 
 def _first_action(task_tree: TaskTree) -> Any | None:

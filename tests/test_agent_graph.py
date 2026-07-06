@@ -1064,6 +1064,58 @@ def test_validator_replans_finite_deliverable_that_contains_practice_loop(monkey
     )
 
 
+def test_validator_replans_when_explicit_weekly_target_is_changed(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "piano",
+            "title": "完成一次钢琴练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "recording",
+            "title": "保存完整演奏录音",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "intent_text": "四个月学会一首钢琴曲，每周练习 5 次",
+                "task_tree": plan,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "initial",
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        "WEEKLY_TARGET_MISMATCH" in error
+        and "target_per_week=5" in error
+        for error in result["validation_errors"]
+    )
+
+
 def test_validator_rejects_context_checklist_without_grouping():
     result = asyncio.run(
         task_tree_validator_node(

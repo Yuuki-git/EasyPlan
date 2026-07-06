@@ -240,12 +240,10 @@ python -m pytest tests -q
 python tests/run_evals.py --provider deepseek
 ```
 
-2026-07-06 v1.2.7-A 发布验证的本地 pytest 为 `323 passed`。DeepSeek 42-case
-实测为 `40/42`：Pass Rate 与 Strategy Compliance 为 `95.24%`；Intent、JSON、
-Horizon、Action Quality 和 Done Criteria Coverage 均为 `100%`；Long-Term
-Loop Contract Pass Rate 为 `94.44%`。此基线之后，case 34 评分误判已修复，
-case 40 已加入确定性 Validator/replan，Eval 也复用运行时 Validator。受当前
-环境外发限制，validator-aware `42/42` 仍需在允许外部调用的环境中复跑。
+2026-07-06 v1.2.7-A 发布验证的本地 pytest 为 `324 passed`。DeepSeek
+Validator-aware 42-case 实测为 `42/42`；Pass Rate、Intent、Strategy、JSON、
+Horizon、Action Quality、Done Criteria Coverage 与 Long-Term Loop Contract
+均为 `100%`。case 40 连续三次单独验证全部通过。
 
 ## 14. 非目标与后续
 

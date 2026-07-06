@@ -161,12 +161,12 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   下一阶段生成必须存在 finalized `proceed` 或 `override` review；override 理由长期保留在项目 Phase Records。
 *   **验收范围**：
     *   新增 10 条长期执行 Eval，用例总数扩展为 42。
-    *   Backend：`323 passed`。
+    *   Backend：`324 passed`。
     *   Frontend：全部 `.test.mjs`、Hook `11 passed`、Portfolio `12 passed`、长期执行 `15 passed`，build 与 lint 通过。
     *   `git diff --check` 通过；未发现硬编码 API key，临时 Eval 日志已清理。
-    *   DeepSeek 42-case 实测 `40/42`：Pass Rate 与 Strategy Compliance 为 `95.24%`；JSON Parse、Intent、Horizon、Action Quality 与 Done Criteria Coverage 均为 `100%`。
-    *   case 34 的“本周天气”正则误判已修复；case 40 已增加确定性 Validator 与运行时 replan，并让 Eval 复用同一 Validator。
-    *   当前执行环境禁止再次向 DeepSeek 外发用例，因此 validator-aware case 40 三连跑与完整 `42/42` 仍是正式发布前唯一未关闭门槛。
+    *   case 34 的“本周天气”正则误判已修复；有限交付 loop 与显式周频率均有确定性 Validator/replan，Eval 复用同一 Validator。
+    *   case 40 连续三次 DeepSeek 验证全部通过。
+    *   DeepSeek Validator-aware 42-case 实测 `42/42`；Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality、Done Criteria Coverage 与 Long-Term Loop Contract 均为 `100%`。
 
 #### 📍 v1.2.7-B/C: 短期交付与探索规划模型
 *   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。
