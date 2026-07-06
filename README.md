@@ -27,6 +27,7 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 - **任务质量护栏**：Runtime Validator 检查任务是否具体、可开始、可完成，并支持 `done_criteria`、`start_hint` 和 `fallback_action`。
 - **三层规划**：通过 `Roadmap → Current Phase → Next Action` 区分远期方向、近期计划和眼前动作。
 - **阶段推进**：当前阶段完成后，可在同一项目中生成、预览并追加下一阶段。
+- **长期执行循环**：长期成长计划支持每周练习配额、结果证据和阶段复盘；用户确认 `proceed` 或带理由的 `override` 后再进入下一阶段。
 - **探索决策回答层**：先给出“当前判断 → 判断依据 → 下一步探索”，再将不确定问题拆成低成本验证动作。
 - **对话式微调**：用户可以用自然语言调整计划，无需手工重建任务树。
 - **原生任务视图**：“全部计划”以项目卡片汇总阶段、进度和下一步，“项目”承载具体计划，“我的一天”聚合当天行动。
@@ -35,9 +36,10 @@ Intent Capture → Intent Profile → Strategy Router → Planner → Validator 
 
 ## 📊 评测基准 (Planning Eval)
 
-DeepSeek 是当前主验收 Provider。最近一次已记录的成功基准为 32/32：
+DeepSeek 是当前主验收 Provider。评测集已扩展为 42 条；最近一次完整记录的成功基准仍为 32/32：
 
-- **Core Cases**: 32
+- **Recorded Baseline Cases**: 32/32
+- **Current Suite Size**: 42
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
 - **Strategy Compliance Rate**: 100.00%
@@ -148,15 +150,15 @@ docker-compose logs -f backend
 
 ## 📅 路线图 (Roadmap)
 
-### v1.2.7 - Planning Model Differentiation
+### v1.2.7-A - Long-Term Execution Loop
 
-- 让长期目标使用更高层的阶段地图，只展开眼前阶段。
-- 让短期目标使用交付物、工作流和执行路径，而不是复用长期 Roadmap。
-- 让探索决策使用独立的判断与验证路线。
+- 长期成长计划通过每周练习循环持续执行，不预生成未来每日任务。
+- 阶段是否可推进同时参考过程完成度和结果证据，并由用户完成阶段复盘。
+- 旧计划和非长期计划继续使用原有 schema v1 行为。
 
 ### 后续方向
 
-- 长期、短期和探索目标采用更具差异化的规划模型。
+- v1.2.7-B/C：短期交付与探索决策采用更具差异化的规划模型。
 - 围绕单个任务提供“帮我开始”“我卡住了”“拆得更细”等 Action Coach 能力。
 - 根据用户偏好的任务粒度、工作时长和常见阻力进行个性化规划。
 

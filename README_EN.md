@@ -27,6 +27,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Action Quality Guardrails**: Runtime validation for concrete, startable, and completable tasks with `done_criteria`, `start_hint`, and `fallback_action`.
 - **Three-Tier Planning**: `Roadmap → Current Phase → Next Action` separates long-term direction, near-term planning, and the immediate step.
 - **Phase Progression**: Generate, preview, and append the next phase inside the same project.
+- **Long-Term Execution Loops**: Track weekly practice quotas, outcome evidence, and a user-controlled phase review before progressing.
 - **Exploration Answer Layer**: Give a current judgment, supporting evidence, and next exploration steps before breaking uncertainty into low-cost validation actions.
 - **Natural Language Refinement**: Adjust a plan conversationally without rebuilding the task tree by hand.
 - **Native Task Views**: All Plans summarizes phase, progress, and next action by project; projects hold individual plans; My Day collects today's actions.
@@ -35,9 +36,10 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 
 ## 📊 Planning Eval
 
-EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider.
+EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The suite now contains 42 cases; the latest fully recorded successful baseline remains 32/32.
 
-- **Core Cases**: 32
+- **Recorded Baseline Cases**: 32/32
+- **Current Suite Size**: 42
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
 - **Strategy Compliance Rate**: 100.00%
@@ -148,15 +150,15 @@ docker-compose logs -f backend
 
 ## 📅 Roadmap
 
-### v1.2.7 - Planning Model Differentiation
+### v1.2.7-A - Long-Term Execution Loop
 
-- Use higher-level phase maps for long-term goals while expanding only the current phase.
-- Model short-term goals as deliverables, workstreams, and execution lanes instead of long-term roadmaps.
-- Give exploration decisions their own judgment and validation route.
+- Execute long-term growth plans through weekly practice loops without pre-generating future daily tasks.
+- Combine process adherence with outcome evidence, then let the user finalize the phase review.
+- Preserve schema-v1 behavior for legacy and non-long-term plans.
 
 ### Future Directions
 
-- More differentiated planning models for long-term, short-term, and exploration goals.
+- v1.2.7-B/C: differentiated execution models for short-term delivery and exploration decisions.
 - Task-level Action Coach capabilities such as “help me start,” “I am stuck,” and “break this down.”
 - Personalized planning based on preferred task size, work duration, and common sources of resistance.
 

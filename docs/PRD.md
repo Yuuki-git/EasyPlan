@@ -219,26 +219,38 @@ SYNCING  -> 已确认，不允许取消
 
 ## 11. 当前验收状态
 
-2026-07-05 RC 验证：
+### v1.2.7-A 长期执行循环
 
-- Backend：`265 passed`
-- Frontend Node 状态测试：通过
+- 仅新建 `long_term_growth` 计划可使用 `planning_context.schema_version=2`；schema v1 和非长期计划行为不变。
+- 当前阶段可定义 0-2 个循环练习与 1-2 个结果检查点，不生成未来日期 occurrence。
+- 循环练习按用户时区统计：每个本地自然日最多完成一次，每周配额不跨周结转。
+- “安排到今天”只创建当前 occurrence，默认加入“我的一天”；用户仍可手动移出或重新加入。
+- 阶段 readiness 由 one-off 完成度、循环过程达成率和 outcome evidence 共同决定。
+- 阶段复盘由用户最终决定 `proceed`、`extend`、`adjust` 或 `override`；override 必须填写原因。
+- 只有 finalized `proceed` 或 `override` 才能解锁下一阶段。
+- 频率调整通过不可变 revision 从下一本地周生效，历史周配额、日志和复盘记录不得重写。
+
+2026-07-06 v1.2.7-A RC 本地验证：
+
+- Backend：`320 passed`
+- Frontend Node 状态测试：全部通过
 - Mounted `useSSE` Hook：`11 passed`
-- Portfolio 组件测试：`11 passed`
+- Portfolio：`12 passed`
+- 长期执行：`15 passed`
 - Build、lint、`git diff --check`：通过
 
-DeepSeek 32-case：`32/32`。Pass Rate、Intent Classification、Strategy
-Compliance、JSON Parse、Horizon Accuracy、Action Quality 和 Done Criteria
-Coverage 均为 `100%`；Average Actionability Score 为 `99.85%`，Abstract Task
-Violation Rate 为 `0.75%`。
+评测集已从 32 条扩展为 42 条。最近一次完整记录的 DeepSeek 成功基线仍为
+`32/32`，各核心指标为 `100%`；本轮 42-case 外部调用被当前受管环境的租户级
+数据外发策略阻止，因此不能宣称通过，需在获准联网的宿主机执行
+`python tests/run_evals.py --provider deepseek` 完成最终模型门禁。
 
 ## 12. 后续版本
 
-### v1.2.7 - Planning Model Differentiation
+### v1.2.7-B/C - Planning Model Differentiation
 
-- 长期目标 Roadmap 进一步高层化。
 - 短期目标使用 deliverables/workstreams。
 - 探索决策使用独立 decision route。
+- v1.2.7-A 长期执行循环保持已完成状态。
 
 ### v1.3.0 - Task Copilot
 

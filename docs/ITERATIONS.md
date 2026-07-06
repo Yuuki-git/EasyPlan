@@ -146,16 +146,30 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   Average Actionability Score：`99.85%`
     *   Abstract Task Violation Rate：`0.75%`
 
-#### 📍 v1.2.7: 规划模型 2.0 (Planning Model Differentiation)
-*   **长期目标高层化**：
-    *   `long_term_growth` 继续使用 Roadmap，但 phase 必须更高层，只展开当前 phase，未来 phase 更像地图而不是任务列表。
-*   **短期目标模块化**：
-    *   `short_term_delivery` 不直接复用长期 Roadmap，改为 deliverables / workstreams / execution lanes。
-    *   核心目标是让短期目标强调交付结构，而不是伪装成长线阶段图。
-*   **探索决策路线独立化**：
-    *   `exploration_decision` 保留 decision route，但它是判断与验证路径，不应混成长线执行地图。
-*   **评测升级**：
-    *   后续 eval 不只检查“有没有 roadmap”，而是检查是否为对应 intent 采用了正确的规划模型。
+#### ✅ v1.2.7-A: 长期执行循环 (Long-Term Execution Loop) (Completed / Release Gate)
+*   **Schema v2 边界**：
+    *   仅新建 `long_term_growth` 计划使用 schema v2；旧计划与其他 intent 继续使用 schema v1。
+    *   当前阶段最多包含 2 个 practice loop、2 个 outcome checkpoint，未来 occurrence 不会被预生成。
+*   **循环执行规则**：
+    *   周配额按本地周统计，不足部分不结转到下一周。
+    *   同一 loop 每个本地自然日最多记录一次完成；完成任务与写入 completion log 位于同一事务。
+    *   排程产生一个普通 planned task，并默认加入“我的一天”；之后是否保留在“我的一天”仍由用户控制。
+    *   频率调整从下一本地周创建新 revision，不改写历史周目标与完成日志。
+*   **阶段复盘与推进**：
+    *   readiness 同时计算 one-off、过程达成率和 outcome evidence。
+    *   用户可选择 `proceed`、`extend`、`adjust` 或带理由的 `override`。
+    *   下一阶段生成必须存在 finalized `proceed` 或 `override` review；override 理由长期保留在项目 Phase Records。
+*   **验收范围**：
+    *   新增 10 条长期执行 Eval，用例总数扩展为 42。
+    *   Backend：`320 passed`。
+    *   Frontend：全部 `.test.mjs`、Hook `11 passed`、Portfolio `12 passed`、长期执行 `15 passed`，build 与 lint 通过。
+    *   `git diff --check` 通过；未发现硬编码 API key，临时 Eval 日志已清理。
+    *   DeepSeek 42-case 在当前受管环境中因租户级外发策略被阻止，未记录为通过；需在获准联网的宿主机执行 `python tests/run_evals.py --provider deepseek` 完成最终模型门禁。
+
+#### 📍 v1.2.7-B/C: 短期交付与探索规划模型
+*   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。
+*   `exploration_decision` 继续演进独立的判断与验证路线。
+*   本阶段不改变 v1.2.7-A 已完成的长期执行数据契约。
 
 #### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
 *   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。

@@ -208,12 +208,38 @@ DELETE /api/tasks/{task_id}
 - “我的一天”是虚拟视图，不能改变任务所属项目。
 - `planned` 与 `my_day` 中同一 `task_id` 的状态必须保持一致。
 
-## 9. 前端验收命令
+## 9. 长期执行循环
+
+`ThreadSnapshot.long_term_execution` 是 schema v2 项目的执行权威状态。前端不得
+用本地任务计数替代 backend readiness。
+
+```http
+POST /api/threads/{thread_id}/practice-loops/{loop_id}/schedule-today
+PUT  /api/threads/{thread_id}/phases/{phase_id}/review
+POST /api/threads/{thread_id}/phases/{phase_id}/review/decision
+```
+
+- schedule 成功后按 task ID 合并任务，并重新加载 selected project snapshot；
+- occurrence 初次创建时会加入 My Day，之后继续复用普通 Task PATCH；
+- 完成 occurrence 后重新加载 snapshot 和当前任务视图；
+- `409` 仅更新 `practiceError`，不得覆盖已有 board tasks；
+- review mutation 完成后重新读取 snapshot，不在前端自行计算 recommendation；
+- schema v1 的 `long_term_execution` 为 `null`，继续使用原 unlock 逻辑。
+
+UI 分工：
+
+- `PracticeLoopPanel` 显示本周/累计进度，并只在后端允许时安排今天；
+- `PhaseReviewPanel` 收集 evidence 和用户 decision，始终展示系统 recommendation；
+- `PhaseRecords` 仅位于选中项目内，展示 finalized review、历史配额和 override reason；
+- “全部计划”和“我的一天”不渲染项目级 Phase Records。
+
+## 10. 前端验收命令
 
 ```bash
 cd frontend
 npm run test:hooks
 npm run test:portfolio
+npm run test:long-term
 node tests/runEvents.test.mjs
 node tests/stateRestoration.test.mjs
 npm run build

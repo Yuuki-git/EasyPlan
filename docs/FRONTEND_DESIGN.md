@@ -1,6 +1,6 @@
 # EasyPlan 前端设计
 
-版本：`v1.2.6-rc.1`
+版本：`v1.2.7-rc.1`
 
 ## 1. 设计目标
 
@@ -165,11 +165,35 @@ npm run lint
 同时运行 `frontend/tests/*.test.mjs`。SSE 和状态恢复变更应包含 Hook 级测试，不
 能只依赖 store helper 单测。
 
-## 11. 下一版本
+## 11. v1.2.7-A 长期执行界面
 
-`v1.2.6` 已经收口：
-- 强化了“全部计划”的跨项目总览 (Portfolio Overview)，通过纯 selector 动态展示当前阶段、进度与 Next Action。
-- 优化了 SSE 卡住时的“重新连接”及“重试/重新生成”语义。
-- 实现初始/refine SYNCING 状态的优雅返回，保留 activeRun。
+schema v2 项目在当前阶段内组合三个独立区域：
 
-下一版本 `v1.2.7` 将聚焦长期、短期和探索规划模型的差异化。
+1. `PracticeLoopPanel`：展示循环定义、本周进度、阶段累计和“安排到今天”。
+2. `PhaseReviewPanel`：展示系统 readiness，收集结果证据、困难、下阶段容量和用户 decision。
+3. `PhaseRecords`：在项目内展示已完成阶段的复盘历史、历史周目标和 override reason。
+
+边界：
+
+- future occurrence 不渲染，只有用户排程后才出现普通 Task；
+- occurrence 默认加入 My Day，但用户可通过既有太阳按钮控制；
+- loop-owned 标题和完成标准不可在任务卡中编辑；
+- 已完成 occurrence 只读，删除/完成语义服从后端不可变日志约束；
+- readiness 和 review availability 只读取 `longTermExecution` snapshot，不由组件推导；
+- schema v1 继续使用既有 task-count unlock；
+- Phase Records 仅出现在 selected project，不进入 Portfolio 或 My Day。
+
+Store mutation 复用现有 snapshot gate。schedule、review update、review decision
+完成后重新加载项目快照；occurrence completion 同时刷新执行进度和当前任务视图。
+
+## 12. 验证要求
+
+除原有 Hook、Portfolio、build 和 lint 外，运行：
+
+```bash
+cd frontend
+npm run test:long-term
+```
+
+长期执行测试必须覆盖 selector、store、loop panel、review panel、phase records、
+schema-v1 fallback、My Day 同 task ID 同步以及 stale snapshot 防线。

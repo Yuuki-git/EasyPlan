@@ -200,7 +200,38 @@ app/
 - runtime 负责 run 生命周期、事件缓存与后台执行。
 - agent nodes 负责模型调用、策略和任务树校验。
 
-## 12. 验证基线
+## 12. Schema v2 长期执行循环
+
+v1.2.7-A 仅为新 `long_term_growth` 计划启用 schema v2。schema v1、旧任务和
+其他 intent 继续沿用原状态机。
+
+```text
+TaskTree definitions
+  -> practice_loops + immutable revisions
+  -> schedule one occurrence to planned/My Day
+  -> task completion + daily log in one transaction
+  -> process/outcome readiness
+  -> draft review
+  -> finalized user decision
+  -> next-phase gate
+```
+
+核心不变量：
+
+- future occurrence 不预生成；每次只安排当前需要执行的一条任务；
+- 同一 loop 每个本地日期最多一条完成日志；
+- 周配额不足不结转，进度按每周生效的 revision 计算；
+- 调整频率只创建下一本地周生效的新 revision，不改写历史；
+- task completion 与 completion log 原子提交；
+- schedule 默认加入 My Day，但 My Day 始终是用户控制的虚拟视图；
+- 下一阶段必须有 finalized `proceed` 或 `override`；
+- override reason 保留在 phase review history，供前端 Phase Records 展示。
+
+持久化拆分为 loop definition、revision、completion log 和 phase review 四类表，
+避免把执行历史塞回 TaskTree JSON。Readiness 使用纯计算服务，repository 负责
+所有权、行锁、幂等和事务。
+
+## 13. 验证基线
 
 本地发布门槛：
 
@@ -209,13 +240,14 @@ python -m pytest tests -q
 python tests/run_evals.py --provider deepseek
 ```
 
-2026-07-05 发布验证的本地 pytest 为 `265 passed`。DeepSeek 主验收为
-`32/32`，Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality 和 Done
-Criteria Coverage 均为 `100%`。
+2026-07-06 v1.2.7-A 发布验证的本地 pytest 为 `320 passed`。评测集已扩展为
+42 条；最近一次完整记录的 DeepSeek 基线为 `32/32`，Pass Rate、Intent、
+Strategy、JSON、Horizon、Action Quality 和 Done Criteria Coverage 均为
+`100%`。42-case 必须在允许向 DeepSeek 发送评测输入的环境中重新执行后，才能
+标记模型门禁通过。
 
-## 13. 非目标与后续
+## 14. 非目标与后续
 
 - 不恢复 Todoist、Microsoft To Do、MCP 或 OAuth 外部同步主线。
-- “下一阶段前补充进展、偏差、新约束”的交互留到后续阶段复盘版本。
-- v1.2.7 聚焦长期、短期与探索目标的规划模型差异化。
-- 更强的阶段复盘和个性化规划继续放入后续版本。
+- v1.2.7-A 只完成长期执行循环；短期交付与探索规划模型留给 v1.2.7-B/C。
+- 更强的个性化规划继续放入后续版本。

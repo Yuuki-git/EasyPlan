@@ -134,13 +134,28 @@ activeRun
 - `interrupt_payload`、phase envelope、SSE payload 和 commit receipt 必须有明确类型。
 - API 不支持的字段不要加入更新请求类型。
 
-## 11. 验收要求
+## 11. 长期执行循环
+
+- `longTermExecution` 只来自 thread snapshot，不在前端重新计算 readiness。
+- schema v1 必须返回既有 planning view，不显示循环、复盘或历史记录组件。
+- schedule 只创建今天的一条 occurrence；不得在前端生成未来任务。
+- occurrence 是普通 task ID，在项目与 My Day 中共享状态。
+- occurrence 初次 schedule 可加入 My Day，但之后必须允许用户控制 `is_in_my_day`。
+- loop-owned title/done criteria 不可编辑；完成日志和历史复盘不可伪造或覆盖。
+- review decision 必须显式选择；override 按钮在缺少理由时禁用。
+- `extend/adjust` 只提交用户输入，revision 生效周和历史目标由后端决定。
+- `PhaseRecords` 只在 selected project 内展示，不能加入全局导航或 Portfolio。
+- mutation 后复用 `loadProjectSnapshot` 与 `fetchTasks`，不要新增第二套竞态控制。
+
+## 12. 验收要求
 
 至少运行：
 
 ```bash
 cd frontend
 npm run test:hooks
+npm run test:portfolio
+npm run test:long-term
 npm run build
 npm run lint
 ```
@@ -160,7 +175,7 @@ npm run lint
 - stalled 重新连接（sseReconnectNonce 增加、EventSource 重新连接、不重建请求）
 - dismissInitialSync 保留 activeRun 并最终由 done 成功同步项目到 Portfolio
 
-## 12. 交付纪律
+## 13. 交付纪律
 
 - 遵循现有 React、Zustand、Tailwind 和组件结构。
 - 不用 timeout/ref 驱动需要 React 重渲染的可见状态。

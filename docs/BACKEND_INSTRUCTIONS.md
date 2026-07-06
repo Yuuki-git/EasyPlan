@@ -112,7 +112,19 @@ DELETE /api/tasks/{task_id}
 - 仅保存必要 usage 元数据，不保存 raw prompt、完整推理或裸响应。
 - 模型返回必须经过 JSON 清理、repair retry、Pydantic 和业务 validator。
 
-## 8. 测试要求
+## 8. 长期执行循环不变量
+
+- schema v2 只允许用于新 `long_term_growth`；不得改变 schema v1 或其他 intent。
+- 不预生成未来 occurrence。
+- schedule、complete、review 都必须按 `user_id + thread_id` 验证所有权。
+- 同一 loop 每个本地日期最多计数一次，周配额不结转。
+- task 完成与 completion log 必须位于同一事务，失败时共同回滚。
+- 调整频率必须创建下一本地周生效的 revision，历史 revision 和日志不可修改。
+- 下一阶段必须读取 finalized review，且 decision 只能是 `proceed` 或 `override`。
+- `override` 必须保留理由；不得在 snapshot 或历史记录中隐藏。
+- schedule 初始可加入 My Day，但不得阻止用户之后修改 `is_in_my_day`。
+
+## 9. 测试要求
 
 行为变更先补失败测试，再修改实现。至少运行：
 
@@ -138,7 +150,17 @@ python -m pytest tests -q
 python tests/run_evals.py --provider deepseek
 ```
 
-## 9. 交付纪律
+涉及长期执行循环时增加或维护：
+
+- schema v1/v2 兼容和非长期拒绝；
+- 本地周边界、无结转和 revision 历史目标；
+- schedule 幂等、租户隔离和每日唯一日志；
+- completion/log 原子性及删除语义；
+- review evidence、decision、override reason 与 next-phase gate；
+- snapshot/OpenAPI/前端类型契约；
+- 原始 32 Eval 用例不回退，新增长期用例通过。
+
+## 10. 交付纪律
 
 - 只修改任务需要的模块。
 - 不绕过 repository 的 ownership 和事务边界。

@@ -390,7 +390,52 @@ view_bucket=planned|my_day|backlog
 
 这些字段从任务 metadata 中读取，旧任务缺失时返回 `null`。
 
-## 13. 契约来源
+## 13. 长期执行循环 API
+
+该能力仅对启用 schema v2 的 `long_term_growth` thread 生效。所有接口都要求
+JWT、`X-User-Timezone`，并按 `user_id + thread_id` 校验所有权。
+
+### POST `/api/threads/{thread_id}/practice-loops/{loop_id}/schedule-today`
+
+为指定循环创建或返回今天的 occurrence task：
+
+- task 物理归属仍是 `planned`，初次创建时 `is_in_my_day=true`；
+- 同一个 loop 同时最多保留一个 active occurrence；
+- 当天已有完成日志、当前周已达到配额或 loop 不可用时返回 `409`；
+- 重复请求不会创建重复 occurrence。
+
+未来日期 occurrence 不会预生成。用户之后可通过普通 Task PATCH 控制
+`is_in_my_day`。
+
+### PUT `/api/threads/{thread_id}/phases/{phase_id}/review`
+
+创建或更新当前阶段 draft review。请求可包含 checkpoint evidence、difficulty、
+next capacity 和 early-review 标记。响应包含系统 recommendation 与 readiness
+statistics，系统事实不可由客户端覆盖。
+
+### POST `/api/threads/{thread_id}/phases/{phase_id}/review/decision`
+
+finalize 当前阶段复盘：
+
+- `proceed`：接受当前阶段结果；
+- `extend`：延长当前循环，但总周期不得超过 12 周；
+- `adjust`：为下一本地周创建新的 loop revision；
+- `override`：覆盖系统 recommendation，必须提交可见的 `override_reason`。
+
+只有 finalized `proceed` 或 `override` review 才能调用下一阶段生成接口。
+
+### ThreadSnapshot 扩展
+
+schema v2 snapshot 增加 `long_term_execution`，包含：
+
+- 当前 loop 的本周、累计和 required completions；
+- `one_off_ready/process_ready/outcome_ready`；
+- `recommendation` 与 `review_available`；
+- draft、最近 finalized review 与完整 review history。
+
+schema v1 与非长期 thread 返回 `null`，保持旧客户端兼容。
+
+## 14. 契约来源
 
 修改接口时必须同步：
 
