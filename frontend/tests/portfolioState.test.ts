@@ -177,4 +177,74 @@ describe('selectPortfolioCard selector tests', () => {
     expect(view.nextActionLabel).toBe('暂无下一步动作');
     expect(view.snapshotAvailable).toBe(false);
   });
+
+  // 6. AI project with schema v2 and practice loops progress.
+  test('AI project with schema v2 and practice loops progress', () => {
+    const project: PortfolioProject = {
+      id: 'proj-v2',
+      title: 'Long-term practice project',
+      source: 'ai'
+    };
+
+    const snapshot: ThreadSnapshot = {
+      thread_id: 'proj-v2',
+      status: 'succeeded',
+      state_version: 1,
+      last_event_id: null,
+      server_time: '2026-07-04T00:00:00Z',
+      intent_text: 'V2 project',
+      task_tree: {
+        root: { client_node_id: 'root', title: 'Root', verb: 'do', estimated_minutes: 0, node_type: 'group' },
+        summary: 'V2 plan',
+        planning_context: {
+          schema_version: 2,
+          intent_type: 'long_term_growth',
+          time_horizon: 'months',
+          roadmap: [
+            { phase_id: 'phase-1', order: 1, title: 'Phase 1', objective: 'Obj 1', status: 'current' }
+          ],
+          current_phase: {
+            phase_id: 'phase-1',
+            title: 'Phase 1',
+            objective: 'Obj 1',
+            completion_rule: 'long_term_execution_gate',
+            estimated_duration_weeks: 4
+          },
+          next_action_client_node_id: null
+        }
+      },
+      long_term_execution: {
+        phase_id: 'phase-1',
+        recommendation: 'partial',
+        review_available: false,
+        one_off_ready: true,
+        process_ready: false,
+        outcome_ready: false,
+        loops: [
+          {
+            loop_id: 'loop-1',
+            loop_key: 'l1',
+            title: 'Practice 1',
+            done_criteria: 'criteria 1',
+            target_per_week: 3,
+            current_week_completed: 1,
+            total_completed: 4,
+            required_completions: 10,
+            estimated_end: '2026-08-01',
+            status: 'active',
+            can_schedule_today: true,
+            active_occurrence_task_id: null
+          }
+        ],
+        active_review: null,
+        latest_finalized_review: null,
+        review_history: []
+      }
+    };
+
+    const view = selectPortfolioCard(project, snapshot, []);
+    expect(view.typeLabel).toBe('长期成长');
+    expect(view.currentPhaseLabel).toBe('Phase 1');
+    expect(view.progressLabel).toBe('练习 4 / 10');
+  });
 });

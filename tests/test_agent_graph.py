@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from copy import deepcopy
 from typing import Any
 
 from langgraph.types import Command
@@ -431,6 +432,8 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "训练计划" in long_term_prompt
     assert "summary 写成“Phase 1 启动计划”" in long_term_prompt
     assert "assumptions 必须是 []" in long_term_prompt
+    assert "assumptions 保持为 []" not in long_term_prompt
+    assert "schema v2 未给频率时必须记录保守容量假设" in long_term_prompt
     assert "Roadmap 只能写入 planning_context.roadmap" in long_term_prompt
     assert "short_term_delivery 禁止" in prompt
     assert "想一想" in prompt
@@ -574,6 +577,122 @@ def test_phase_planning_feature_flag_can_restore_legacy_output(monkeypatch):
     assert "planning_context 必须为 null" in prompt
 
 
+def test_long_term_prompt_requests_loops_only_for_repeated_practice():
+    prompt = build_planner_prompt(
+        "半年后跑完半程马拉松，每周能训练三次",
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+    )
+
+    assert "schema_version = 2" in prompt
+    assert "practice_loops" in prompt
+    assert "每周能训练三次" in prompt
+    assert "不要预生成未来 occurrence" in prompt
+    assert "合计最多 5 个核心承诺" in prompt
+    assert "numeric/self_assessment 的 target_value 必须是非 null 数值" in prompt
+    assert "artifact 必须使用 operator=exists" in prompt
+    assert "有限数量的交付目标" in prompt
+    assert "3 个一次性 Action + 1 个 practice loop 时只能有 1 个 outcome checkpoint" in prompt
+    assert "assumptions 必须明确记录 target_per_week" in prompt
+    assert "不得创建未来数周时间表或周一/周二排程" in prompt
+    assert "输入包含明确总数或单一交付物时，practice_loops 必须为 []" in prompt
+    assert "只要生成 practice_loop 且用户没有给出每周频率" in prompt
+    assert "TaskTree 中禁止出现“第一周”“第1周”" in prompt
+    assert "有限交付目标默认 0 个 practice loop" in prompt
+    assert "“每周练习 5 次”必须输出 target_per_week=5" in prompt
+
+
+def test_exploration_prompt_remains_schema_v1():
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+    )
+
+    assert "planning_context.schema_version 必须是 1" in prompt
+    assert "不得输出 practice_loops" in prompt
+
+
+def test_long_term_execution_flag_rejects_schema_v2_output(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "false")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = []
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "artifact",
+            "title": "Save artifact",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert any("schema version 2 is not accepted" in error for error in errors)
+
+
+def test_schema_v2_validator_allows_loop_cadence_without_future_schedule(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    plan["root"]["children"][0]["title"] = "制定每周 3 次口语练习计划"
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "speaking",
+            "title": "完成一次口语练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "confidence",
+            "title": "完成口语自评",
+            "evidence_type": "self_assessment",
+            "operator": "gte",
+            "target_value": 3,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert not any("HORIZON_OVER_EXPANDED" in error for error in errors)
+
+
 def test_next_phase_prompt_locks_completed_phases_and_profile():
     prompt = build_planner_prompt(
         "学习日语 N3",
@@ -588,6 +707,49 @@ def test_next_phase_prompt_locks_completed_phases_and_profile():
     assert "只能展开一个新的 current phase" in prompt
     assert "不得复用已提交计划中的任何 client_node_id" in prompt
     assert "1/1 AI actions completed" in prompt
+
+
+def test_next_phase_prompt_preserves_schema_v2_execution_contract():
+    committed = phase_plan(current_order=1)
+    context = committed["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "speaking",
+            "title": "完成一次口语练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "confidence",
+            "title": "完成口语自评",
+            "evidence_type": "self_assessment",
+            "operator": "gte",
+            "target_value": 3,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    prompt = build_planner_prompt(
+        "提高英语口语",
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+        planning_mode="next_phase",
+        committed_task_tree=committed,
+        current_phase_task_summary="review finalized: proceed",
+    )
+
+    assert "下一阶段规划模式" in prompt
+    assert "planning_context.schema_version = 2" in prompt
+    assert "practice_loops" in prompt
+    assert "schema_version 必须与已提交计划保持一致" in prompt
 
 
 def test_next_phase_validator_replans_when_client_node_id_reuses_committed_tree():
@@ -775,6 +937,131 @@ def test_validator_enforces_global_size_limits():
     assert "top-level node count" in too_many_top["validation_errors"][0]
     assert too_many_children["validation_status"] == "needs_replan"
     assert "children count" in too_many_children["validation_errors"][0]
+
+
+def test_validator_rejects_more_than_five_v2_core_commitments():
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "loop_1",
+            "title": "Practice one set",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "Finish one set and record errors",
+        },
+        {
+            "loop_id": "loop_2",
+            "title": "Review one set",
+            "target_per_week": 2,
+            "duration_weeks": 4,
+            "done_criteria": "Review all recorded errors",
+        },
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "score_1",
+            "title": "Reach score one",
+            "evidence_type": "numeric",
+            "operator": "gte",
+            "target_value": 60,
+        },
+        {
+            "checkpoint_id": "score_2",
+            "title": "Reach score two",
+            "evidence_type": "numeric",
+            "operator": "gte",
+            "target_value": 70,
+        },
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+    extra = deepcopy(plan["root"]["children"][0])
+    extra["client_node_id"] = "phase_01_action_02"
+    extra["title"] = "Complete a second one-off action"
+    plan["root"]["children"].append(extra)
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert any("at most 5 core commitments" in error for error in errors)
+
+
+def test_validator_replans_finite_deliverable_that_contains_practice_loop(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "writing",
+            "title": "完成一次写作练习",
+            "target_per_week": 1,
+            "duration_weeks": 4,
+            "done_criteria": "完成一篇文章并保存",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "articles",
+            "title": "完成 12 篇文章",
+            "evidence_type": "numeric",
+            "unit": "篇",
+            "operator": "gte",
+            "target_value": 12,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "intent_text": "三个月完成 12 篇写作练习",
+                "task_tree": plan,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "initial",
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        "FINITE_DELIVERABLE_LOOP_FORBIDDEN" in error
+        for error in result["validation_errors"]
+    )
+    recurring_errors = _validate_task_tree(
+        plan,
+        intent_text="每周完成 5 篇写作练习",
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+    assert not any(
+        "FINITE_DELIVERABLE_LOOP_FORBIDDEN" in error
+        for error in recurring_errors
+    )
 
 
 def test_validator_rejects_context_checklist_without_grouping():

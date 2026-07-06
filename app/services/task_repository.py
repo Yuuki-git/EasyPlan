@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,6 +13,10 @@ from app.services.phase_planning import (
     choose_next_action,
     complete_final_phase,
     is_ai_phase_action,
+)
+from app.services.practice_repository import (
+    PracticeLoopConflictError,
+    PracticeLoopRepository,
 )
 
 
@@ -150,8 +155,31 @@ class TaskRepository:
                 return None
 
             previous_status = task.status
+            practice_loop_id = _practice_loop_id(task)
+            if (
+                practice_loop_id is not None
+                and previous_status == "completed"
+                and changes.get("status") != "completed"
+                and "status" in changes
+            ):
+                raise PracticeLoopConflictError(
+                    code="PRACTICE_COMPLETION_IMMUTABLE",
+                    message="A counted practice completion cannot be reopened",
+                )
             for field, value in changes.items():
                 setattr(task, field, value)
+
+            if (
+                practice_loop_id is not None
+                and previous_status != "completed"
+                and task.status == "completed"
+            ):
+                await PracticeLoopRepository(self.session).record_completion(
+                    user_id=user_id,
+                    task=task,
+                    loop_id=practice_loop_id,
+                    now=datetime.now(timezone.utc),
+                )
 
             phase_id = _phase_id_for_ai_action(task)
             if (
@@ -190,6 +218,15 @@ class TaskRepository:
             if task is None:
                 return False
 
+            practice_loop_id = _practice_loop_id(task)
+            if practice_loop_id is not None and task.status != "completed":
+                await PracticeLoopRepository(
+                    self.session
+                ).clear_active_occurrence(
+                    user_id=user_id,
+                    loop_id=practice_loop_id,
+                    task_id=task.id,
+                )
             phase_id = _phase_id_for_ai_action(task)
             result = await self.session.execute(
                 delete(Task).where(
@@ -249,7 +286,11 @@ class TaskRepository:
             for index, phase in enumerate(context.roadmap)
             if phase.phase_id == current_phase_id
         )
-        if progress.is_complete and current_index == len(context.roadmap) - 1:
+        if (
+            context.schema_version == 1
+            and progress.is_complete
+            and current_index == len(context.roadmap) - 1
+        ):
             tree.planning_context = complete_final_phase(context)
         thread.task_tree = tree.model_dump(mode="json")
 
@@ -310,3 +351,14 @@ def _phase_id_for_ai_action(task: Task) -> str | None:
     if not isinstance(phase_id, str):
         return None
     return phase_id if is_ai_phase_action(task, phase_id) else None
+
+
+def _practice_loop_id(task: Task) -> UUID | None:
+    metadata = task.metadata_ if isinstance(task.metadata_, dict) else {}
+    value = metadata.get("practice_loop_id")
+    if not isinstance(value, str):
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None

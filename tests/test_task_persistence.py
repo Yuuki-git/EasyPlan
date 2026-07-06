@@ -113,6 +113,38 @@ def next_phase_tree() -> dict:
     return tree
 
 
+def long_term_v2_plan() -> dict:
+    tree = phase_tree_with_hierarchy_and_dependency()
+    context = tree["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "n3_vocab",
+            "title": "Complete one N3 vocabulary practice",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "Complete 20 questions and record mistakes",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "vocab_test",
+            "title": "Complete vocabulary test",
+            "evidence_type": "numeric",
+            "unit": "percent",
+            "operator": "gte",
+            "target_value": 65,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+    return tree
+
+
 def test_flatten_task_tree_preserves_client_node_parent_mapping_and_planned_bucket():
     tasks, dependencies = flatten_task_tree_for_persistence(
         valid_tree_with_hierarchy_and_dependency(),
@@ -208,6 +240,81 @@ def test_persist_internal_tasks_node_inserts_tasks_dependencies_and_marks_thread
     assert session.executed_updates
     compiled_params = session.executed_updates[0].compile().params
     assert "succeeded" in compiled_params.values()
+
+
+def test_v2_persistence_syncs_loop_definitions_in_task_transaction(monkeypatch):
+    session = FakePersistSession()
+    calls = []
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    async def capture_definitions(repository, **kwargs):
+        calls.append((repository.session, kwargs))
+
+    import app.db.session as db_session
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "persist_definitions_from_tree",
+        capture_definitions,
+    )
+
+    result = asyncio.run(
+        persist_internal_tasks_node(
+            {
+                "user_id": USER_ID,
+                "thread_id": "thread-v2",
+                "task_tree": long_term_v2_plan(),
+                "planning_mode": "initial",
+                "user_timezone": "Asia/Shanghai",
+            }
+        )
+    )
+
+    assert result == {"task_persistence_status": "succeeded"}
+    assert len(calls) == 1
+    repository_session, kwargs = calls[0]
+    assert repository_session is session
+    assert kwargs["timezone_name"] == "Asia/Shanghai"
+    assert kwargs["task_tree"].planning_context.schema_version == 2
+
+
+def test_v2_persistence_does_not_update_thread_when_loop_sync_fails(monkeypatch):
+    session = FakePersistSession()
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    async def fail_definitions(_repository, **_kwargs):
+        raise RuntimeError("loop synchronization failed")
+
+    import app.db.session as db_session
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "persist_definitions_from_tree",
+        fail_definitions,
+    )
+
+    with pytest.raises(RuntimeError, match="loop synchronization failed"):
+        asyncio.run(
+            persist_internal_tasks_node(
+                {
+                    "user_id": USER_ID,
+                    "thread_id": "thread-v2",
+                    "task_tree": long_term_v2_plan(),
+                    "planning_mode": "initial",
+                    "user_timezone": "Asia/Shanghai",
+                }
+            )
+        )
+
+    assert session.executed_updates == []
 
 
 def test_persist_internal_tasks_node_does_not_use_add_all(monkeypatch):

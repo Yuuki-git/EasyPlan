@@ -19,7 +19,11 @@ DEFAULT_PHASE_CASES_PATH = PROJECT_ROOT / "tests" / "evals" / "phase_planning_ca
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.agents.nodes import build_planner_prompt  # noqa: E402
+from app.agents.nodes import (  # noqa: E402
+    MAX_REPLAN_ATTEMPTS,
+    _validate_task_tree,
+    build_planner_prompt,
+)
 from app.api.schemas import TaskNode, TaskTree  # noqa: E402
 from app.services.action_quality import summarize_action_quality  # noqa: E402
 from app.services.llm_service import (  # noqa: E402
@@ -47,6 +51,16 @@ LONG_TERM_HORIZON_PATTERNS = [
         r"第[一二三四五六七八九十\d]+个月",
         r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
         r"(每天|每日|每周|每月).{0,12}(坚持|学习|训练|复习|背|练)",
+        r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
+    )
+]
+LONG_TERM_V2_HORIZON_PATTERNS = [
+    re.compile(pattern)
+    for pattern in (
+        r"第[一二三四五六七八九十\d]+周",
+        r"第[一二三四五六七八九十\d]+个月",
+        r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
+        r"(每天|每日).{0,12}(坚持|学习|训练|复习|背|练)",
         r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
     )
 ]
@@ -104,6 +118,13 @@ class EvalCase:
     must_have_icebreaker: bool
     max_nodes: int
     description: str
+    case_id: str | None = None
+    expected_loop_min: int | None = None
+    expected_loop_max: int | None = None
+    expected_weekly_target: int | None = None
+    require_outcome_checkpoints: bool = False
+    require_capacity_assumption: bool = False
+    forbid_future_occurrences: bool = False
 
 
 @dataclass
@@ -142,6 +163,12 @@ class EvalResult:
     average_actionability_score: float | None = None
     done_criteria_coverage: float | None = None
     abstract_task_violation_rate: float | None = None
+    loop_count: int | None = None
+    checkpoint_count: int | None = None
+    commitment_count: int | None = None
+    weekly_target_matches: bool | None = None
+    outcome_evidence_present: bool | None = None
+    future_occurrence_violation: bool | None = None
 
     @property
     def passed(self) -> bool:
@@ -268,13 +295,24 @@ async def run_cases(
         usage_sink = ListUsageSink()
         try:
             intent_profile = await _profile_intent(planner, case.input, reasoning_sink, usage_sink)
-            raw_plan = await _create_plan(
-                planner,
-                case.input,
-                intent_profile,
-                reasoning_sink,
-                usage_sink,
-            )
+            validation_errors: list[str] | None = None
+            for _ in range(MAX_REPLAN_ATTEMPTS + 1):
+                raw_plan = await _create_plan(
+                    planner,
+                    case.input,
+                    intent_profile,
+                    reasoning_sink,
+                    usage_sink,
+                    validation_errors=validation_errors,
+                )
+                validation_errors = _validate_task_tree(
+                    raw_plan,
+                    intent_text=case.input,
+                    intent_profile=intent_profile,
+                    planning_mode="initial",
+                )
+                if not validation_errors:
+                    break
             result = evaluate_plan(case, raw_plan, intent_profile=intent_profile)
         except Exception as exc:
             result = EvalResult(
@@ -373,8 +411,13 @@ async def _create_plan(
     intent_profile: dict[str, Any] | None,
     reasoning_sink: ListReasoningSink,
     usage_sink: ListUsageSink,
+    validation_errors: list[str] | None = None,
 ) -> dict[str, Any]:
-    prompt = build_planner_prompt(user_input, intent_profile=intent_profile)
+    prompt = build_planner_prompt(
+        user_input,
+        intent_profile=intent_profile,
+        validation_errors=validation_errors,
+    )
     parameters = inspect.signature(planner.create_plan).parameters
     if "usage_sink" in parameters:
         return await planner.create_plan(
@@ -546,6 +589,30 @@ def evaluate_plan(
     top_level_preview = preview_top_level_tasks(task_tree)
     first_action_snapshot = snapshot_first_action(task_tree)
     action_quality = summarize_action_quality(task_tree)
+    context = task_tree.planning_context
+    loops = list(context.practice_loops) if context is not None else []
+    checkpoints = (
+        list(context.outcome_checkpoints)
+        if context is not None
+        else []
+    )
+    action_count = sum(
+        node.node_type == "action"
+        for node in iter_task_nodes(task_tree.root)
+    )
+    weekly_target_matches = (
+        any(
+            loop.target_per_week == case.expected_weekly_target
+            for loop in loops
+        )
+        if case.expected_weekly_target is not None
+        else None
+    )
+    future_occurrence_violation = (
+        _contains_future_occurrence_nodes(task_tree)
+        if case.forbid_future_occurrences
+        else None
+    )
 
     return EvalResult(
         input=case.input,
@@ -578,6 +645,28 @@ def evaluate_plan(
         average_actionability_score=action_quality.average_actionability_score,
         done_criteria_coverage=action_quality.done_criteria_coverage,
         abstract_task_violation_rate=action_quality.abstract_task_violation_rate,
+        loop_count=(
+            len(loops)
+            if case.expected_intent_type == "long_term_growth"
+            else None
+        ),
+        checkpoint_count=(
+            len(checkpoints)
+            if case.expected_intent_type == "long_term_growth"
+            else None
+        ),
+        commitment_count=(
+            action_count + len(loops) + len(checkpoints)
+            if case.expected_intent_type == "long_term_growth"
+            else None
+        ),
+        weekly_target_matches=weekly_target_matches,
+        outcome_evidence_present=(
+            bool(checkpoints)
+            if case.expected_intent_type == "long_term_growth"
+            else None
+        ),
+        future_occurrence_violation=future_occurrence_violation,
     )
 
 
@@ -657,7 +746,13 @@ def collect_horizon_errors(case: EvalCase, task_tree: TaskTree) -> list[str]:
     text = task_tree_text(task_tree)
     errors: list[str] = []
     if case.expected_intent_type == "long_term_growth":
-        if any(pattern.search(text) for pattern in LONG_TERM_HORIZON_PATTERNS):
+        context = task_tree.planning_context
+        patterns = (
+            LONG_TERM_V2_HORIZON_PATTERNS
+            if context is not None and context.schema_version == 2
+            else LONG_TERM_HORIZON_PATTERNS
+        )
+        if any(pattern.search(text) for pattern in patterns):
             errors.append(
                 "long_term_growth output includes long-cycle scheduling; expected only current 24-72h Phase 1 tasks"
             )
@@ -707,7 +802,75 @@ def collect_strategy_errors(
         if not any(term in text for term in EXPLORATION_DISCOVERY_TERMS):
             errors.append("exploration_decision lacks clarification, information gathering, experiment, or decision nodes")
         errors.extend(exploration_summary_errors(task_tree.summary))
+    if case.expected_intent_type == "long_term_growth":
+        context = task_tree.planning_context
+        loops = list(context.practice_loops) if context is not None else []
+        checkpoints = (
+            list(context.outcome_checkpoints)
+            if context is not None
+            else []
+        )
+        action_count = sum(
+            node.node_type == "action"
+            for node in iter_task_nodes(task_tree.root)
+        )
+        commitment_count = action_count + len(loops) + len(checkpoints)
+        if (
+            case.expected_loop_min is not None
+            and len(loops) < case.expected_loop_min
+        ):
+            errors.append(
+                f"loop_count: expected at least {case.expected_loop_min}, got {len(loops)}"
+            )
+        if (
+            case.expected_loop_max is not None
+            and len(loops) > case.expected_loop_max
+        ):
+            errors.append(
+                f"loop_count: expected at most {case.expected_loop_max}, got {len(loops)}"
+            )
+        if commitment_count > 5:
+            errors.append(
+                f"commitment_count: {commitment_count} exceeds maximum 5"
+            )
+        if case.require_outcome_checkpoints and not checkpoints:
+            errors.append("missing_outcome_evidence: no outcome checkpoint generated")
+        if case.expected_weekly_target is not None and not any(
+            loop.target_per_week == case.expected_weekly_target
+            for loop in loops
+        ):
+            errors.append(
+                "weekly_target_mismatch: "
+                f"expected {case.expected_weekly_target}"
+            )
+        if case.require_capacity_assumption and not task_tree.assumptions:
+            errors.append(
+                "weekly_target_mismatch: conservative capacity assumption is missing"
+            )
+        if (
+            case.forbid_future_occurrences
+            and _contains_future_occurrence_nodes(task_tree)
+        ):
+            errors.append(
+                "future_occurrence: planner expanded dated future practice instances"
+            )
     return errors
+
+
+FUTURE_OCCURRENCE_PATTERN = re.compile(
+    r"(第\s*[一二三四五六七八九十\d]+\s*(天|周)|"
+    r"周[一二三四五六日天](?!次|气)|"
+    r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2})"
+)
+
+
+def _contains_future_occurrence_nodes(task_tree: TaskTree) -> bool:
+    for node in iter_task_nodes(task_tree.root):
+        if FUTURE_OCCURRENCE_PATTERN.search(
+            " ".join((node.title, node.description or ""))
+        ):
+            return True
+    return False
 
 
 def task_tree_text(task_tree: TaskTree) -> str:
@@ -865,6 +1028,25 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
             sum(result.action_quality_abstract_violation_count for result in results),
             sum(result.action_quality_action_count for result in results),
         ),
+        "long_term_loop_contract_pass_rate": _rate(
+            sum(
+                1
+                for result in results
+                if result.loop_count is not None
+                and not any(
+                    error.startswith("loop_count:")
+                    for error in result.strategy_errors
+                )
+            ),
+            sum(result.loop_count is not None for result in results),
+        ),
+        "outcome_checkpoint_coverage": _rate(
+            sum(result.outcome_evidence_present is True for result in results),
+            sum(
+                result.outcome_evidence_present is not None
+                for result in results
+            ),
+        ),
         "action_quality_targets": {
             "action_quality_pass_rate": 0.85,
             "average_actionability_score": 80,
@@ -955,6 +1137,12 @@ def build_failure_diagnostics(results: list[EvalResult]) -> list[dict[str, Any]]
                 else None,
                 "planner_top_level_tasks": result.top_level_preview,
                 "first_action": result.first_action_snapshot,
+                "loop_count": result.loop_count,
+                "checkpoint_count": result.checkpoint_count,
+                "commitment_count": result.commitment_count,
+                "weekly_target_matches": result.weekly_target_matches,
+                "outcome_evidence_present": result.outcome_evidence_present,
+                "future_occurrence_violation": result.future_occurrence_violation,
             }
         )
     return diagnostics

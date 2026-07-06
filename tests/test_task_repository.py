@@ -8,6 +8,7 @@ from sqlalchemy.sql.dml import Delete
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
 from app.services.task_repository import TaskRepository
+from app.services.practice_repository import PracticeLoopConflictError
 
 
 def test_create_task_for_user_commits_manual_thread_and_task_together():
@@ -273,6 +274,37 @@ def test_patch_final_ai_action_completes_final_roadmap_phase():
     assert session.commit_count == 1
 
 
+def test_patch_final_ai_action_does_not_auto_complete_schema_v2_goal():
+    user_id = uuid4()
+    task = _phase_task(
+        user_id=user_id,
+        thread_id="thread-final-v2",
+        client_node_id="phase_03_action_01",
+        phase_id="phase_03",
+        phase_order=3,
+    )
+    thread = _phase_thread(
+        user_id=user_id,
+        thread_id="thread-final-v2",
+        final_phase=True,
+    )
+    _make_thread_schema_v2(thread)
+    session = FakeTaskSession(scalar_results=[task, thread, [task], []])
+    repository = TaskRepository(session)
+
+    asyncio.run(
+        repository.update_task_for_user(
+            user_id=user_id,
+            task_id=task.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    context = thread.task_tree["planning_context"]
+    assert context["current_phase"]["phase_id"] == "phase_03"
+    assert context["roadmap"][2]["status"] == "current"
+
+
 def test_manual_task_status_update_does_not_recalculate_phase_state():
     user_id = uuid4()
     task = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-manual")
@@ -289,6 +321,95 @@ def test_manual_task_status_update_does_not_recalculate_phase_state():
 
     assert len(session.select_statements) == 1
     assert session.commit_count == 1
+
+
+def test_completing_practice_occurrence_records_completion(monkeypatch):
+    user_id = uuid4()
+    loop_id = uuid4()
+    task = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-practice")
+    task.metadata_ = {"source": "practice_loop", "practice_loop_id": str(loop_id)}
+    calls = []
+
+    async def record_completion(_repository, **kwargs):
+        calls.append(kwargs)
+
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "record_completion",
+        record_completion,
+    )
+    session = FakeTaskSession(scalar_results=[task])
+    repository = TaskRepository(session)
+
+    updated = asyncio.run(
+        repository.update_task_for_user(
+            user_id=user_id,
+            task_id=task.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    assert updated.status == "completed"
+    assert calls[0]["loop_id"] == loop_id
+    assert calls[0]["task"] is task
+    assert session.commit_count == 1
+
+
+def test_completed_practice_occurrence_cannot_be_reopened():
+    user_id = uuid4()
+    task = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-practice")
+    task.status = "completed"
+    task.metadata_ = {
+        "source": "practice_loop",
+        "practice_loop_id": str(uuid4()),
+    }
+    session = FakeTaskSession(scalar_results=[task])
+    repository = TaskRepository(session)
+
+    with pytest.raises(
+        PracticeLoopConflictError,
+        match="cannot be reopened",
+    ):
+        asyncio.run(
+            repository.update_task_for_user(
+                user_id=user_id,
+                task_id=task.id,
+                changes={"status": "active"},
+            )
+        )
+
+    assert session.commit_count == 0
+    assert session.rollback_count == 1
+
+
+def test_deleting_uncompleted_practice_occurrence_clears_pointer(monkeypatch):
+    user_id = uuid4()
+    loop_id = uuid4()
+    task = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-practice")
+    task.metadata_ = {"source": "practice_loop", "practice_loop_id": str(loop_id)}
+    calls = []
+
+    async def clear_active(_repository, **kwargs):
+        calls.append(kwargs)
+
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "clear_active_occurrence",
+        clear_active,
+    )
+    session = FakeTaskSession(delete_rowcount=1, scalar_results=[task])
+    repository = TaskRepository(session)
+
+    deleted = asyncio.run(
+        repository.delete_task_for_user(user_id=user_id, task_id=task.id)
+    )
+
+    assert deleted is True
+    assert calls == [{"user_id": user_id, "loop_id": loop_id, "task_id": task.id}]
 
 
 def test_delete_phase_action_recalculates_next_action_before_commit():
@@ -442,6 +563,26 @@ def _phase_thread(*, user_id, thread_id: str, final_phase: bool) -> AgentThread:
         interrupted_at=None,
         completed_at=None,
     )
+
+
+def _make_thread_schema_v2(thread: AgentThread) -> None:
+    context = thread.task_tree["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = []
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "artifact",
+            "title": "Submit one artifact",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
 
 
 class FakeTaskSession:

@@ -1,4 +1,4 @@
-import { TaskTree, TaskResponse, PlanningContext, RoadmapPhase, TaskNode } from '../types/api';
+import { TaskTree, TaskResponse, PlanningContext, RoadmapPhase, TaskNode, LongTermExecutionSnapshot } from '../types/api';
 
 export interface PlanningView {
   context: PlanningContext;
@@ -15,6 +15,7 @@ export function selectPlanningView(
   taskTree: TaskTree | null,
   tasks: TaskResponse[],
   threadId: string | null,
+  execution?: LongTermExecutionSnapshot | null,
 ): PlanningView | null {
   const context = taskTree?.planning_context;
   if (!context || !threadId) return null;
@@ -53,6 +54,14 @@ export function selectPlanningView(
   // Sort completed phases by order
   completedPhases.sort((a, b) => a.order - b.order);
 
+  const isV2 = context.schema_version === 2;
+  const canUnlock = isV2
+    ? execution?.latest_finalized_review?.decision === 'proceed'
+      || execution?.latest_finalized_review?.decision === 'override'
+    : context.current_phase !== null
+      && aiActions.length > 0
+      && completedAiActions === aiActions.length;
+
   return {
     context,
     currentTasks,
@@ -63,7 +72,7 @@ export function selectPlanningView(
     nextAction,
     totalAiActions: aiActions.length,
     completedAiActions,
-    canUnlock: context.current_phase !== null && aiActions.length > 0 && completedAiActions === aiActions.length,
+    canUnlock,
     isGoalComplete: context.current_phase === null && context.roadmap.every((phase) => phase.status === 'completed'),
   };
 }

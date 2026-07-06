@@ -5,7 +5,10 @@ import {
   ThreadSnapshot,
   NextPhaseCommitReceipt,
   AgentRunEventMeta,
-  ActiveRun
+  ActiveRun,
+  LongTermExecutionSnapshot,
+  PhaseReviewUpdateRequest,
+  PhaseReviewDecisionRequest
 } from '../types/api';
 import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
@@ -100,6 +103,9 @@ interface AppStore {
   lastDoneEvent: AgentRunEventMeta | null;
   activeRun: ActiveRun | null;
   sseReconnectNonce: number;
+  longTermExecution: LongTermExecutionSnapshot | null;
+  practiceError: string | null;
+  isPracticeRequestPending: boolean;
 
   // Actions
   setActiveRun: (run: ActiveRun | null) => void;
@@ -148,6 +154,9 @@ interface AppStore {
   cancelPlanPreview: () => Promise<void>;
   finishAgentRun: (event: AgentRunEventMeta) => Promise<void>;
   returnToCommittedPlan: () => Promise<void>;
+  schedulePracticeToday: (loopId: string) => Promise<void>;
+  savePhaseReview: (phaseId: string, payload: PhaseReviewUpdateRequest) => Promise<void>;
+  decidePhaseReview: (phaseId: string, payload: PhaseReviewDecisionRequest) => Promise<void>;
 }
 
 type AppStoreSet = (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
@@ -177,6 +186,9 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     reasoningLogs: [],
     nodeStatuses: {},
     activeRun: null,
+    longTermExecution: null,
+    practiceError: null,
+    isPracticeRequestPending: false,
   });
 
   if (shouldClearSelectedProject) {
@@ -241,6 +253,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return null;
   })(),
   sseReconnectNonce: 0,
+  longTermExecution: null,
+  practiceError: null,
+  isPracticeRequestPending: false,
 
   setActiveRun: (run) => {
     set({ activeRun: run });
@@ -661,7 +676,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (!isCurrent()) return;
       set({
-        committedTaskTree: snapshot.task_tree
+        committedTaskTree: snapshot.task_tree,
+        longTermExecution: snapshot.long_term_execution ?? null
       });
     } catch (err) {
       if (!isCurrent()) return;
@@ -829,6 +845,123 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  schedulePracticeToday: async (loopId: string) => {
+    const { token, selectedProjectId } = get();
+    if (!token || !selectedProjectId) return;
+
+    set({ isPracticeRequestPending: true, practiceError: null });
+    try {
+      const response = await fetch(`/api/threads/${selectedProjectId}/practice-loops/${loopId}/schedule-today`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        return;
+      }
+
+      if (response.status === 409) {
+        const errorData = await response.json();
+        set({ practiceError: errorData.detail?.message || errorData.detail || '安排练习任务冲突或次数已满。', isPracticeRequestPending: false });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to schedule practice today');
+      }
+
+      const newTask = await response.json();
+
+      const currentTasks = get().boardTasks || [];
+      const updatedTasks = currentTasks.filter(t => t.id !== newTask.id);
+      set({
+        boardTasks: [...updatedTasks, newTask],
+        isPracticeRequestPending: false
+      });
+
+      await get().loadProjectSnapshot(selectedProjectId);
+      await get().fetchTasks(get().currentViewBucket);
+    } catch (err) {
+      console.error(err);
+      set({ practiceError: '安排今日练习失败，请重试。', isPracticeRequestPending: false });
+    }
+  },
+
+  savePhaseReview: async (phaseId: string, payload: PhaseReviewUpdateRequest) => {
+    const { token, selectedProjectId } = get();
+    if (!token || !selectedProjectId) return;
+
+    set({ isPracticeRequestPending: true, practiceError: null });
+    try {
+      const response = await fetch(`/api/threads/${selectedProjectId}/phases/${phaseId}/review`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to save phase review');
+      }
+
+      await get().loadProjectSnapshot(selectedProjectId);
+      set({ isPracticeRequestPending: false });
+    } catch (err) {
+      console.error(err);
+      set({ practiceError: '保存复盘审计失败，请重试。', isPracticeRequestPending: false });
+    }
+  },
+
+  decidePhaseReview: async (phaseId: string, payload: PhaseReviewDecisionRequest) => {
+    const { token, selectedProjectId } = get();
+    if (!token || !selectedProjectId) return;
+
+    set({ isPracticeRequestPending: true, practiceError: null });
+    try {
+      const response = await fetch(`/api/threads/${selectedProjectId}/phases/${phaseId}/review/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to submit phase review decision');
+      }
+
+      await get().loadProjectSnapshot(selectedProjectId);
+      await get().fetchTasks(get().currentViewBucket);
+      set({ isPracticeRequestPending: false });
+    } catch (err) {
+      console.error(err);
+      set({ practiceError: '提交复盘决策失败，请重试。', isPracticeRequestPending: false });
+    }
+  },
+
   fetchTasks: async (bucket) => {
     const targetBucket = bucket || get().currentViewBucket;
     const { token } = get();
@@ -912,8 +1045,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         boardTasks: (state.boardTasks || []).map(t => t.id === taskId ? { ...t, ...updatedTask } : t)
       }));
 
-      if (updatedTask.source === 'ai' && updatedTask.phase_id) {
-        get().loadProjectSnapshot(updatedTask.thread_id);
+      if (
+        (updatedTask.source === 'ai' && updatedTask.phase_id) ||
+        (updatedTask.practice_loop_id && updatedTask.thread_id === get().selectedProjectId)
+      ) {
+        await get().loadProjectSnapshot(updatedTask.thread_id);
+        await get().fetchTasks(get().currentViewBucket);
       }
     } catch (err) {
       if ((err as Error).message !== 'Authentication required') {

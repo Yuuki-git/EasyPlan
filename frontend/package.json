@@ -9,7 +9,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test:hooks": "vitest run tests/useSSE.lifecycle.test.tsx",
-    "test:portfolio": "vitest run tests/portfolioState.test.ts tests/portfolioOverview.test.tsx"
+    "test:portfolio": "vitest run tests/portfolioState.test.ts tests/portfolioOverview.test.tsx",
+    "test:long-term": "vitest run tests/longTermExecution.test.ts tests/longTermExecutionStore.test.ts tests/practiceLoopPanel.test.tsx tests/phaseReviewPanel.test.tsx tests/phaseRecords.test.tsx"
   },
   "dependencies": {
     "clsx": "^2.1.0",

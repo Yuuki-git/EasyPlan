@@ -24,6 +24,7 @@ class AgentState(TypedDict, total=False):
     committed_task_tree: dict[str, Any]
     current_phase_task_summary: str
     phase_request_id: str
+    user_timezone: str
 
 
 MAX_INTENT_TEXT_CHARS = 2000

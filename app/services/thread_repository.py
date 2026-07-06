@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Any
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import TaskTree
+from app.models.practice import PhaseReview
 from app.models.task import Task
 from app.models.thread import AgentThread
 from app.services.phase_planning import calculate_phase_progress
@@ -371,28 +373,66 @@ class AgentThreadRepository:
                 message="All roadmap phases are already completed",
             )
 
-        task_result = await self.session.execute(
-            select(Task).where(
-                Task.user_id == user_id,
-                Task.thread_id == thread_id,
+        if context.schema_version == 2:
+            review = await self._latest_finalized_phase_review(
+                user_id=user_id,
+                thread_id=thread_id,
+                phase_id=context.current_phase.phase_id,
             )
-        )
-        tasks = list(task_result.scalars().all())
-        progress = calculate_phase_progress(tasks, context.current_phase.phase_id)
-        if progress.total_ai_actions == 0:
-            return _phase_generation_conflict(
-                thread,
-                code="PHASE_DATA_INVALID",
-                message="Current phase contains no identifiable AI actions",
+            if review is None or review.decision not in {"proceed", "override"}:
+                return _phase_generation_conflict(
+                    thread,
+                    code="PHASE_REVIEW_REQUIRED",
+                    message=(
+                        "Finalize the current phase review before generating "
+                        "the next phase"
+                    ),
+                )
+            current_phase_task_summary = json.dumps(
+                {
+                    "decision": review.decision,
+                    "recommendation": review.recommendation,
+                    **dict(review.statistics or {}),
+                    "difficulty": review.difficulty,
+                    "next_capacity": review.next_capacity,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
             )
-        if not progress.is_complete:
-            return _phase_generation_conflict(
-                thread,
-                code="PHASE_INCOMPLETE",
-                message="Current phase must be completed before unlocking the next phase",
-                remaining_ai_actions=(
-                    progress.total_ai_actions - progress.completed_ai_actions
-                ),
+        else:
+            task_result = await self.session.execute(
+                select(Task).where(
+                    Task.user_id == user_id,
+                    Task.thread_id == thread_id,
+                )
+            )
+            tasks = list(task_result.scalars().all())
+            progress = calculate_phase_progress(
+                tasks,
+                context.current_phase.phase_id,
+            )
+            if progress.total_ai_actions == 0:
+                return _phase_generation_conflict(
+                    thread,
+                    code="PHASE_DATA_INVALID",
+                    message="Current phase contains no identifiable AI actions",
+                )
+            if not progress.is_complete:
+                return _phase_generation_conflict(
+                    thread,
+                    code="PHASE_INCOMPLETE",
+                    message=(
+                        "Current phase must be completed before unlocking "
+                        "the next phase"
+                    ),
+                    remaining_ai_actions=(
+                        progress.total_ai_actions
+                        - progress.completed_ai_actions
+                    ),
+                )
+            current_phase_task_summary = (
+                f"{progress.completed_ai_actions}/{progress.total_ai_actions} "
+                "AI actions completed"
             )
 
         thread.status = "running"
@@ -416,11 +456,28 @@ class AgentThreadRepository:
             thread=thread,
             status="running",
             should_schedule=True,
-            current_phase_task_summary=(
-                f"{progress.completed_ai_actions}/{progress.total_ai_actions} "
-                "AI actions completed"
-            ),
+            current_phase_task_summary=current_phase_task_summary,
         )
+
+    async def _latest_finalized_phase_review(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: str,
+        phase_id: str,
+    ) -> PhaseReview | None:
+        result = await self.session.execute(
+            select(PhaseReview)
+            .where(
+                PhaseReview.user_id == user_id,
+                PhaseReview.thread_id == thread_id,
+                PhaseReview.phase_id == phase_id,
+                PhaseReview.status == "finalized",
+            )
+            .order_by(PhaseReview.updated_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def delete_thread_for_user(self, *, user_id: UUID, thread_id: str) -> bool:
         thread = await self.get_thread_for_user(user_id=user_id, thread_id=thread_id)

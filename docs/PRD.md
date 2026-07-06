@@ -232,7 +232,7 @@ SYNCING  -> 已确认，不允许取消
 
 2026-07-06 v1.2.7-A RC 本地验证：
 
-- Backend：`321 passed`
+- Backend：`323 passed`
 - Frontend Node 状态测试：全部通过
 - Mounted `useSSE` Hook：`11 passed`
 - Portfolio：`12 passed`
@@ -242,7 +242,9 @@ SYNCING  -> 已确认，不允许取消
 DeepSeek 42-case 实测为 `40/42`：Pass Rate 与 Strategy Compliance 为
 `95.24%`；JSON Parse、Intent、Horizon、Action Quality 和 Done Criteria
 Coverage 均为 `100%`；Long-Term Loop Contract Pass Rate 为 `94.44%`。
-case 34 与 case 40 仍未通过，因此 Task 12 要求的严格 `42/42` 模型门禁尚未关闭。
+case 34 的评分误判已经修复；case 40 已增加确定性 Validator、局部 replan 和
+Eval 运行时复用。当前执行环境禁止再次向 DeepSeek 外发用例，因此 case 40
+三连跑与完整 `42/42` 仍须在允许外部调用的环境中完成。
 
 ## 12. 后续版本
 

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -18,6 +19,7 @@ from app.api.schemas import (
 from app.db.session import get_db
 from app.services.agent_runtime import AgentRuntime, agent_runtime
 from app.services.phase_planning import phase_planning_enabled
+from app.services.practice_repository import PracticeLoopRepository
 from app.services.thread_repository import (
     AgentThreadRepository,
     ThreadStateConflictError,
@@ -56,7 +58,17 @@ async def get_thread_snapshot(
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return ThreadSnapshot(**thread_to_snapshot_payload(thread))
+    execution_snapshot = await PracticeLoopRepository(
+        repository.session
+    ).get_execution_snapshot(
+        user_id=current_user.id,
+        thread=thread,
+        now=datetime.now(timezone.utc),
+    )
+    return ThreadSnapshot(
+        **thread_to_snapshot_payload(thread),
+        long_term_execution=execution_snapshot,
+    )
 
 
 @router.get(
@@ -185,6 +197,7 @@ async def confirm_thread(
             thread_id=thread_id,
             request_id=payload.request_id,
             task_tree=next_phase_task_tree,
+            user_timezone=user_timezone.key,
         )
     else:
         background_tasks.add_task(
@@ -194,6 +207,7 @@ async def confirm_thread(
             decision=payload.model_dump(mode="json", exclude_none=True),
             run_type=run_type,
             request_id=payload.request_id,
+            user_timezone=user_timezone.key,
         )
     return ConfirmationResponse(
         thread_id=thread_id,
@@ -274,6 +288,7 @@ async def start_next_phase(
             intent_text=result.thread.intent_text,
             committed_task_tree=result.thread.task_tree,
             current_phase_task_summary=result.current_phase_task_summary,
+            user_timezone=user_timezone.key,
         )
     return NextPhaseResponse(
         thread_id=thread_id,

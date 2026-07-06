@@ -62,16 +62,42 @@ export interface CurrentPhase {
   phase_id: string;
   title: string;
   objective: string;
-  completion_rule: 'all_ai_actions_completed';
+  completion_rule: 'all_ai_actions_completed' | 'long_term_execution_gate';
+  estimated_duration_weeks?: number | null;
+}
+
+export interface PracticeLoopDefinition {
+  loop_id: string;
+  title: string;
+  target_per_week: number;
+  duration_weeks: number;
+  done_criteria: string;
+}
+
+export interface OutcomeCheckpoint {
+  checkpoint_id: string;
+  title: string;
+  evidence_type: 'numeric' | 'artifact' | 'self_assessment';
+  unit?: string | null;
+  operator: 'gte' | 'lte' | 'exists';
+  target_value?: number | null;
+}
+
+export interface PhaseGate {
+  process_threshold: 0.8;
+  outcome_rule: 'all_required';
 }
 
 export interface PlanningContext {
-  schema_version: 1;
+  schema_version: 1 | 2;
   intent_type: 'long_term_growth' | 'exploration_decision';
   time_horizon: 'minutes' | 'hours' | 'days' | 'weeks' | 'months';
   roadmap: RoadmapPhase[];
   current_phase: CurrentPhase | null;
   next_action_client_node_id: string | null;
+  practice_loops?: PracticeLoopDefinition[];
+  outcome_checkpoints?: OutcomeCheckpoint[];
+  phase_gate?: PhaseGate | null;
 }
 
 export interface NextPhaseRequest {
@@ -138,6 +164,68 @@ export interface TaskTree {
   planning_context?: PlanningContext | null;
 }
 
+export interface PracticeLoopProgress {
+  loop_id: string;
+  loop_key: string;
+  title: string;
+  done_criteria: string;
+  target_per_week: number;
+  current_week_completed: number;
+  total_completed: number;
+  required_completions: number;
+  estimated_end: string;
+  status: 'active' | 'paused' | 'completed' | 'superseded';
+  can_schedule_today: boolean;
+  active_occurrence_task_id: string | null;
+}
+
+export interface PhaseReview {
+  id: string;
+  phase_id: string;
+  status: 'draft' | 'finalized';
+  recommendation: 'ready' | 'partial' | 'not_ready' | 'overridden';
+  decision: 'proceed' | 'extend' | 'adjust' | 'override' | null;
+  evidence: Record<string, Record<string, unknown>>;
+  difficulty: string | null;
+  next_capacity: string | null;
+  override_reason: string | null;
+  statistics: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LongTermExecutionSnapshot {
+  phase_id: string;
+  recommendation: 'ready' | 'partial' | 'not_ready' | 'overridden';
+  review_available: boolean;
+  one_off_ready: boolean;
+  process_ready: boolean;
+  outcome_ready: boolean;
+  loops: PracticeLoopProgress[];
+  active_review: PhaseReview | null;
+  latest_finalized_review: PhaseReview | null;
+  review_history: PhaseReview[];
+}
+
+export interface PhaseReviewUpdateRequest {
+  evidence: Record<string, Record<string, unknown>>;
+  difficulty?: string | null;
+  next_capacity?: string | null;
+  early_review_requested?: boolean;
+}
+
+export interface PhaseReviewDecisionRequest {
+  decision: 'proceed' | 'extend' | 'adjust' | 'override';
+  override_reason?: string | null;
+  extension_weeks?: number | null;
+  adjustments?: Array<{
+    loop_id: string;
+    title?: string | null;
+    target_per_week?: number | null;
+    done_criteria?: string | null;
+  }>;
+}
+
 export interface ThreadSnapshot {
   thread_id: string;
   status: string;
@@ -148,6 +236,7 @@ export interface ThreadSnapshot {
   task_tree?: TaskTree | null;
   interrupt_payload?: InterruptPayload | null;
   latest_checkpoint_id?: string | null;
+  long_term_execution?: LongTermExecutionSnapshot | null;
 }
 
 export interface NextPhaseCommitReceipt {
@@ -201,9 +290,10 @@ export interface TaskResponse {
   done_criteria?: string | null;
   start_hint?: string | null;
   fallback_action?: string | null;
-  source?: 'ai' | 'manual';
+  source?: 'ai' | 'manual' | 'practice_loop';
   phase_id?: string | null;
   phase_order?: number | null;
+  practice_loop_id?: string | null;
 }
 
 export interface TaskUpdateRequest {

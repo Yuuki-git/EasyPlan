@@ -22,7 +22,7 @@ export function selectPortfolioCard(
   snapshot: ThreadSnapshot | undefined,
   tasks: TaskResponse[],
 ): PortfolioCardView {
-  const planningView = selectPlanningView(snapshot?.task_tree ?? null, tasks, project.id);
+  const planningView = selectPlanningView(snapshot?.task_tree ?? null, tasks, project.id, snapshot?.long_term_execution);
   const snapshotAvailable = !!snapshot;
 
   let typeLabel = '直接计划';
@@ -39,11 +39,22 @@ export function selectPortfolioCard(
   let currentPhaseLabel = '尚未建立阶段';
   if (planningView?.context.current_phase?.title) {
     currentPhaseLabel = planningView.context.current_phase.title;
+  } else if (planningView?.isGoalComplete) {
+    currentPhaseLabel = '已全部完成';
   }
 
   let progressLabel: string | null = null;
   if (planningView && planningView.totalAiActions > 0) {
     progressLabel = `${planningView.completedAiActions} / ${planningView.totalAiActions}`;
+  }
+
+  if (snapshot?.long_term_execution?.loops?.length) {
+    const loops = snapshot.long_term_execution.loops;
+    const completed = loops.reduce((sum, loop) => sum + loop.total_completed, 0);
+    const required = loops.reduce((sum, loop) => sum + loop.required_completions, 0);
+    progressLabel = `练习 ${completed} / ${required}`;
+  } else if (planningView?.isGoalComplete) {
+    progressLabel = '100%';
   }
 
   let nextActionLabel = '暂无下一步动作';
@@ -52,6 +63,8 @@ export function selectPortfolioCard(
       nextActionLabel = planningView.nextAction.title;
     } else if (planningView.canUnlock) {
       nextActionLabel = '当前阶段已完成';
+    } else if (planningView.isGoalComplete) {
+      nextActionLabel = '无（所有任务已完成）';
     }
   }
 

@@ -73,6 +73,7 @@ class AgentRuntime:
         selected_provider: str,
         planner_provider: str | None = None,
         planner_model: str | None = None,
+        user_timezone: str = "UTC",
     ) -> None:
         with self._lock:
             self._planner_selection[thread_id] = (planner_provider, planner_model)
@@ -84,6 +85,7 @@ class AgentRuntime:
             selected_provider=selected_provider,
             planner_provider=planner_provider,
             planner_model=planner_model,
+            user_timezone=user_timezone,
         )
 
     async def _run_new_thread(
@@ -96,6 +98,7 @@ class AgentRuntime:
         selected_provider: str,
         planner_provider: str | None,
         planner_model: str | None,
+        user_timezone: str,
     ) -> None:
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
         config = create_graph_config(
@@ -112,6 +115,7 @@ class AgentRuntime:
             "planner_provider": planner_provider,
             "planner_model": planner_model,
             "planning_mode": "initial",
+            "user_timezone": user_timezone,
         }
         try:
             interrupted = False
@@ -152,6 +156,7 @@ class AgentRuntime:
         intent_text: str,
         committed_task_tree: dict[str, Any],
         current_phase_task_summary: str,
+        user_timezone: str = "UTC",
     ) -> None:
         run_key = _event_run_key(
             thread_id=thread_id,
@@ -168,6 +173,7 @@ class AgentRuntime:
                 intent_text=intent_text,
                 committed_task_tree=committed_task_tree,
                 current_phase_task_summary=current_phase_task_summary,
+                user_timezone=user_timezone,
             )
         finally:
             with self._lock:
@@ -181,6 +187,7 @@ class AgentRuntime:
         thread_id: str,
         request_id: str,
         task_tree: dict[str, Any],
+        user_timezone: str = "UTC",
     ) -> None:
         try:
             await persist_internal_tasks_node(
@@ -190,6 +197,7 @@ class AgentRuntime:
                     "task_tree": task_tree,
                     "planning_mode": "next_phase",
                     "phase_request_id": request_id,
+                    "user_timezone": user_timezone,
                 }
             )
         except Exception:
@@ -236,6 +244,7 @@ class AgentRuntime:
         intent_text: str,
         committed_task_tree: dict[str, Any],
         current_phase_task_summary: str,
+        user_timezone: str,
     ) -> None:
         run_key = _event_run_key(
             thread_id=thread_id,
@@ -276,6 +285,7 @@ class AgentRuntime:
             "phase_request_id": request_id,
             "committed_task_tree": committed_task_tree,
             "current_phase_task_summary": current_phase_task_summary,
+            "user_timezone": user_timezone,
         }
         try:
             interrupted = False
@@ -373,6 +383,7 @@ class AgentRuntime:
         decision: dict[str, Any],
         run_type: RunType = "initial",
         request_id: str,
+        user_timezone: str = "UTC",
     ) -> None:
         with self._lock:
             planner_provider, planner_model = self._planner_selection.get(thread_id, (None, None))

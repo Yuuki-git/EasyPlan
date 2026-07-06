@@ -379,11 +379,12 @@ def test_commit_next_phase_persists_durable_preview_without_graph_checkpoint(mon
         {
             "user_id": "11111111-1111-1111-1111-111111111111",
             "thread_id": "thread-1",
-            "task_tree": preview_tree,
-            "planning_mode": "next_phase",
-            "phase_request_id": request_id,
-        }
-    ]
+                "task_tree": preview_tree,
+                "planning_mode": "next_phase",
+                "phase_request_id": request_id,
+                "user_timezone": "UTC",
+            }
+        ]
     terminal_event = runtime._events[
         EventRunKey(
             thread_id="thread-1",

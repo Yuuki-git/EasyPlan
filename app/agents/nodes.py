@@ -17,6 +17,7 @@ from app.services.action_quality import score_action_node
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 from app.services.phase_planning import (
     choose_next_action,
+    long_term_execution_enabled,
     phase_planning_enabled,
     validate_next_phase_transition,
 )
@@ -50,6 +51,13 @@ LONG_TERM_HORIZON_PATTERNS = (
     r"第[一二三四五六七八九十\d]+个月",
     r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
     r"(每天|每日|每周|每月).{0,12}(坚持|学习|训练|复习|背|练)",
+    r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
+)
+LONG_TERM_V2_HORIZON_PATTERNS = (
+    r"第[一二三四五六七八九十\d]+周",
+    r"第[一二三四五六七八九十\d]+个月",
+    r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
+    r"(每天|每日).{0,12}(坚持|学习|训练|复习|背|练)",
     r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
 )
 LONG_TERM_CURRICULUM_TERMS = (
@@ -109,6 +117,11 @@ LOW_VALUE_ICEBREAKER_TERMS = (
     "坐下",
     "整理桌面",
 )
+FINITE_DELIVERABLE_PATTERN = re.compile(
+    r"(?:完成|产出|撰写|写完|写|发布|制作)\s*"
+    r"[一二两三四五六七八九十百\d]+\s*"
+    r"(?:篇|份|个|首|项|章|页|部|套)"
+)
 
 RULE_PRIORITY_PROMPT = """规则优先级：
 1. intent_type 对应策略高于普通任务拆解习惯。
@@ -129,7 +142,7 @@ HARD_RULES_PROMPT = """硬性规则：
    - Roadmap 仅允许写入 planning_context.roadmap；不得把未来阶段展开为 TaskTree 任务。
 4. 禁止输出 Markdown、解释性段落或 schema 外字段。
 5. title 和 description 必须短而具体，避免长文本导致 JSON 截断。
-6. assumptions 必须是字符串数组；默认 assumptions 为 []；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
+6. assumptions 必须是字符串数组；默认 assumptions 为 []，但 schema v2 在用户未提供循环频率时必须记录保守容量假设；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
 
 ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
 1. 对所有 Action，尽量生成 done_criteria；done_criteria 必须具体说明做到什么程度算完成。
@@ -159,7 +172,7 @@ THREE_TIER_PLANNING_PROMPT = """三层规划契约：
 5. TaskTree.root 只能展开当前 Phase 1 的任务，不得展开未来阶段。
 6. next_action_client_node_id 必须引用当前阶段内一个 Action；服务端持久化时会确定性复核。
 7. intent_type 和 time_horizon 必须与已识别的 IntentProfile 完全一致。
-8. assumptions 保持为 []，不得把 Roadmap 编码进 assumptions。"""
+8. assumptions 不得编码 Roadmap；schema v1 保持为 []，schema v2 未给频率时必须记录保守容量假设。"""
 
 NO_PHASE_PLANNING_PROMPT = """三层规划契约：
 planning_context 必须为 null。不要生成 Roadmap、Current Phase 或 Next Action。"""
@@ -175,7 +188,23 @@ NEXT_PHASE_PROMPT = """下一阶段规划模式：
 5. 只允许重写原 roadmap 的 planned 后缀，不得生成所有未来阶段的任务。
 6. 所有 Action 继续满足 Action Quality、Scope Horizon 和依赖规则。
 7. 新阶段 TaskTree.root 及其所有后代节点必须使用全新的 client_node_id，不得复用已提交计划中的任何 client_node_id。
-8. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+8. planning_context.schema_version 必须与已提交计划保持一致。
+9. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+
+LONG_TERM_EXECUTION_PROMPT = """Long-Term Execution schema v2 契约：
+1. 新生成的 long_term_growth 必须使用 planning_context.schema_version = 2。
+2. current_phase.completion_rule 必须是 long_term_execution_gate，并给出 1-12 周的 estimated_duration_weeks。
+3. practice_loops 只能有 0-2 个，只在无限重复行为确实影响结果时使用。适合循环：语言练习、跑步训练、乐器练习、稳定作息。有限数量的交付目标必须使用一次性 Action 和 checkpoint：输入包含明确总数或单一交付物时，practice_loops 必须为 []，例如“完成 12 篇写作”“完成一个 Python 作品”“发布个人网站”；选择教材、完成摸底、整理素材、提交报告也不得创建 loop。
+4. 用户明确说“每周能训练三次”等容量时，target_per_week 必须原样保留该频率，不得降低或改写；例如“每周练习 5 次”必须输出 target_per_week=5。只要生成 practice_loop 且用户没有给出每周频率，就必须使用保守目标，且 assumptions 必须明确记录 target_per_week 的保守假设，格式为“用户未提供频率，保守假设 target_per_week=N”；不得让 assumptions 为空。
+5. outcome_checkpoints 必须有 1-2 个，使用确定性证据规则：numeric/self_assessment 的 target_value 必须是非 null 数值；artifact 必须使用 operator=exists。
+6. 不要预生成未来 occurrence，不要展开每日打卡，不要为未来日期创建 Task 节点；不得创建未来数周时间表或周一/周二排程。TaskTree 中禁止出现“第一周”“第1周”“第二周”“第2周”等排期任务；改写为不带周次的单次摸底或准备动作。循环未来实例只能由服务端按需 materialize。
+7. 重复习惯目标默认生成 1-3 个一次性 Action、1 个 practice loop、1 个 outcome checkpoint；有限交付目标默认 0 个 practice loop，并使用 1-2 个 outcome checkpoint。
+8. 一次性 Action + practice_loops + outcome_checkpoints 合计最多 5 个核心承诺；3 个一次性 Action + 1 个 practice loop 时只能有 1 个 outcome checkpoint。
+9. phase_gate 固定使用 process_threshold = 0.8 和 outcome_rule = all_required。
+10. practice_loops、outcome_checkpoints 和 phase_gate 只能写入 planning_context，不得伪装成 TaskTree Action。"""
+
+SCHEMA_V1_PHASE_PROMPT = """兼容 planning schema v1：
+planning_context.schema_version 必须是 1；assumptions 必须是 []；不得输出 practice_loops、outcome_checkpoints 或 phase_gate。"""
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
@@ -204,7 +233,7 @@ long_term_growth 必须：
 - 第一个 action 不得是安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划。
 - Phase 1 任务标题中不要写“训练计划”“学习计划”“备考计划”“长期路线”“课程大纲”。
 - summary 写成“Phase 1 启动计划”，不要回显完整长期目标。
-- assumptions 必须是 []；Roadmap 只能写入 planning_context.roadmap，未来阶段不得写入 TaskTree 任务。
+- schema v1 时 assumptions 必须是 []；schema v2 未给频率时必须记录保守容量假设；Roadmap 只能写入 planning_context.roadmap，未来阶段不得写入 TaskTree 任务。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
@@ -480,6 +509,7 @@ def build_planner_prompt(
     phase_contract = _phase_contract_prompt(
         intent_type=intent_type,
         planning_mode=planning_mode,
+        committed_task_tree=committed_task_tree,
     )
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
@@ -518,13 +548,38 @@ def build_planner_prompt(
     return "\n".join(parts)
 
 
-def _phase_contract_prompt(*, intent_type: str, planning_mode: str) -> str:
+def _phase_contract_prompt(
+    *,
+    intent_type: str,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> str:
     if not phase_planning_enabled():
         return PHASE_PLANNING_DISABLED_PROMPT
     if planning_mode == "next_phase":
+        committed_context = (
+            committed_task_tree.get("planning_context")
+            if isinstance(committed_task_tree, dict)
+            else None
+        )
+        committed_schema_version = (
+            committed_context.get("schema_version")
+            if isinstance(committed_context, dict)
+            else None
+        )
+        if committed_schema_version == 2:
+            return "\n".join((NEXT_PHASE_PROMPT, LONG_TERM_EXECUTION_PROMPT))
+        if committed_schema_version == 1:
+            return "\n".join((NEXT_PHASE_PROMPT, SCHEMA_V1_PHASE_PROMPT))
         return NEXT_PHASE_PROMPT
-    if intent_type in {"long_term_growth", "exploration_decision"}:
-        return THREE_TIER_PLANNING_PROMPT
+    if intent_type == "long_term_growth":
+        if long_term_execution_enabled():
+            return "\n".join(
+                (THREE_TIER_PLANNING_PROMPT, LONG_TERM_EXECUTION_PROMPT)
+            )
+        return "\n".join((THREE_TIER_PLANNING_PROMPT, SCHEMA_V1_PHASE_PROMPT))
+    if intent_type == "exploration_decision":
+        return "\n".join((THREE_TIER_PLANNING_PROMPT, SCHEMA_V1_PHASE_PROMPT))
     return NO_PHASE_PLANNING_PROMPT
 
 
@@ -637,6 +692,7 @@ def _expected_phase_contract_identity(
 async def task_tree_validator_node(state: AgentState) -> AgentState:
     errors = _validate_task_tree(
         state.get("task_tree"),
+        intent_text=state.get("intent_text"),
         intent_profile=state.get("intent_profile"),
         planning_mode=state.get("planning_mode"),
         committed_task_tree=state.get("committed_task_tree"),
@@ -720,6 +776,7 @@ async def finalize_phase_rejection_node(state: AgentState) -> AgentState:
 
 async def persist_internal_tasks_node(state: AgentState) -> AgentState:
     from app.db.session import async_session
+    from app.services.practice_repository import PracticeLoopRepository
 
     tasks, dependencies = flatten_task_tree_for_persistence(
         state["task_tree"],
@@ -755,6 +812,15 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 tasks,
                 dependencies,
                 require_new_task_ids=is_next_phase,
+            )
+            parsed_tree = TaskTree.model_validate(state["task_tree"])
+            practice_repository = PracticeLoopRepository(session)
+            await practice_repository.persist_definitions_from_tree(
+                user_id=UUID(str(state["user_id"])),
+                thread_id=state["thread_id"],
+                task_tree=parsed_tree,
+                timezone_name=str(state.get("user_timezone") or "UTC"),
+                now=now,
             )
             task_tree = await _with_server_derived_next_action(
                 session,
@@ -1123,6 +1189,7 @@ def _action_quality_metadata(node: Any, base_metadata: dict[str, Any] | None = N
 def _validate_task_tree(
     task_tree: Any,
     *,
+    intent_text: str | None = None,
     intent_profile: dict[str, Any] | None = None,
     planning_mode: str | None = None,
     committed_task_tree: dict[str, Any] | None = None,
@@ -1141,6 +1208,7 @@ def _validate_task_tree(
     intent_type = _intent_type_from_profile(intent_profile)
     _collect_phase_contract_errors(
         parsed,
+        intent_text=intent_text,
         intent_profile=intent_profile,
         planning_mode=planning_mode,
         committed_task_tree=committed_task_tree,
@@ -1154,6 +1222,7 @@ def _validate_task_tree(
 def _collect_phase_contract_errors(
     task_tree: TaskTree,
     *,
+    intent_text: str | None,
     intent_profile: dict[str, Any] | None,
     planning_mode: str | None,
     committed_task_tree: dict[str, Any] | None,
@@ -1168,6 +1237,43 @@ def _collect_phase_contract_errors(
         if context is not None:
             errors.append("phase planning is disabled; planning_context must be null")
         return
+
+    if context is not None and context.schema_version == 2:
+        if not long_term_execution_enabled():
+            errors.append(
+                "long-term execution is disabled; schema version 2 is not accepted"
+            )
+        one_off_count = sum(
+            node.node_type == "action"
+            for node in _iter_task_nodes(task_tree.root)
+        )
+        commitment_count = (
+            one_off_count
+            + len(context.practice_loops)
+            + len(context.outcome_checkpoints)
+        )
+        if one_off_count > 5:
+            errors.append(
+                "long_term_growth current phase may contain at most 5 one-off actions"
+            )
+        if commitment_count > 5:
+            errors.append(
+                "long_term_growth current phase may contain at most 5 core commitments"
+            )
+        if context.practice_loops and _has_explicit_finite_deliverable(intent_text):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="FINITE_DELIVERABLE_LOOP_FORBIDDEN",
+                    intent_type=intent_type,
+                    failed_rule="Long-Term Execution Loop Contract",
+                    problem="用户目标包含明确总数，属于有限交付目标，但输出仍包含 practice_loop。",
+                    offender=task_tree.root,
+                    fix_suggestion=(
+                        "只删除 practice_loops；保留原 intent_type、Roadmap 和当前阶段任务，"
+                        "用一次性 Action 与 numeric/artifact checkpoint 表达有限交付进度。"
+                    ),
+                )
+            )
 
     if planning_mode == "next_phase":
         if committed_task_tree is None:
@@ -1616,6 +1722,16 @@ def _intent_type_from_profile(intent_profile: dict[str, Any] | None) -> str:
     return "general"
 
 
+def _has_explicit_finite_deliverable(intent_text: str | None) -> bool:
+    if not intent_text:
+        return False
+    for match in FINITE_DELIVERABLE_PATTERN.finditer(intent_text):
+        prefix = intent_text[max(0, match.start() - 6) : match.start()]
+        if not re.search(r"(?:每天|每日|每周|每月)\s*$", prefix):
+            return True
+    return False
+
+
 def _first_action(task_tree: TaskTree) -> Any | None:
     return next(
         (node for node in _iter_task_nodes(task_tree.root) if node.node_type == "action"),
@@ -1646,12 +1762,20 @@ def _is_low_value_icebreaker(node: Any) -> bool:
 
 def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
+    keywords = LONG_TERM_SCOPE_KEYWORDS
+    if task_tree.planning_context and task_tree.planning_context.schema_version == 2:
+        keywords = tuple(
+            keyword for keyword in keywords if keyword not in {"每周", "每月"}
+        )
+    return any(keyword in text for keyword in keywords)
 
 
 def _contains_long_term_schedule_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(re.search(pattern, text) for pattern in LONG_TERM_HORIZON_PATTERNS)
+    patterns = LONG_TERM_HORIZON_PATTERNS
+    if task_tree.planning_context and task_tree.planning_context.schema_version == 2:
+        patterns = LONG_TERM_V2_HORIZON_PATTERNS
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _top_level_looks_like_long_term_curriculum(task_tree: TaskTree) -> bool:

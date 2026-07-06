@@ -7,6 +7,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import Select
 
 from app.models.task import Task
+from app.models.practice import PhaseReview
 from app.models.thread import AgentThread
 from app.services.thread_repository import (
     AgentThreadRepository,
@@ -160,6 +161,58 @@ def test_start_next_phase_generation_reports_remaining_ai_actions():
     assert result.error_code == "PHASE_INCOMPLETE"
     assert result.remaining_ai_actions == 1
     assert session.commit_count == 0
+
+
+def test_schema_v2_next_phase_requires_finalized_proceed_review():
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-v2")
+    _make_thread_schema_v2(thread)
+    session = FakeThreadSession([thread, None])
+    repository = AgentThreadRepository(session)
+
+    result = asyncio.run(
+        repository.start_next_phase_generation(
+            user_id=user_id,
+            thread_id=thread.thread_id,
+            request_id=uuid4(),
+        )
+    )
+
+    assert result is not None
+    assert result.error_code == "PHASE_REVIEW_REQUIRED"
+    assert session.commit_count == 0
+
+
+def test_schema_v2_next_phase_accepts_finalized_proceed_review():
+    user_id = uuid4()
+    thread = _phase_thread(user_id=user_id, thread_id="thread-v2")
+    _make_thread_schema_v2(thread)
+    review = PhaseReview(
+        id=uuid4(),
+        user_id=user_id,
+        thread_id=thread.thread_id,
+        phase_id="phase_01",
+        status="finalized",
+        recommendation="ready",
+        decision="proceed",
+        evidence={},
+        statistics={"process_ready": True, "outcome_ready": True},
+    )
+    session = FakeThreadSession([thread, review])
+    repository = AgentThreadRepository(session)
+
+    result = asyncio.run(
+        repository.start_next_phase_generation(
+            user_id=user_id,
+            thread_id=thread.thread_id,
+            request_id=uuid4(),
+        )
+    )
+
+    assert result is not None
+    assert result.should_schedule is True
+    assert "process_ready" in result.current_phase_task_summary
+    assert session.commit_count == 1
 
 
 def test_start_next_phase_generation_handles_naive_active_lease_datetime():
@@ -669,6 +722,26 @@ def _phase_thread(*, user_id, thread_id: str) -> AgentThread:
         interrupted_at=None,
         completed_at=None,
     )
+
+
+def _make_thread_schema_v2(thread: AgentThread) -> None:
+    context = thread.task_tree["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = []
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "artifact",
+            "title": "Submit one artifact",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
 
 
 def _phase_task(*, user_id, thread_id: str, status: str) -> Task:

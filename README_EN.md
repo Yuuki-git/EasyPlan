@@ -36,7 +36,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 
 ## 📊 Planning Eval
 
-EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The 42-case run recorded on 2026-07-06 produced:
+EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The pre-validator 42-case baseline recorded on 2026-07-06 produced:
 
 - **Cases Passed**: 40/42
 - **Pass Rate**: 95.24%
@@ -47,7 +47,8 @@ EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the pr
 - **Action Quality Pass Rate**: 100.00%
 - **Done Criteria Coverage**: 100.00%
 - **Long-Term Loop Contract Pass Rate**: 94.44%
-- **Overall Pass Rate**: 100.00%
+
+The case-34 scoring false positive and case-40 runtime fallback are fixed. A validator-aware 42-case rerun is still required in an environment that permits external model calls before the release gate can close.
 
 ## 🛠️ Architecture
 

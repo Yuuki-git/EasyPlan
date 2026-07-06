@@ -51,6 +51,7 @@ async def create_intent(
         selected_provider=payload.preferred_provider,
         planner_provider=payload.planner_provider,
         planner_model=payload.planner_model,
+        user_timezone=user_timezone.key,
     )
     return IntentCreateResponse(
         thread_id=thread_id,

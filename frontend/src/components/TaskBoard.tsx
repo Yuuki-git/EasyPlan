@@ -168,6 +168,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: bo
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!interactive || isGroup || isEditing) return;
+    if (node.practice_loop_id && localCompleted) return; // Completed practice loop occurrences are read-only
     if (isToggling) return;
 
     const nextCompleted = !localCompleted;
@@ -207,7 +208,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: bo
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!interactive || localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
+    if (!interactive || localCompleted || isGroup || node.practice_loop_id) return; // Prevent editing completed, group, or practice loop tasks
     setIsEditing(true);
   };
 

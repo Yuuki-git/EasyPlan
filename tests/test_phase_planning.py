@@ -7,6 +7,8 @@ from app.services.phase_planning import (
     calculate_phase_progress,
     choose_next_action,
     complete_final_phase,
+    long_term_execution_enabled,
+    uses_long_term_execution,
     validate_next_phase_transition,
 )
 
@@ -63,6 +65,18 @@ def test_phase_without_ai_actions_is_not_complete():
     assert progress.total_ai_actions == 0
     assert progress.completed_ai_actions == 0
     assert progress.is_complete is False
+
+
+def test_long_term_execution_flag_defaults_on_and_can_be_disabled(monkeypatch):
+    monkeypatch.delenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", raising=False)
+    assert long_term_execution_enabled() is True
+
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "false")
+    assert long_term_execution_enabled() is False
+
+
+def test_schema_v1_does_not_use_long_term_execution():
+    assert uses_long_term_execution(_planning_context()) is False
 
 
 def test_phase_progress_requires_ai_action_source_and_matching_phase():
@@ -125,6 +139,47 @@ def test_validate_next_phase_transition_locks_intent_and_horizon():
     errors = validate_next_phase_transition(committed, proposed)
 
     assert any("time_horizon" in error for error in errors)
+
+
+def test_validate_next_phase_transition_locks_schema_version():
+    base = _planning_context()
+    committed = base.model_copy(
+        update={
+            "schema_version": 2,
+            "current_phase": base.current_phase.model_copy(
+                update={
+                    "completion_rule": "long_term_execution_gate",
+                    "estimated_duration_weeks": 4,
+                }
+            ),
+            "practice_loops": [
+                {
+                    "loop_id": "practice",
+                    "title": "完成一次练习",
+                    "target_per_week": 3,
+                    "duration_weeks": 4,
+                    "done_criteria": "完成并记录结果",
+                }
+            ],
+            "outcome_checkpoints": [
+                {
+                    "checkpoint_id": "confidence",
+                    "title": "完成自评",
+                    "evidence_type": "self_assessment",
+                    "operator": "gte",
+                    "target_value": 3,
+                }
+            ],
+            "phase_gate": {
+                "process_threshold": 0.8,
+                "outcome_rule": "all_required",
+            },
+        }
+    )
+
+    errors = validate_next_phase_transition(committed, _next_phase_context())
+
+    assert any("schema_version" in error for error in errors)
 
 
 def test_validate_next_phase_transition_accepts_next_current_phase():

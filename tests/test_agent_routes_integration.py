@@ -400,9 +400,10 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
         "request_id": payload["request_id"],
         "intent_text": "写论文",
         "selected_provider": "native",
-        "planner_provider": None,
-        "planner_model": None,
-    }
+            "planner_provider": None,
+            "planner_model": None,
+            "user_timezone": "Asia/Shanghai",
+        }
 
 
 def test_create_intent_assigns_unique_request_id_to_each_initial_run():

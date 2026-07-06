@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.models.base import Base
 
 
 def test_health_endpoint_returns_ok():
@@ -52,3 +53,12 @@ def test_api_routes_still_win_over_static_mount(tmp_path: Path):
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_practice_tables_are_registered():
+    assert {
+        "practice_loops",
+        "practice_loop_revisions",
+        "practice_loop_logs",
+        "phase_reviews",
+    }.issubset(Base.metadata.tables)
