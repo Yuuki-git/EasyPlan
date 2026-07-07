@@ -83,6 +83,49 @@ def test_evaluate_plan_flags_valid_tree_top_level_limit_and_low_value_icebreaker
     assert result.short_term_delivery_without_low_value_icebreaker is False
 
 
+def test_low_value_icebreaker_detection_only_checks_first_action():
+    runner = _load_eval_runner()
+    task_tree = runner.TaskTree.model_validate(
+        {
+            "root": {
+                "client_node_id": "root",
+                "title": "完成面试准备",
+                "description": None,
+                "verb": "完成",
+                "estimated_minutes": 60,
+                "node_type": "group",
+                "depends_on": [],
+                "children": [
+                    {
+                        "client_node_id": "draft",
+                        "title": "撰写自我介绍",
+                        "description": "形成可朗读的完整稿件。",
+                        "verb": "撰写",
+                        "estimated_minutes": 30,
+                        "node_type": "action",
+                        "depends_on": [],
+                        "children": [],
+                    },
+                    {
+                        "client_node_id": "materials",
+                        "title": "准备面试资料",
+                        "description": "汇总作品和项目证据。",
+                        "verb": "准备",
+                        "estimated_minutes": 20,
+                        "node_type": "action",
+                        "depends_on": ["draft"],
+                        "children": [],
+                    },
+                ],
+            },
+            "summary": "完成面试准备",
+            "assumptions": [],
+        }
+    )
+
+    assert runner.contains_low_value_icebreaker(task_tree) is False
+
+
 def test_evaluate_plan_reports_invalid_task_tree_without_raising():
     runner = _load_eval_runner()
     case = runner.EvalCase(
@@ -106,7 +149,7 @@ def test_load_cases_reads_planning_jsonl_fixture():
 
     cases = runner.load_cases(Path(__file__).parent / "evals" / "planning_cases.jsonl")
 
-    assert len(cases) >= 32
+    assert len(cases) == 42
     intent_counts = {
         intent_type: sum(1 for case in cases if case.expected_intent_type == intent_type)
         for intent_type in {
@@ -117,6 +160,277 @@ def test_load_cases_reads_planning_jsonl_fixture():
         }
     }
     assert all(count >= 8 for count in intent_counts.values())
+    long_term_v2_cases = [case for case in cases if case.case_id is not None]
+    assert [case.case_id for case in long_term_v2_cases] == [
+        str(index) for index in range(33, 43)
+    ]
+    assert all(case.require_outcome_checkpoints for case in long_term_v2_cases)
+
+
+def test_long_term_eval_reports_loop_checkpoint_and_capacity_metrics():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="半年后跑半马，每周可训练 4 次",
+        expected_intent_type="long_term_growth",
+        expected_horizon="months",
+        must_have_icebreaker=True,
+        max_nodes=5,
+        description="loop contract",
+        case_id="34",
+        expected_loop_min=1,
+        expected_loop_max=2,
+        expected_weekly_target=4,
+        require_outcome_checkpoints=True,
+        forbid_future_occurrences=True,
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "启动半马训练",
+            "description": None,
+            "verb": "启动",
+            "estimated_minutes": 5,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "first",
+                    "title": "保存一条附近跑步路线",
+                    "description": "记录起点和终点",
+                    "verb": "保存",
+                    "estimated_minutes": 5,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "路线已保存",
+                    "start_hint": "打开地图",
+                }
+            ],
+        },
+        "summary": "Phase 1 启动计划",
+        "assumptions": [],
+        "planning_context": {
+            "schema_version": 2,
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+            "roadmap": [
+                {
+                    "phase_id": "phase_01",
+                    "order": 1,
+                    "title": "启动",
+                    "objective": "建立基线",
+                    "status": "current",
+                },
+                {
+                    "phase_id": "phase_02",
+                    "order": 2,
+                    "title": "积累",
+                    "objective": "提高耐力",
+                    "status": "planned",
+                },
+                {
+                    "phase_id": "phase_03",
+                    "order": 3,
+                    "title": "验证",
+                    "objective": "完成测试",
+                    "status": "planned",
+                },
+            ],
+            "current_phase": {
+                "phase_id": "phase_01",
+                "title": "启动",
+                "objective": "建立基线",
+                "completion_rule": "long_term_execution_gate",
+                "estimated_duration_weeks": 4,
+            },
+            "next_action_client_node_id": "first",
+            "practice_loops": [
+                {
+                    "loop_id": "running",
+                    "title": "完成一次跑步训练",
+                    "target_per_week": 3,
+                    "duration_weeks": 4,
+                    "done_criteria": "完成训练并记录距离",
+                }
+            ],
+            "outcome_checkpoints": [
+                {
+                    "checkpoint_id": "distance",
+                    "title": "完成一次距离测试",
+                    "evidence_type": "numeric",
+                    "unit": "km",
+                    "operator": "gte",
+                    "target_value": 5,
+                }
+            ],
+            "phase_gate": {
+                "process_threshold": 0.8,
+                "outcome_rule": "all_required",
+            },
+        },
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+    )
+
+    assert result.valid_task_tree is True
+    assert result.loop_count == 1
+    assert result.checkpoint_count == 1
+    assert result.commitment_count == 3
+    assert result.weekly_target_matches is False
+    assert result.outcome_evidence_present is True
+    assert any(
+        error.startswith("weekly_target_mismatch:")
+        for error in result.strategy_errors
+    )
+
+
+def test_schema_v2_horizon_allows_loop_cadence_without_future_occurrences():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="今年想把英语口语练到可以参加海外面试",
+        expected_intent_type="long_term_growth",
+        expected_horizon="months",
+        must_have_icebreaker=True,
+        max_nodes=5,
+        description="schema v2 cadence is not an expanded schedule",
+    )
+    task_tree = runner.TaskTree.model_validate(
+        {
+            "root": {
+                "client_node_id": "root",
+                "title": "启动口语练习",
+                "description": None,
+                "verb": "启动",
+                "estimated_minutes": 5,
+                "node_type": "group",
+                "depends_on": [],
+                "children": [
+                    {
+                        "client_node_id": "schedule",
+                        "title": "制定每周 3 次口语练习计划",
+                        "description": "只确定练习节奏，不展开未来日期。",
+                        "verb": "制定",
+                        "estimated_minutes": 10,
+                        "node_type": "action",
+                        "depends_on": [],
+                        "children": [],
+                    }
+                ],
+            },
+            "summary": "建立可执行的口语练习节奏",
+            "assumptions": [],
+            "planning_context": {
+                "schema_version": 2,
+                "intent_type": "long_term_growth",
+                "time_horizon": "months",
+                "roadmap": [
+                    {
+                        "phase_id": "phase_01",
+                        "order": 1,
+                        "title": "启动",
+                        "objective": "建立节奏",
+                        "status": "current",
+                    },
+                    {
+                        "phase_id": "phase_02",
+                        "order": 2,
+                        "title": "积累",
+                        "objective": "持续练习",
+                        "status": "planned",
+                    },
+                    {
+                        "phase_id": "phase_03",
+                        "order": 3,
+                        "title": "验证",
+                        "objective": "完成模拟面试",
+                        "status": "planned",
+                    },
+                ],
+                "current_phase": {
+                    "phase_id": "phase_01",
+                    "title": "启动",
+                    "objective": "建立节奏",
+                    "completion_rule": "long_term_execution_gate",
+                    "estimated_duration_weeks": 4,
+                },
+                "next_action_client_node_id": "schedule",
+                "practice_loops": [
+                    {
+                        "loop_id": "speaking",
+                        "title": "完成一次口语练习",
+                        "target_per_week": 3,
+                        "duration_weeks": 4,
+                        "done_criteria": "完成练习并保存录音",
+                    }
+                ],
+                "outcome_checkpoints": [
+                    {
+                        "checkpoint_id": "confidence",
+                        "title": "完成口语自评",
+                        "evidence_type": "self_assessment",
+                        "operator": "gte",
+                        "target_value": 3,
+                    }
+                ],
+                "phase_gate": {
+                    "process_threshold": 0.8,
+                    "outcome_rule": "all_required",
+                },
+            },
+        }
+    )
+
+    assert runner.collect_horizon_errors(case, task_tree) == []
+
+
+def test_future_occurrence_detection_distinguishes_weekly_count_from_weekday():
+    runner = _load_eval_runner()
+
+    def tree_with_title(title: str):
+        return runner.TaskTree.model_validate(
+            {
+                "root": {
+                    "client_node_id": "root",
+                    "title": "启动训练",
+                    "description": None,
+                    "verb": "启动",
+                    "estimated_minutes": 5,
+                    "node_type": "group",
+                    "depends_on": [],
+                    "children": [
+                        {
+                            "client_node_id": "task",
+                            "title": title,
+                            "description": None,
+                            "verb": "制定",
+                            "estimated_minutes": 10,
+                            "node_type": "action",
+                            "depends_on": [],
+                            "children": [],
+                        }
+                    ],
+                },
+                "summary": "启动训练",
+                "assumptions": [],
+            }
+        )
+
+    assert runner._contains_future_occurrence_nodes(
+        tree_with_title("制定本周三次训练时间表")
+    ) is False
+    assert runner._contains_future_occurrence_nodes(
+        tree_with_title("打开跑步 App 查看本周天气")
+    ) is False
+    assert runner._contains_future_occurrence_nodes(
+        tree_with_title("安排周三训练")
+    ) is True
 
 
 def test_run_cases_profiles_intent_before_building_strategy_prompt():
@@ -141,6 +455,70 @@ def test_run_cases_profiles_intent_before_building_strategy_prompt():
     assert results[0].actual_intent_type == "short_term_delivery"
     assert results[0].intent_type_matches_expected is True
     assert results[0].strategy_compliant is True
+
+
+def test_run_cases_replans_with_runtime_validator_feedback():
+    runner = _load_eval_runner()
+
+    class ReplanningPlanner:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def profile_intent(self, intent_text: str, **_: Any):
+            return {
+                "intent_type": "short_term_delivery",
+                "time_horizon": "hours",
+                "confidence_score": 0.95,
+            }
+
+        async def create_plan(self, prompt: str, **_: Any):
+            self.prompts.append(prompt)
+            title = "打开 Word 准备开始" if len(self.prompts) == 1 else "撰写核心大纲"
+            return {
+                "root": {
+                    "client_node_id": "root",
+                    "title": "完成交付",
+                    "description": None,
+                    "verb": "完成",
+                    "estimated_minutes": 30,
+                    "node_type": "group",
+                    "depends_on": [],
+                    "children": [
+                        {
+                            "client_node_id": "action",
+                            "title": title,
+                            "description": None,
+                            "verb": "撰写",
+                            "estimated_minutes": 15,
+                            "node_type": "action",
+                            "depends_on": [],
+                            "children": [],
+                            "done_criteria": "保存一份包含三个要点的大纲",
+                            "start_hint": "先写第一个核心要点",
+                        }
+                    ],
+                },
+                "summary": "完成交付",
+                "assumptions": [],
+            }
+
+    case = runner.EvalCase(
+        input="今天完成交付",
+        expected_intent_type="short_term_delivery",
+        expected_horizon="hours",
+        must_have_icebreaker=False,
+        max_nodes=8,
+        description="runtime validator feedback",
+    )
+    planner = ReplanningPlanner()
+
+    results = runner.asyncio.run(
+        runner.run_cases([case], provider=None, model=None, planner=planner)
+    )
+
+    assert len(planner.prompts) == 2
+    assert "LOW_VALUE_ICEBREAKER_IN_SPRINT" in planner.prompts[1]
+    assert results[0].passed is True
 
 
 def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
@@ -258,7 +636,11 @@ def test_exploration_decision_does_not_require_five_minute_icebreaker():
                 },
             ],
         },
-        "summary": "澄清转行产品经理是否值得继续探索",
+        "summary": (
+            "当前判断：这个方向值得先继续澄清，但还不建议现在就做最终转行决定。"
+            "判断依据：目前还缺少岗位要求和个人成本收益对比。"
+            "下一步探索：先写下原因，再收集 JD 和现实信息。"
+        ),
         "assumptions": [],
     }
 
@@ -273,8 +655,133 @@ def test_exploration_decision_does_not_require_five_minute_icebreaker():
     )
 
     assert result.icebreaker_present is False
-    assert result.strategy_compliant is True
+    assert not any("<=5 minute first-step icebreaker" in error for error in result.strategy_errors)
+    assert not any("answer the question first" in error for error in result.strategy_errors)
     assert result.passed is True
+
+
+def test_exploration_decision_eval_rejects_route_only_summary_without_answer_first():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="我是否要考虑转行产品经理",
+        expected_intent_type="exploration_decision",
+        expected_horizon="days",
+        must_have_icebreaker=False,
+        max_nodes=6,
+        description="探索决策必须先回答当前判断，再给依据和下一步探索",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "转行产品经理探索",
+            "description": None,
+            "verb": "探索",
+            "estimated_minutes": 60,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "jd",
+                    "title": "找 3 个产品经理 JD",
+                    "description": "收集岗位要求。",
+                    "verb": "找",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+            ],
+        },
+        "summary": "下一步探索：先找 3 个 JD，再访谈从业者，最后比较转行成本收益。",
+        "assumptions": [],
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert result.strategy_compliant is False
+    assert any("answer the question first" in error for error in result.strategy_errors)
+
+
+def test_exploration_eval_accepts_negated_immediate_execution_judgment():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="我是否应该辞职转行",
+        expected_intent_type="exploration_decision",
+        expected_horizon="days",
+        must_have_icebreaker=False,
+        max_nodes=6,
+        description="否定立即执行是判断，不是提前执行",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "澄清转行决策",
+            "description": None,
+            "verb": "澄清",
+            "estimated_minutes": 30,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "research",
+                    "title": "收集 3 个目标岗位 JD",
+                    "description": "补齐岗位现实信息。",
+                    "verb": "收集",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                }
+            ],
+        },
+        "summary": (
+            "当前判断：现在并不是直接辞职转行的时机，更适合先做低成本探索。"
+            "判断依据：岗位要求和个人成本收益仍缺少可靠信息。"
+            "下一步探索：先收集岗位信息，再形成阶段性判断。"
+        ),
+        "assumptions": [],
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert result.strategy_compliant is True
+    assert result.time_horizon_matches_expected is True
+    assert result.passed is True
+
+
+def test_exploration_eval_accepts_immediate_execution_risk_warning():
+    runner = _load_eval_runner()
+
+    assert (
+        runner._contains_non_negated_pattern(
+            "判断依据：信息不足，直接辞职风险高，应该先做低成本验证。",
+            runner.EXPLORATION_EXECUTION_PATTERNS,
+        )
+        is False
+    )
+    assert (
+        runner._contains_non_negated_pattern(
+            "当前判断：建议立即辞职，风险可控。",
+            runner.EXPLORATION_EXECUTION_PATTERNS,
+        )
+        is True
+    )
 
 
 def test_failure_diagnostics_include_actionable_eval_context():

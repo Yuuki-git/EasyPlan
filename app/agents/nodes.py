@@ -17,6 +17,7 @@ from app.services.action_quality import score_action_node
 from app.services.llm_service import ListReasoningSink, ReasoningSink, emit_reasoning
 from app.services.phase_planning import (
     choose_next_action,
+    long_term_execution_enabled,
     phase_planning_enabled,
     validate_next_phase_transition,
 )
@@ -52,6 +53,13 @@ LONG_TERM_HORIZON_PATTERNS = (
     r"(每天|每日|每周|每月).{0,12}(坚持|学习|训练|复习|背|练)",
     r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
 )
+LONG_TERM_V2_HORIZON_PATTERNS = (
+    r"第[一二三四五六七八九十\d]+周",
+    r"第[一二三四五六七八九十\d]+个月",
+    r"[一二三四五六七八九十\d]+\s*个月.{0,6}计划",
+    r"(每天|每日).{0,12}(坚持|学习|训练|复习|背|练)",
+    r"(完整|全部|全年|长期).{0,8}(周期|计划|路线|课程)",
+)
 LONG_TERM_CURRICULUM_TERMS = (
     "基础",
     "训练",
@@ -68,6 +76,13 @@ EXPLORATION_EXECUTION_PATTERNS = (
     r"(直接|立即).{0,6}(辞职|转行|创业|报名|投递|执行)",
     r"(报名|投递|辞职).{0,12}(课程|岗位|项目)",
     r"(转行|创业|长期学习).{0,8}(执行计划|学习计划|路线图)",
+)
+EXPLORATION_EXECUTION_NEGATION_SUFFIX = re.compile(
+    r"(?:暂不建议|不建议|不应|不宜|避免|不要|无需|不必|不是|并非|暂不适合|不适合)"
+    r"[^，。；！？]{0,16}$"
+)
+EXPLORATION_EXECUTION_CAUTION_PREFIX = re.compile(
+    r"^(?:的)?(?:风险|成本|代价|不确定性)(?:很|较|过于)?(?:高|大)"
 )
 EXPLORATION_DISCOVERY_TERMS = (
     "澄清",
@@ -102,6 +117,15 @@ LOW_VALUE_ICEBREAKER_TERMS = (
     "坐下",
     "整理桌面",
 )
+FINITE_DELIVERABLE_PATTERN = re.compile(
+    r"(?:完成|产出|撰写|写完|写|发布|制作)\s*"
+    r"[一二两三四五六七八九十百\d]+\s*"
+    r"(?:篇|份|个|首|项|章|页|部|套)"
+)
+EXPLICIT_WEEKLY_TARGET_PATTERN = re.compile(
+    r"每周[^，。；！？\d一二两三四五六七八九十]{0,12}"
+    r"([一二两三四五六七八九十\d]+)\s*次"
+)
 
 RULE_PRIORITY_PROMPT = """规则优先级：
 1. intent_type 对应策略高于普通任务拆解习惯。
@@ -122,7 +146,7 @@ HARD_RULES_PROMPT = """硬性规则：
    - Roadmap 仅允许写入 planning_context.roadmap；不得把未来阶段展开为 TaskTree 任务。
 4. 禁止输出 Markdown、解释性段落或 schema 外字段。
 5. title 和 description 必须短而具体，避免长文本导致 JSON 截断。
-6. assumptions 必须是字符串数组；默认 assumptions 为 []；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
+6. assumptions 必须是字符串数组；默认 assumptions 为 []，但 schema v2 在用户未提供循环频率时必须记录保守容量假设；所有 estimated_minutes 必须是 >=1 的整数；字符串内不要包含未转义换行。"""
 
 ACTION_QUALITY_PROMPT = """Action Quality 字段生成要求：
 1. 对所有 Action，尽量生成 done_criteria；done_criteria 必须具体说明做到什么程度算完成。
@@ -152,7 +176,7 @@ THREE_TIER_PLANNING_PROMPT = """三层规划契约：
 5. TaskTree.root 只能展开当前 Phase 1 的任务，不得展开未来阶段。
 6. next_action_client_node_id 必须引用当前阶段内一个 Action；服务端持久化时会确定性复核。
 7. intent_type 和 time_horizon 必须与已识别的 IntentProfile 完全一致。
-8. assumptions 保持为 []，不得把 Roadmap 编码进 assumptions。"""
+8. assumptions 不得编码 Roadmap；schema v1 保持为 []，schema v2 未给频率时必须记录保守容量假设。"""
 
 NO_PHASE_PLANNING_PROMPT = """三层规划契约：
 planning_context 必须为 null。不要生成 Roadmap、Current Phase 或 Next Action。"""
@@ -167,7 +191,24 @@ NEXT_PHASE_PROMPT = """下一阶段规划模式：
 4. 只能展开一个新的 current phase；TaskTree.root 只能包含该阶段任务。
 5. 只允许重写原 roadmap 的 planned 后缀，不得生成所有未来阶段的任务。
 6. 所有 Action 继续满足 Action Quality、Scope Horizon 和依赖规则。
-7. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+7. 新阶段 TaskTree.root 及其所有后代节点必须使用全新的 client_node_id，不得复用已提交计划中的任何 client_node_id。
+8. planning_context.schema_version 必须与已提交计划保持一致。
+9. 不得创建新 thread，不得输出服务器 request/lease 字段。"""
+
+LONG_TERM_EXECUTION_PROMPT = """Long-Term Execution schema v2 契约：
+1. 新生成的 long_term_growth 必须使用 planning_context.schema_version = 2。
+2. current_phase.completion_rule 必须是 long_term_execution_gate，并给出 1-12 周的 estimated_duration_weeks。
+3. practice_loops 只能有 0-2 个，只在无限重复行为确实影响结果时使用。适合循环：语言练习、跑步训练、乐器练习、稳定作息。有限数量的交付目标必须使用一次性 Action 和 checkpoint：输入包含明确总数或单一交付物时，practice_loops 必须为 []，例如“完成 12 篇写作”“完成一个 Python 作品”“发布个人网站”；选择教材、完成摸底、整理素材、提交报告也不得创建 loop。
+4. 用户明确说“每周能训练三次”等容量时，target_per_week 必须原样保留该频率，不得降低或改写；例如“每周练习 5 次”必须输出 target_per_week=5。只要生成 practice_loop 且用户没有给出每周频率，就必须使用保守目标，且 assumptions 必须明确记录 target_per_week 的保守假设，格式为“用户未提供频率，保守假设 target_per_week=N”；不得让 assumptions 为空。
+5. outcome_checkpoints 必须有 1-2 个，使用确定性证据规则：numeric/self_assessment 的 target_value 必须是非 null 数值；artifact 必须使用 operator=exists。
+6. 不要预生成未来 occurrence，不要展开每日打卡，不要为未来日期创建 Task 节点；不得创建未来数周时间表或周一/周二排程。TaskTree 中禁止出现“第一周”“第1周”“第二周”“第2周”等排期任务；改写为不带周次的单次摸底或准备动作。循环未来实例只能由服务端按需 materialize。
+7. 重复习惯目标默认生成 1-3 个一次性 Action、1 个 practice loop、1 个 outcome checkpoint；有限交付目标默认 0 个 practice loop，并使用 1-2 个 outcome checkpoint。
+8. 一次性 Action + practice_loops + outcome_checkpoints 合计最多 5 个核心承诺；3 个一次性 Action + 1 个 practice loop 时只能有 1 个 outcome checkpoint。
+9. phase_gate 固定使用 process_threshold = 0.8 和 outcome_rule = all_required。
+10. practice_loops、outcome_checkpoints 和 phase_gate 只能写入 planning_context，不得伪装成 TaskTree Action。"""
+
+SCHEMA_V1_PHASE_PROMPT = """兼容 planning schema v1：
+planning_context.schema_version 必须是 1；assumptions 必须是 []；不得输出 practice_loops、outcome_checkpoints 或 phase_gate。"""
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
@@ -196,7 +237,7 @@ long_term_growth 必须：
 - 第一个 action 不得是安装环境、自我评估、明确目标、草拟大纲、训练计划、学习计划或备考计划。
 - Phase 1 任务标题中不要写“训练计划”“学习计划”“备考计划”“长期路线”“课程大纲”。
 - summary 写成“Phase 1 启动计划”，不要回显完整长期目标。
-- assumptions 必须是 []；Roadmap 只能写入 planning_context.roadmap，未来阶段不得写入 TaskTree 任务。
+- schema v1 时 assumptions 必须是 []；schema v2 未给频率时必须记录保守容量假设；Roadmap 只能写入 planning_context.roadmap，未来阶段不得写入 TaskTree 任务。
 
 <反面教材>
 动作：「背 50 个 N3 单词」，耗时：120 分钟。问题：启动阻力过高，容易拖延。
@@ -265,16 +306,25 @@ context_checklist 必须：
 组：「手机处理」
 动作：「缴电费」""",
     "exploration_decision": """策略：这是探索决策型任务。
-不要直接生成死板执行清单，也不要假设用户已经做出决定。
+先给 1-2 句当前判断，继续写入现有 task_tree.summary，例如“可以考虑，但先做低成本验证”。
+summary 必须严格按这个顺序输出三段：
+当前判断：先直接回答用户现在更适合继续探索、暂缓执行，还是暂不建议进入长期投入。
+判断依据：说明 1-2 条当前依据，例如信息缺口、成本收益、现实约束或风险点。
+下一步探索：再给信息收集、问题澄清、低成本验证和决策节点。
+不要只给探索路线、不回答问题本身。
+summary 必须是当前判断，不要只是“探索澄清计划”这类抽象标题。
+不要直接生成长期执行计划，也不要假设用户已经做出最终决定。
 不要假设用户已经决定。
 请生成信息收集、问题澄清、最小成本测试和决策节点。
 目标是降低不确定性，而不是强推执行。
-不要生成长期执行计划。
-当前阶段只生成信息收集、问题澄清、小实验和决策节点。
+当前阶段只生成信息收集、问题澄清、小实验和决策节点.
 任务必须围绕澄清问题、信息收集、低成本验证、决策依据。
 禁止直接生成完整转行计划、创业计划、长期学习计划。
 禁止直接生成长期执行计划或连续投入型任务。
 信息收集、小实验、决策节点任务建议生成 start_hint。
+先给 1-2 句当前判断，再给判断依据和下一步探索。
+当前判断必须先回答“现在更像值得继续探索，还是暂不建议立刻执行”，但不要把判断写成最终定论。
+这 1-2 句当前判断必须继续写入现有 task_tree.summary，不新增字段，不改 schema，不扩 API。
 
 exploration_decision 禁止：
 - 假设用户已经做出最终决定
@@ -285,15 +335,16 @@ exploration_decision 禁止：
 
 exploration_decision 输出措辞：
 - root.children 最多 5 个顶层任务。
-- summary 写成“探索澄清计划”；assumptions 必须是 []。
+- summary 必须写成“当前判断：... 判断依据：... 下一步探索：...”，继续写入现有 task_tree.summary，不新增任何字段。
+- summary 必须先回答问题，再说明依据和下一步探索；不要只给探索路线，也不要只写空泛标题；assumptions 必须是 []。
 - 不要在 summary、assumptions、title、description 或 verb 中写“执行计划”“学习计划”“路线图”“报名”“投递”“直接”“立即”。
 - 如果用户原文包含辞职、转行或创业，把用户原词改写为“方向A/选项A/当前选择”，保持探索口吻。
 - 任务标题应使用“澄清/列出/收集/访谈/比较/验证/决策记录”，不要使用“制定计划/开始执行/报名课程/投递岗位”。
 
 <正面教材>
-动作：「列出辞职做自媒体的 3 个核心担忧」，耗时：15 分钟。
-动作：「找一位自媒体从业者聊现状」，耗时：60 分钟。
-动作：「用一页纸比较继续上班和做自媒体的成本收益」，耗时：30 分钟。
+动作：「列出方向A的 3 个核心担忧」，耗时：15 分钟。
+动作：「找一位方向A相关从业者聊现状」，耗时：60 分钟。
+动作：「用一页纸比较当前选择与方向A的成本收益」，耗时：30 分钟。
 
 <反面教材>
 错误：直接制定 6 个月转行产品经理学习计划。
@@ -301,11 +352,11 @@ exploration_decision 输出措辞：
 
 <正面教材>
 正确：
-1. 写下转行产品经理的 3 个原因，10 分钟
-2. 找 3 个产品经理 JD，20 分钟
+1. 写下考虑方向A的 3 个原因，10 分钟
+2. 找 3 个方向A相关岗位 JD，20 分钟
 3. 标出这些 JD 的共同要求，15 分钟
 4. 约一位从业者聊 20 分钟，60 分钟
-5. 用一页纸比较转行与不转行的成本收益，30 分钟""",
+5. 用一页纸比较当前选择与方向A的成本收益，30 分钟""",
     "general": """策略：用户意图不够明确。
 请生成保守、短小、可执行的启动计划。
 不要输出过多任务。
@@ -462,6 +513,7 @@ def build_planner_prompt(
     phase_contract = _phase_contract_prompt(
         intent_type=intent_type,
         planning_mode=planning_mode,
+        committed_task_tree=committed_task_tree,
     )
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
@@ -500,13 +552,38 @@ def build_planner_prompt(
     return "\n".join(parts)
 
 
-def _phase_contract_prompt(*, intent_type: str, planning_mode: str) -> str:
+def _phase_contract_prompt(
+    *,
+    intent_type: str,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> str:
     if not phase_planning_enabled():
         return PHASE_PLANNING_DISABLED_PROMPT
     if planning_mode == "next_phase":
+        committed_context = (
+            committed_task_tree.get("planning_context")
+            if isinstance(committed_task_tree, dict)
+            else None
+        )
+        committed_schema_version = (
+            committed_context.get("schema_version")
+            if isinstance(committed_context, dict)
+            else None
+        )
+        if committed_schema_version == 2:
+            return "\n".join((NEXT_PHASE_PROMPT, LONG_TERM_EXECUTION_PROMPT))
+        if committed_schema_version == 1:
+            return "\n".join((NEXT_PHASE_PROMPT, SCHEMA_V1_PHASE_PROMPT))
         return NEXT_PHASE_PROMPT
-    if intent_type in {"long_term_growth", "exploration_decision"}:
-        return THREE_TIER_PLANNING_PROMPT
+    if intent_type == "long_term_growth":
+        if long_term_execution_enabled():
+            return "\n".join(
+                (THREE_TIER_PLANNING_PROMPT, LONG_TERM_EXECUTION_PROMPT)
+            )
+        return "\n".join((THREE_TIER_PLANNING_PROMPT, SCHEMA_V1_PHASE_PROMPT))
+    if intent_type == "exploration_decision":
+        return "\n".join((THREE_TIER_PLANNING_PROMPT, SCHEMA_V1_PHASE_PROMPT))
     return NO_PHASE_PLANNING_PROMPT
 
 
@@ -523,7 +600,12 @@ def planner_node_factory(planner: PlannerClient):
             current_phase_task_summary=state.get("current_phase_task_summary"),
         )
         reasoning_sink = ListReasoningSink()
-        task_tree = await _call_planner(planner, prompt, reasoning_sink)
+        task_tree = _normalize_task_tree_phase_contract(
+            await _call_planner(planner, prompt, reasoning_sink),
+            intent_profile=state.get("intent_profile"),
+            planning_mode=state.get("planning_mode", "initial"),
+            committed_task_tree=state.get("committed_task_tree"),
+        )
         next_state: AgentState = {
             **state,
             "task_tree": task_tree,
@@ -557,9 +639,64 @@ async def _call_planner(
     return await planner.create_plan(prompt)
 
 
+def _normalize_task_tree_phase_contract(
+    task_tree: dict[str, Any],
+    *,
+    intent_profile: dict[str, Any] | None,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> dict[str, Any]:
+    parsed = TaskTree.model_validate(task_tree)
+    context = parsed.planning_context
+    if context is None:
+        return parsed.model_dump(mode="json")
+
+    expected_intent_type, expected_horizon = _expected_phase_contract_identity(
+        intent_profile=intent_profile,
+        planning_mode=planning_mode,
+        committed_task_tree=committed_task_tree,
+    )
+    if expected_intent_type is None or expected_horizon is None:
+        return parsed.model_dump(mode="json")
+    if context.intent_type == expected_intent_type and context.time_horizon == expected_horizon:
+        return parsed.model_dump(mode="json")
+
+    normalized_context = context.model_copy(
+        update={
+            "intent_type": expected_intent_type,
+            "time_horizon": expected_horizon,
+        }
+    )
+    return parsed.model_copy(update={"planning_context": normalized_context}).model_dump(mode="json")
+
+
+def _expected_phase_contract_identity(
+    *,
+    intent_profile: dict[str, Any] | None,
+    planning_mode: str,
+    committed_task_tree: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if planning_mode == "next_phase" and committed_task_tree is not None:
+        try:
+            committed_context = TaskTree.model_validate(committed_task_tree).planning_context
+        except ValidationError:
+            committed_context = None
+        if committed_context is not None:
+            return committed_context.intent_type, committed_context.time_horizon
+
+    intent_type = _intent_type_from_profile(intent_profile)
+    time_horizon = (intent_profile or {}).get("time_horizon")
+    if intent_type not in {"long_term_growth", "exploration_decision"}:
+        return None, None
+    if not isinstance(time_horizon, str):
+        return None, None
+    return intent_type, time_horizon
+
+
 async def task_tree_validator_node(state: AgentState) -> AgentState:
     errors = _validate_task_tree(
         state.get("task_tree"),
+        intent_text=state.get("intent_text"),
         intent_profile=state.get("intent_profile"),
         planning_mode=state.get("planning_mode"),
         committed_task_tree=state.get("committed_task_tree"),
@@ -643,6 +780,7 @@ async def finalize_phase_rejection_node(state: AgentState) -> AgentState:
 
 async def persist_internal_tasks_node(state: AgentState) -> AgentState:
     from app.db.session import async_session
+    from app.services.practice_repository import PracticeLoopRepository
 
     tasks, dependencies = flatten_task_tree_for_persistence(
         state["task_tree"],
@@ -650,9 +788,44 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
         thread_id=state["thread_id"],
     )
     now = datetime.now(timezone.utc)
+    is_next_phase = state.get("planning_mode") == "next_phase"
+    phase_request_id = state.get("phase_request_id") if is_next_phase else None
+    if is_next_phase and not phase_request_id:
+        raise RuntimeError("phase_request_id is required for next-phase persistence")
     async with async_session() as session:
         async with session.begin():
-            await _persist_tasks_idempotently(session, tasks, dependencies)
+            phase_thread: AgentThread | None = None
+            if is_next_phase:
+                thread_result = await session.execute(
+                    select(AgentThread)
+                    .where(
+                        AgentThread.user_id == UUID(str(state["user_id"])),
+                        AgentThread.thread_id == state["thread_id"],
+                    )
+                    .with_for_update()
+                )
+                phase_thread = thread_result.scalar_one_or_none()
+                if phase_thread is None:
+                    raise RuntimeError("phase thread not found during persistence")
+                if _is_confirmed_phase_request(phase_thread, phase_request_id):
+                    return {"task_persistence_status": "succeeded"}
+                await _assert_next_phase_client_ids_are_new(session, tasks)
+
+            await _persist_tasks_idempotently(
+                session,
+                tasks,
+                dependencies,
+                require_new_task_ids=is_next_phase,
+            )
+            parsed_tree = TaskTree.model_validate(state["task_tree"])
+            practice_repository = PracticeLoopRepository(session)
+            await practice_repository.persist_definitions_from_tree(
+                user_id=UUID(str(state["user_id"])),
+                thread_id=state["thread_id"],
+                task_tree=parsed_tree,
+                timezone_name=str(state.get("user_timezone") or "UTC"),
+                now=now,
+            )
             task_tree = await _with_server_derived_next_action(
                 session,
                 task_tree=state["task_tree"],
@@ -666,27 +839,13 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 "completed_at": now,
                 "updated_at": now,
             }
-            if state.get("planning_mode") == "next_phase":
-                thread_result = await session.execute(
-                    select(AgentThread)
-                    .where(
-                        AgentThread.user_id == UUID(str(state["user_id"])),
-                        AgentThread.thread_id == state["thread_id"],
-                    )
-                    .with_for_update()
-                )
-                thread = thread_result.scalar_one_or_none()
-                if thread is None:
-                    raise RuntimeError("phase thread not found during persistence")
-                request_id = state.get("phase_request_id")
-                if not request_id:
-                    raise RuntimeError("phase_request_id is required for next-phase persistence")
+            if is_next_phase:
                 update_values.update(
                     lease_owner=None,
                     lease_expires_at=None,
                     interrupt_payload=_terminal_phase_envelope(
-                        thread.interrupt_payload,
-                        request_id=request_id,
+                        phase_thread.interrupt_payload,
+                        request_id=phase_request_id,
                         status="confirmed",
                         now=now,
                     ),
@@ -700,6 +859,18 @@ async def persist_internal_tasks_node(state: AgentState) -> AgentState:
                 .values(**update_values)
             )
     return {"task_persistence_status": "succeeded"}
+
+
+def _is_confirmed_phase_request(thread: AgentThread, request_id: str) -> bool:
+    payload = thread.interrupt_payload
+    if not isinstance(payload, dict):
+        return False
+    return (
+        payload.get("type") == "phase_generation_state"
+        and payload.get("request_id") == request_id
+        and payload.get("status") == "confirmed"
+        and (payload.get("history") or {}).get(request_id, {}).get("status") == "confirmed"
+    )
 
 
 async def _with_server_derived_next_action(
@@ -759,18 +930,23 @@ def _terminal_phase_envelope(
         "status": status,
         "updated_at": now.isoformat(),
     }
-    return {
+    envelope = {
         "type": "phase_generation_state",
         "request_id": request_id,
         "status": status,
         "history": history,
     }
+    if isinstance(payload.get("base_phase_id"), str):
+        envelope["base_phase_id"] = payload["base_phase_id"]
+    return envelope
 
 
 async def _persist_tasks_idempotently(
     session: Any,
     tasks: list[Task],
     dependencies: list[TaskDependency],
+    *,
+    require_new_task_ids: bool = False,
 ) -> None:
     tasks_by_generated_id = {task.id: task for task in tasks}
     client_id_by_generated_id = {
@@ -793,11 +969,12 @@ async def _persist_tasks_idempotently(
             for task in task_layers[depth]
         ]
         if rows:
-            await session.execute(
-                insert(Task.__table__)
-                .values(rows)
-                .on_conflict_do_nothing(index_elements=["thread_id", "client_node_id"])
-            )
+            statement = insert(Task.__table__).values(rows)
+            if not require_new_task_ids:
+                statement = statement.on_conflict_do_nothing(
+                    index_elements=["thread_id", "client_node_id"]
+                )
+            await session.execute(statement)
         actual_task_id_by_client_id.update(
             await _load_task_ids_by_client_node_id(
                 session,
@@ -817,6 +994,24 @@ async def _persist_tasks_idempotently(
             insert(TaskDependency.__table__)
             .values(dependency_rows)
             .on_conflict_do_nothing(index_elements=["task_id", "depends_on_task_id"])
+        )
+
+
+async def _assert_next_phase_client_ids_are_new(
+    session: Any,
+    tasks: list[Task],
+) -> None:
+    existing_ids = await _load_task_ids_by_client_node_id(
+        session,
+        user_id=tasks[0].user_id,
+        thread_id=tasks[0].thread_id,
+        client_node_ids=[task.client_node_id for task in tasks],
+    )
+    if existing_ids:
+        conflicting_ids = ", ".join(sorted(existing_ids))
+        raise RuntimeError(
+            "next-phase client_node_id values already exist in committed tasks: "
+            f"{conflicting_ids}"
         )
 
 
@@ -998,6 +1193,7 @@ def _action_quality_metadata(node: Any, base_metadata: dict[str, Any] | None = N
 def _validate_task_tree(
     task_tree: Any,
     *,
+    intent_text: str | None = None,
     intent_profile: dict[str, Any] | None = None,
     planning_mode: str | None = None,
     committed_task_tree: dict[str, Any] | None = None,
@@ -1016,6 +1212,7 @@ def _validate_task_tree(
     intent_type = _intent_type_from_profile(intent_profile)
     _collect_phase_contract_errors(
         parsed,
+        intent_text=intent_text,
         intent_profile=intent_profile,
         planning_mode=planning_mode,
         committed_task_tree=committed_task_tree,
@@ -1029,6 +1226,7 @@ def _validate_task_tree(
 def _collect_phase_contract_errors(
     task_tree: TaskTree,
     *,
+    intent_text: str | None,
     intent_profile: dict[str, Any] | None,
     planning_mode: str | None,
     committed_task_tree: dict[str, Any] | None,
@@ -1044,6 +1242,64 @@ def _collect_phase_contract_errors(
             errors.append("phase planning is disabled; planning_context must be null")
         return
 
+    if context is not None and context.schema_version == 2:
+        if not long_term_execution_enabled():
+            errors.append(
+                "long-term execution is disabled; schema version 2 is not accepted"
+            )
+        one_off_count = sum(
+            node.node_type == "action"
+            for node in _iter_task_nodes(task_tree.root)
+        )
+        commitment_count = (
+            one_off_count
+            + len(context.practice_loops)
+            + len(context.outcome_checkpoints)
+        )
+        if one_off_count > 5:
+            errors.append(
+                "long_term_growth current phase may contain at most 5 one-off actions"
+            )
+        if commitment_count > 5:
+            errors.append(
+                "long_term_growth current phase may contain at most 5 core commitments"
+            )
+        if context.practice_loops and _has_explicit_finite_deliverable(intent_text):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="FINITE_DELIVERABLE_LOOP_FORBIDDEN",
+                    intent_type=intent_type,
+                    failed_rule="Long-Term Execution Loop Contract",
+                    problem="用户目标包含明确总数，属于有限交付目标，但输出仍包含 practice_loop。",
+                    offender=task_tree.root,
+                    fix_suggestion=(
+                        "只删除 practice_loops；保留原 intent_type、Roadmap 和当前阶段任务，"
+                        "用一次性 Action 与 numeric/artifact checkpoint 表达有限交付进度。"
+                    ),
+                )
+            )
+        expected_weekly_target = _extract_explicit_weekly_target(intent_text)
+        if expected_weekly_target is not None and not any(
+            loop.target_per_week == expected_weekly_target
+            for loop in context.practice_loops
+        ):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="WEEKLY_TARGET_MISMATCH",
+                    intent_type=intent_type,
+                    failed_rule="Long-Term Execution Loop Contract",
+                    problem=(
+                        "用户明确给出了每周频率，但 practice_loop 没有原样保留："
+                        f"必须包含 target_per_week={expected_weekly_target}。"
+                    ),
+                    offender=task_tree.root,
+                    fix_suggestion=(
+                        "只修正对应 practice_loop 的 target_per_week；保持原 intent_type、"
+                        "Roadmap、Action 和 checkpoint 不变。"
+                    ),
+                )
+            )
+
     if planning_mode == "next_phase":
         if committed_task_tree is None:
             errors.append("next_phase requires committed_task_tree")
@@ -1057,6 +1313,11 @@ def _collect_phase_contract_errors(
             errors.append("next_phase requires planning_context in committed and proposed trees")
             return
         errors.extend(validate_next_phase_transition(committed.planning_context, context))
+        _collect_cross_tree_client_id_errors(
+            committed=committed,
+            proposed=task_tree,
+            errors=errors,
+        )
         return
 
     if intent_type in {"long_term_growth", "exploration_decision"}:
@@ -1070,6 +1331,21 @@ def _collect_phase_contract_errors(
             errors.append("planning_context time_horizon must match IntentProfile")
     elif context is not None:
         errors.append(f"{intent_type} planning_context must be null")
+
+
+def _collect_cross_tree_client_id_errors(
+    *,
+    committed: TaskTree,
+    proposed: TaskTree,
+    errors: list[str],
+) -> None:
+    committed_ids = {node.client_node_id for node in _iter_task_nodes(committed.root)}
+    proposed_ids = {node.client_node_id for node in _iter_task_nodes(proposed.root)}
+    for client_node_id in sorted(committed_ids & proposed_ids):
+        errors.append(
+            f"{client_node_id}: next_phase client_node_id already exists in committed tree; "
+            "generate a new client_node_id for this node"
+        )
 
 
 def _collect_rule_errors(
@@ -1236,6 +1512,17 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
         return
 
     if intent_type == "exploration_decision":
+        if not _has_exploration_answer_first_summary(task_tree.summary):
+            errors.append(
+                _format_validator_feedback(
+                    error_code="EXPLORATION_ANSWER_MISSING",
+                    intent_type=intent_type,
+                    failed_rule="exploration_decision 回答层契约",
+                    problem="summary 只给了探索路线，或没有先回答当前判断、判断依据和下一步探索。不要只给探索路线、不回答问题本身。",
+                    offender=task_tree.root,
+                    fix_suggestion="先回答当前判断，再给判断依据和下一步探索；继续写入现有 task_tree.summary，不新增字段。",
+                )
+            )
         if _contains_exploration_execution_language(task_tree):
             errors.append(
                 _format_validator_feedback(
@@ -1460,6 +1747,50 @@ def _intent_type_from_profile(intent_profile: dict[str, Any] | None) -> str:
     return "general"
 
 
+def _has_explicit_finite_deliverable(intent_text: str | None) -> bool:
+    if not intent_text:
+        return False
+    for match in FINITE_DELIVERABLE_PATTERN.finditer(intent_text):
+        prefix = intent_text[max(0, match.start() - 6) : match.start()]
+        if not re.search(r"(?:每天|每日|每周|每月)\s*$", prefix):
+            return True
+    return False
+
+
+def _extract_explicit_weekly_target(intent_text: str | None) -> int | None:
+    if not intent_text:
+        return None
+    match = EXPLICIT_WEEKLY_TARGET_PATTERN.search(intent_text)
+    if match is None:
+        return None
+    return _parse_small_count(match.group(1))
+
+
+def _parse_small_count(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+    digits = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if value == "十":
+        return 10
+    if "十" in value:
+        tens_text, ones_text = value.split("十", 1)
+        tens = digits.get(tens_text, 1) if tens_text else 1
+        ones = digits.get(ones_text, 0) if ones_text else 0
+        return tens * 10 + ones
+    return digits.get(value)
+
+
 def _first_action(task_tree: TaskTree) -> Any | None:
     return next(
         (node for node in _iter_task_nodes(task_tree.root) if node.node_type == "action"),
@@ -1490,12 +1821,20 @@ def _is_low_value_icebreaker(node: Any) -> bool:
 
 def _contains_long_term_full_cycle_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(keyword in text for keyword in LONG_TERM_SCOPE_KEYWORDS)
+    keywords = LONG_TERM_SCOPE_KEYWORDS
+    if task_tree.planning_context and task_tree.planning_context.schema_version == 2:
+        keywords = tuple(
+            keyword for keyword in keywords if keyword not in {"每周", "每月"}
+        )
+    return any(keyword in text for keyword in keywords)
 
 
 def _contains_long_term_schedule_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(re.search(pattern, text) for pattern in LONG_TERM_HORIZON_PATTERNS)
+    patterns = LONG_TERM_HORIZON_PATTERNS
+    if task_tree.planning_context and task_tree.planning_context.schema_version == 2:
+        patterns = LONG_TERM_V2_HORIZON_PATTERNS
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _top_level_looks_like_long_term_curriculum(task_tree: TaskTree) -> bool:
@@ -1516,12 +1855,44 @@ def _contains_overlong_long_term_action(task_tree: TaskTree) -> bool:
 
 def _contains_exploration_execution_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
-    return any(re.search(pattern, text) for pattern in EXPLORATION_EXECUTION_PATTERNS)
+    for pattern in EXPLORATION_EXECUTION_PATTERNS:
+        for match in re.finditer(pattern, text):
+            prefix = text[max(0, match.start() - 32) : match.start()]
+            suffix = text[match.end() : match.end() + 16]
+            if (
+                EXPLORATION_EXECUTION_NEGATION_SUFFIX.search(prefix)
+                or EXPLORATION_EXECUTION_CAUTION_PREFIX.search(suffix)
+            ):
+                continue
+            return True
+    return False
 
 
 def _contains_exploration_discovery_language(task_tree: TaskTree) -> bool:
     text = _task_tree_text(task_tree)
     return any(term in text for term in EXPLORATION_DISCOVERY_TERMS)
+
+
+def _has_exploration_answer_first_summary(summary: str) -> bool:
+    if not isinstance(summary, str):
+        return False
+    normalized = re.sub(r"\s+", "", summary)
+    current_index = normalized.find("当前判断：")
+    basis_index = normalized.find("判断依据：")
+    next_index = normalized.find("下一步探索：")
+    if min(current_index, basis_index, next_index) < 0:
+        return False
+    if not (current_index <= basis_index <= next_index):
+        return False
+    current_text = normalized[current_index + len("当前判断：") : basis_index]
+    basis_text = normalized[basis_index + len("判断依据：") : next_index]
+    next_text = normalized[next_index + len("下一步探索：") :]
+    if not current_text or not basis_text or not next_text:
+        return False
+    route_only_markers = ("下一步", "先", "然后", "再", "最后")
+    if current_text.startswith(route_only_markers):
+        return False
+    return True
 
 
 def _task_tree_text(task_tree: TaskTree) -> str:

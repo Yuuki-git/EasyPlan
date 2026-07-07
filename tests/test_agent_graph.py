@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from copy import deepcopy
 from typing import Any
 
 from langgraph.types import Command
@@ -17,9 +18,29 @@ from app.agents.nodes import (
     PlannerClient,
     _validate_task_tree,
     build_planner_prompt,
+    planner_node_factory,
     task_tree_validator_node,
 )
 from app.services.checkpoint_service import TenantAwareMemorySaver
+
+
+def test_graph_config_isolates_checkpoint_state_by_run_identity():
+    initial = create_graph_config(
+        user_id="user_1",
+        thread_id="thread_1",
+        run_type="initial",
+        request_id="request-initial",
+    )
+    next_phase = create_graph_config(
+        user_id="user_1",
+        thread_id="thread_1",
+        run_type="next_phase",
+        request_id="request-phase-2",
+    )
+
+    assert initial["configurable"]["checkpoint_ns"] == "initial"
+    assert next_phase["configurable"]["checkpoint_ns"] == "next_phase:request-phase-2"
+    assert initial["configurable"]["checkpoint_ns"] != next_phase["configurable"]["checkpoint_ns"]
 
 
 class CapturingPlanner(PlannerClient):
@@ -175,6 +196,104 @@ def exploration_plan_that_assumes_execution_decision() -> dict[str, Any]:
     return plan
 
 
+def valid_exploration_phase_plan(*, time_horizon: str = "days") -> dict[str, Any]:
+    return {
+        "root": {
+            "client_node_id": "root",
+            "title": "产品经理方向探索",
+            "description": "围绕是否转行产品经理做低成本探索。",
+            "verb": "探索",
+            "estimated_minutes": 0,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "task-1",
+                    "title": "列出转行产品经理的 3 个核心担忧",
+                    "description": "写下阻碍判断的关键问题。",
+                    "verb": "列出",
+                    "estimated_minutes": 15,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "done_criteria": "写出 3 条具体担忧并保存到笔记。",
+                    "start_hint": "打开笔记，新建一页写上“转行担忧”。",
+                    "fallback_action": None,
+                    "children": [],
+                },
+                {
+                    "client_node_id": "task-2",
+                    "title": "找 3 个产品经理 JD 并标出共同要求",
+                    "description": "收集岗位样本，核对真实要求。",
+                    "verb": "标出",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": ["task-1"],
+                    "done_criteria": "保存 3 个 JD 链接并标出至少 3 条共同要求。",
+                    "start_hint": "打开招聘网站，搜索“产品经理”。",
+                    "fallback_action": "如果没精力找 3 个，就先保存 1 个 JD。",
+                    "children": [],
+                },
+                {
+                    "client_node_id": "task-3",
+                    "title": "用一页纸比较转行与不转行的成本收益",
+                    "description": "把探索结果汇总成当前判断依据。",
+                    "verb": "比较",
+                    "estimated_minutes": 30,
+                    "node_type": "action",
+                    "depends_on": ["task-2"],
+                    "done_criteria": "写出一页对比，包含至少 3 条收益和 3 条成本。",
+                    "start_hint": "在笔记中分成“转行/不转行”两列。",
+                    "fallback_action": "如果做不完一页纸，就先各写 1 条收益和 1 条成本。",
+                    "children": [],
+                },
+            ],
+        },
+        "summary": (
+            "当前判断：这个方向值得先做低成本探索，但暂不建议立刻执行转行。"
+            "判断依据：目前还缺少岗位现实要求、个人顾虑优先级和成本收益对比。"
+            "下一步探索：先澄清担忧、收集 JD，再用一页纸形成阶段性判断。"
+        ),
+        "assumptions": [],
+        "planning_context": {
+            "schema_version": 1,
+            "intent_type": "exploration_decision",
+            "time_horizon": time_horizon,
+            "roadmap": [
+                {"phase_id": "phase_01", "order": 1, "title": "问题澄清", "objective": "明确担忧与判断标准", "status": "current"},
+                {"phase_id": "phase_02", "order": 2, "title": "信息收集", "objective": "补齐岗位与现实信息", "status": "planned"},
+                {"phase_id": "phase_03", "order": 3, "title": "形成判断", "objective": "比较成本收益后做阶段性决定", "status": "planned"},
+            ],
+            "current_phase": {
+                "phase_id": "phase_01",
+                "title": "问题澄清",
+                "objective": "明确担忧与判断标准",
+                "completion_rule": "all_ai_actions_completed",
+            },
+            "next_action_client_node_id": "task-1",
+        },
+    }
+
+
+def exploration_phase_plan_with_execution_bias(*, time_horizon: str = "weeks") -> dict[str, Any]:
+    plan = valid_exploration_phase_plan(time_horizon=time_horizon)
+    plan["root"]["title"] = "转行产品经理执行计划"
+    plan["root"]["children"][0]["title"] = "制定 6 个月转行产品经理学习计划"
+    plan["root"]["children"][0]["description"] = "直接开始长期执行路线。"
+    plan["root"]["children"][0]["verb"] = "制定"
+    plan["root"]["children"][0]["estimated_minutes"] = 45
+    plan["root"]["children"][0]["done_criteria"] = "写出 6 个月学习计划。"
+    plan["root"]["children"][0]["start_hint"] = "打开笔记开始列 6 个月安排。"
+    plan["root"]["children"][0]["fallback_action"] = "如果做不完，就先列前 3 个月安排。"
+    plan["summary"] = "当前判断：应该直接开始转行执行。接下来进入长期学习计划。"
+    return plan
+
+
+def exploration_phase_plan_without_answer_first() -> dict[str, Any]:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = "下一步探索：先收集 3 个 JD，再访谈从业者，最后比较转行成本收益。"
+    return plan
+
+
 def top_level_with_too_many_children() -> dict[str, Any]:
     plan = valid_plan("Draft core module")
     plan["root"]["children"] = [
@@ -313,6 +432,8 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "训练计划" in long_term_prompt
     assert "summary 写成“Phase 1 启动计划”" in long_term_prompt
     assert "assumptions 必须是 []" in long_term_prompt
+    assert "assumptions 保持为 []" not in long_term_prompt
+    assert "schema v2 未给频率时必须记录保守容量假设" in long_term_prompt
     assert "Roadmap 只能写入 planning_context.roadmap" in long_term_prompt
     assert "short_term_delivery 禁止" in prompt
     assert "想一想" in prompt
@@ -338,7 +459,8 @@ def test_planner_prompt_injects_size_limits_and_intent_strategy_without_global_t
     assert "不要在 summary、assumptions、title、description 或 verb 中写" in exploration_prompt
     assert "把用户原词改写为“方向A/选项A/当前选择”" in exploration_prompt
     assert "root.children 最多 5 个顶层任务" in exploration_prompt
-    assert "summary 写成“探索澄清计划”" in exploration_prompt
+    assert "summary 必须写成“当前判断：... 判断依据：... 下一步探索：...”" in exploration_prompt
+    assert "summary 必须先回答问题，再说明依据和下一步探索" in exploration_prompt
     assert "assumptions 必须是 []" in exploration_prompt
     assert "时间盒法则" in prompt
     assert "打开电脑 / 新建文档 / 打开 Word / 准备开始" in prompt
@@ -393,6 +515,34 @@ def test_planner_prompt_uses_general_strategy_when_intent_profile_is_missing():
     assert "short_term_delivery" not in prompt
 
 
+def test_exploration_prompt_requires_judgment_first_summary_before_route():
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "先给 1-2 句当前判断" in prompt
+    assert "继续写入现有 task_tree.summary" in prompt
+    assert "当前判断：" in prompt
+    assert "判断依据：" in prompt
+    assert "下一步探索：" in prompt
+    assert "不要只给探索路线、不回答问题本身" in prompt
+
+
+def test_exploration_prompt_positive_examples_use_neutral_option_language():
+    prompt = build_planner_prompt(
+        "我最近很迷茫，不知道是否应该辞职转行",
+        intent_profile={"intent_type": "exploration_decision"},
+    )
+
+    assert "动作：「列出辞职做自媒体的 3 个核心担忧」" not in prompt
+    assert "写下转行产品经理的 3 个原因" not in prompt
+    assert "用一页纸比较转行与不转行的成本收益" not in prompt
+    assert "列出方向A的 3 个核心担忧" in prompt
+    assert "写下考虑方向A的 3 个原因" in prompt
+    assert "用一页纸比较当前选择与方向A的成本收益" in prompt
+
+
 def test_initial_long_term_prompt_requires_roadmap_but_short_term_does_not():
     long_prompt = build_planner_prompt(
         "学习日语 N3",
@@ -427,6 +577,122 @@ def test_phase_planning_feature_flag_can_restore_legacy_output(monkeypatch):
     assert "planning_context 必须为 null" in prompt
 
 
+def test_long_term_prompt_requests_loops_only_for_repeated_practice():
+    prompt = build_planner_prompt(
+        "半年后跑完半程马拉松，每周能训练三次",
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+    )
+
+    assert "schema_version = 2" in prompt
+    assert "practice_loops" in prompt
+    assert "每周能训练三次" in prompt
+    assert "不要预生成未来 occurrence" in prompt
+    assert "合计最多 5 个核心承诺" in prompt
+    assert "numeric/self_assessment 的 target_value 必须是非 null 数值" in prompt
+    assert "artifact 必须使用 operator=exists" in prompt
+    assert "有限数量的交付目标" in prompt
+    assert "3 个一次性 Action + 1 个 practice loop 时只能有 1 个 outcome checkpoint" in prompt
+    assert "assumptions 必须明确记录 target_per_week" in prompt
+    assert "不得创建未来数周时间表或周一/周二排程" in prompt
+    assert "输入包含明确总数或单一交付物时，practice_loops 必须为 []" in prompt
+    assert "只要生成 practice_loop 且用户没有给出每周频率" in prompt
+    assert "TaskTree 中禁止出现“第一周”“第1周”" in prompt
+    assert "有限交付目标默认 0 个 practice loop" in prompt
+    assert "“每周练习 5 次”必须输出 target_per_week=5" in prompt
+
+
+def test_exploration_prompt_remains_schema_v1():
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+    )
+
+    assert "planning_context.schema_version 必须是 1" in prompt
+    assert "不得输出 practice_loops" in prompt
+
+
+def test_long_term_execution_flag_rejects_schema_v2_output(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "false")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = []
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "artifact",
+            "title": "Save artifact",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert any("schema version 2 is not accepted" in error for error in errors)
+
+
+def test_schema_v2_validator_allows_loop_cadence_without_future_schedule(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    plan["root"]["children"][0]["title"] = "制定每周 3 次口语练习计划"
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "speaking",
+            "title": "完成一次口语练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "confidence",
+            "title": "完成口语自评",
+            "evidence_type": "self_assessment",
+            "operator": "gte",
+            "target_value": 3,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert not any("HORIZON_OVER_EXPANDED" in error for error in errors)
+
+
 def test_next_phase_prompt_locks_completed_phases_and_profile():
     prompt = build_planner_prompt(
         "学习日语 N3",
@@ -439,7 +705,80 @@ def test_next_phase_prompt_locks_completed_phases_and_profile():
     assert "completed 阶段必须逐字段保持不变" in prompt
     assert "intent_type 和 time_horizon 必须保持不变" in prompt
     assert "只能展开一个新的 current phase" in prompt
+    assert "不得复用已提交计划中的任何 client_node_id" in prompt
     assert "1/1 AI actions completed" in prompt
+
+
+def test_next_phase_prompt_preserves_schema_v2_execution_contract():
+    committed = phase_plan(current_order=1)
+    context = committed["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "speaking",
+            "title": "完成一次口语练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "confidence",
+            "title": "完成口语自评",
+            "evidence_type": "self_assessment",
+            "operator": "gte",
+            "target_value": 3,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    prompt = build_planner_prompt(
+        "提高英语口语",
+        intent_profile={"intent_type": "long_term_growth", "time_horizon": "months"},
+        planning_mode="next_phase",
+        committed_task_tree=committed,
+        current_phase_task_summary="review finalized: proceed",
+    )
+
+    assert "下一阶段规划模式" in prompt
+    assert "planning_context.schema_version = 2" in prompt
+    assert "practice_loops" in prompt
+    assert "schema_version 必须与已提交计划保持一致" in prompt
+
+
+def test_next_phase_validator_replans_when_client_node_id_reuses_committed_tree():
+    committed = phase_plan(current_order=1)
+    proposed = phase_plan(current_order=2)
+    reused_id = committed["root"]["children"][0]["client_node_id"]
+    proposed["root"]["children"][0]["client_node_id"] = reused_id
+    proposed["planning_context"]["next_action_client_node_id"] = reused_id
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": proposed,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "next_phase",
+                "committed_task_tree": committed,
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        reused_id in error and "committed tree" in error
+        for error in result["validation_errors"]
+    )
 
 
 def test_next_phase_validator_rejects_completed_phase_mutation():
@@ -598,6 +937,183 @@ def test_validator_enforces_global_size_limits():
     assert "top-level node count" in too_many_top["validation_errors"][0]
     assert too_many_children["validation_status"] == "needs_replan"
     assert "children count" in too_many_children["validation_errors"][0]
+
+
+def test_validator_rejects_more_than_five_v2_core_commitments():
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "loop_1",
+            "title": "Practice one set",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "Finish one set and record errors",
+        },
+        {
+            "loop_id": "loop_2",
+            "title": "Review one set",
+            "target_per_week": 2,
+            "duration_weeks": 4,
+            "done_criteria": "Review all recorded errors",
+        },
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "score_1",
+            "title": "Reach score one",
+            "evidence_type": "numeric",
+            "operator": "gte",
+            "target_value": 60,
+        },
+        {
+            "checkpoint_id": "score_2",
+            "title": "Reach score two",
+            "evidence_type": "numeric",
+            "operator": "gte",
+            "target_value": 70,
+        },
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+    extra = deepcopy(plan["root"]["children"][0])
+    extra["client_node_id"] = "phase_01_action_02"
+    extra["title"] = "Complete a second one-off action"
+    plan["root"]["children"].append(extra)
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+
+    assert any("at most 5 core commitments" in error for error in errors)
+
+
+def test_validator_replans_finite_deliverable_that_contains_practice_loop(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "writing",
+            "title": "完成一次写作练习",
+            "target_per_week": 1,
+            "duration_weeks": 4,
+            "done_criteria": "完成一篇文章并保存",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "articles",
+            "title": "完成 12 篇文章",
+            "evidence_type": "numeric",
+            "unit": "篇",
+            "operator": "gte",
+            "target_value": 12,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "intent_text": "三个月完成 12 篇写作练习",
+                "task_tree": plan,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "initial",
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        "FINITE_DELIVERABLE_LOOP_FORBIDDEN" in error
+        for error in result["validation_errors"]
+    )
+    recurring_errors = _validate_task_tree(
+        plan,
+        intent_text="每周完成 5 篇写作练习",
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+        },
+        planning_mode="initial",
+    )
+    assert not any(
+        "FINITE_DELIVERABLE_LOOP_FORBIDDEN" in error
+        for error in recurring_errors
+    )
+
+
+def test_validator_replans_when_explicit_weekly_target_is_changed(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_LONG_TERM_EXECUTION_ENABLED", "true")
+    plan = phase_plan()
+    context = plan["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "piano",
+            "title": "完成一次钢琴练习",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "完成练习并保存录音",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "recording",
+            "title": "保存完整演奏录音",
+            "evidence_type": "artifact",
+            "operator": "exists",
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "intent_text": "四个月学会一首钢琴曲，每周练习 5 次",
+                "task_tree": plan,
+                "intent_profile": {
+                    "intent_type": "long_term_growth",
+                    "time_horizon": "months",
+                },
+                "planning_mode": "initial",
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    assert any(
+        "WEEKLY_TARGET_MISMATCH" in error
+        and "target_per_week=5" in error
+        for error in result["validation_errors"]
+    )
 
 
 def test_validator_rejects_context_checklist_without_grouping():
@@ -825,6 +1341,71 @@ def test_graph_starts_with_intent_profiler_before_planner_without_prompt_injecti
     assert "时间盒法则" in planner.prompts[0]
 
 
+def test_planner_node_normalizes_exploration_planning_context_to_intent_profile():
+    planner = CapturingPlanner([valid_exploration_phase_plan(time_horizon="weeks")])
+    planner_node = planner_node_factory(planner)
+
+    result = asyncio.run(
+        planner_node(
+            {
+                "user_id": "user_1",
+                "thread_id": "thread_exploration",
+                "intent_text": "我是否要考虑转行产品经理",
+                "intent_profile": {
+                    "intent_type": "exploration_decision",
+                    "time_horizon": "days",
+                    "confidence_score": 0.88,
+                },
+                "planning_mode": "initial",
+            }
+        )
+    )
+
+    context = result["task_tree"]["planning_context"]
+    assert context["intent_type"] == "exploration_decision"
+    assert context["time_horizon"] == "days"
+
+
+def test_exploration_replan_keeps_original_horizon_after_validator_retry():
+    planner = CapturingPlanner(
+        [
+            exploration_phase_plan_with_execution_bias(time_horizon="weeks"),
+            valid_exploration_phase_plan(time_horizon="weeks"),
+        ]
+    )
+    profiler = CapturingIntentProfiler(
+        {
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        }
+    )
+    graph = build_task_graph(
+        planner=planner,
+        intent_profiler=profiler,
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(user_id="user_1", thread_id="thread_exploration_retry")
+
+    chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": "user_1",
+                    "thread_id": "thread_exploration_retry",
+                    "intent_text": "我是否要考虑转行产品经理",
+                },
+                config,
+            )
+        )
+    )
+
+    assert len(planner.prompts) == 2
+    interrupt_payload = chunks[-1]["__interrupt__"][0].value
+    assert interrupt_payload["task_tree"]["planning_context"]["intent_type"] == "exploration_decision"
+    assert interrupt_payload["task_tree"]["planning_context"]["time_horizon"] == "days"
+
+
 def test_route_from_start_skips_profile_for_next_phase():
     assert route_from_start({"planning_mode": "next_phase"}) == "planner"
     assert route_from_start({"planning_mode": "initial"}) == "intent_profiler"
@@ -911,3 +1492,95 @@ def test_route_after_human_review_approve_persists_internal_tasks():
 
 async def _collect_astream(stream):
     return [chunk async for chunk in stream]
+
+
+def test_exploration_decision_prompt_requires_current_judgment_summary() -> None:
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+            "confidence_score": 0.9,
+        },
+    )
+
+    assert "先给 1-2 句当前判断" in prompt
+    assert "summary" in prompt
+    assert "不要直接生成长期执行计划" in prompt
+    assert "当前判断：" in prompt
+    assert "判断依据：" in prompt
+    assert "下一步探索：" in prompt
+
+
+def test_validator_rejects_exploration_summary_that_only_lists_routes() -> None:
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": exploration_phase_plan_without_answer_first(),
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "needs_replan"
+    joined_errors = "\n".join(result["validation_errors"])
+    assert "错误代码: EXPLORATION_ANSWER_MISSING" in joined_errors
+    assert "先回答当前判断，再给判断依据和下一步探索" in joined_errors
+    assert "不要只给探索路线" in joined_errors
+
+
+def test_validator_accepts_exploration_summary_with_judgment_basis_and_next_steps() -> None:
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": valid_exploration_phase_plan(),
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
+
+
+def test_validator_accepts_negated_immediate_execution_in_exploration_judgment() -> None:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = (
+        "当前判断：现在并不是直接辞职转行的时机，更适合先做低成本探索。"
+        "判断依据：岗位要求和个人成本收益仍缺少可靠信息。"
+        "下一步探索：先收集岗位信息、访谈从业者，再形成阶段性判断。"
+    )
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan,
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"
+
+
+def test_validator_accepts_immediate_execution_risk_warning() -> None:
+    plan = valid_exploration_phase_plan()
+    plan["summary"] = (
+        "当前判断：可以探索方向 A，但暂不建议立即行动。"
+        "判断依据：当前信息不足，直接辞职风险高。"
+        "下一步探索：先收集岗位信息、访谈从业者，再形成阶段性判断。"
+    )
+
+    result = asyncio.run(
+        task_tree_validator_node(
+            {
+                "task_tree": plan,
+                "intent_profile": {"intent_type": "exploration_decision"},
+                "replan_attempts": 0,
+            }
+        )
+    )
+
+    assert result["validation_status"] == "valid"

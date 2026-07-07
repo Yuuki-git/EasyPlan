@@ -75,6 +75,20 @@ function loadAppStoreModule(fetchImpl) {
           }
         };
       }
+      if (specifier === './snapshotRequestGate') {
+        return {
+          createLatestRequestGate: () => {
+            let latest = 0;
+            return {
+              begin: () => {
+                const seq = ++latest;
+                return () => seq === latest;
+              },
+              invalidate: () => { latest++; }
+            };
+          }
+        };
+      }
       throw new Error(`Unexpected require: ${specifier}`);
     },
     Intl: Intl
@@ -102,7 +116,7 @@ const { useAppStore } = loadAppStoreModule(fetchImpl);
 useAppStore.setState({
   token: 'token',
   selectedProjectId: 'thread-1',
-  taskTree: { planning_context: { roadmap: [] } },
+  committedTaskTree: { planning_context: { roadmap: [] } },
   boardTasks: [],
   isPhaseRequestPending: false
 });

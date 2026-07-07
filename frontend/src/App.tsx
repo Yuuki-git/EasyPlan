@@ -17,8 +17,8 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const App: React.FC = () => {
-  const { appState, error, theme, view, previewMode } = useAppStore();
-  
+  const { appState, error, theme, view } = useAppStore();
+
   // Initialize SSE listener
   useSSE();
 
@@ -30,14 +30,14 @@ const App: React.FC = () => {
     }
   }, [theme]);
 
-  const currentView = previewMode === 'next_phase' ? 'input' : view;
+  const currentView = view;
 
   return (
     <>
       <AuthModal />
       <AnimatePresence>
         {currentView === 'input' ? (
-          <motion.main 
+          <motion.main
             key="input-view"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -46,16 +46,16 @@ const App: React.FC = () => {
             className={cn('the-void', appState !== 'INITIAL' && 'top')}
           >
             <Header />
-            
+
             <div className="w-full flex flex-col items-center">
               <DynamicInput />
-              
+
               <ReasoningStream />
-              
+
               <TaskTreeRoot />
 
               <AnimatePresence>
-                {error && (
+                {error && appState !== 'ERROR' && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -92,7 +92,7 @@ const Header: React.FC = () => {
         EasyPlan
       </div>
       <div className="flex items-center gap-6">
-        <button 
+        <button
           onClick={() => setView('board')}
           className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors tracking-wide"
           title="进入手帐"
@@ -101,7 +101,7 @@ const Header: React.FC = () => {
           <span>我的手帐</span>
         </button>
 
-        <button 
+        <button
           onClick={toggleTheme}
           className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors tracking-wide"
           title="切换主题"
@@ -109,9 +109,9 @@ const Header: React.FC = () => {
           <Palette size={14} />
           <span>Theme: {theme === 'void' ? 'Dark' : 'Light'}</span>
         </button>
-        
-        <button 
-          onClick={() => setToken(null)}
+
+        <button
+          onClick={() => setToken(null, true)}
           className="text-muted-foreground hover:text-foreground transition-colors"
           title="退出登录"
         >

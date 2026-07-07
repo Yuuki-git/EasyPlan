@@ -4,7 +4,7 @@ import { useAppStore } from '../store/useAppStore';
 import { Command } from 'lucide-react';
 
 export const DynamicInput: React.FC = () => {
-  const { appState, setAppState, intent } = useAppStore();
+  const { appState, intent } = useAppStore();
   const [value, setValue] = useState(intent);
 
   const [greeting, setGreeting] = useState('');
@@ -17,7 +17,7 @@ export const DynamicInput: React.FC = () => {
     const hour = new Date().getHours();
     const minute = new Date().getMinutes();
     const time = hour + minute / 60;
-    
+
     let options: string[] = [];
     if (time >= 6 && time < 11.5) {
       options = [
@@ -70,29 +70,7 @@ export const DynamicInput: React.FC = () => {
       useAppStore.getState().submitIntent(value);
     } else if (appState === 'PENDING') {
       // Trigger refinement
-      try {
-        setAppState('THINKING');
-        const { threadId, token } = useAppStore.getState();
-        
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'X-User-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone
-        };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const response = await fetch(`/api/threads/${threadId}/confirm`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ 
-            request_id: crypto.randomUUID(),
-            action: 'refine',
-            feedback: value 
-          })
-        });
-        if (!response.ok) throw new Error('Failed to refine plan');
-      } catch (err) {
-        useAppStore.getState().setError((err as Error).message);
-      }
+      await useAppStore.getState().refinePlan(value);
     }
   };
 
@@ -132,7 +110,7 @@ export const DynamicInput: React.FC = () => {
           <span className="text-xs font-mono">ENTER</span>
         </div>
       </form>
-      
+
       <AnimatePresence>
         {appState === 'INITIAL' && !value && (
           <motion.div

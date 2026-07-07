@@ -1,10 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
 import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
-import { TaskResponse } from '../types/api';
+import { TaskNode, TaskResponse } from '../types/api';
 import { PlanningOverview } from './PlanningOverview';
+import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
@@ -38,7 +39,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
         <div className="flex items-center justify-between mb-8">
           <span className="font-medium text-foreground/80 tracking-wide px-2">我的手帐</span>
         </div>
-        
+
         <div className="space-y-1 mb-6">
           <button
             onClick={() => {
@@ -63,7 +64,7 @@ const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) 
             )}
           >
             <Calendar size={16} className={currentViewBucket === 'planned' && selectedProjectId === null ? "text-blue-500" : ""} />
-            <span>全部计划</span>
+            <span>想法画布</span>
           </button>        </div>
 
         {projects.length > 0 && (
@@ -102,11 +103,41 @@ interface TreeNode extends TaskResponse {
   children?: TreeNode[];
 }
 
-const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, depth = 0 }) => {
+function buildPreviewTree(node: TaskNode, threadId: string, sortOrder = 0, parentTaskId: string | null = null): TreeNode {
+  const previewId = `preview:${node.client_node_id}`;
+  return {
+    id: previewId,
+    user_id: '',
+    thread_id: threadId,
+    parent_task_id: parentTaskId,
+    client_node_id: node.client_node_id,
+    title: node.title,
+    description: node.description ?? null,
+    node_type: node.node_type,
+    status: 'active',
+    view_bucket: 'planned',
+    estimated_minutes: node.estimated_minutes,
+    sort_order: sortOrder,
+    is_in_my_day: false,
+    done_criteria: node.done_criteria ?? null,
+    start_hint: node.start_hint ?? null,
+    fallback_action: node.fallback_action ?? null,
+    source: 'ai',
+    phase_id: null,
+    phase_order: null,
+    children: (node.children || []).map((child, index) => buildPreviewTree(child, threadId, index, previewId)),
+  };
+}
+
+const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: boolean }> = ({
+  node,
+  depth = 0,
+  interactive = true,
+}) => {
   const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
-  
+
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
   const [isToggling, setIsToggling] = React.useState(false);
 
@@ -136,7 +167,8 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isGroup || isEditing) return;
+    if (!interactive || isGroup || isEditing) return;
+    if (node.practice_loop_id && localCompleted) return; // Completed practice loop occurrences are read-only
     if (isToggling) return;
 
     const nextCompleted = !localCompleted;
@@ -156,6 +188,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleToggleMyDay = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!interactive) return;
     try {
       await toggleTaskInMyDay(node.id, !!node.is_in_my_day);
     } catch (err) {
@@ -165,6 +198,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!interactive) return;
     try {
       await deleteTask(node.id);
     } catch (err) {
@@ -174,7 +208,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (localCompleted || isGroup) return; // Prevent editing completed or group tasks for now
+    if (!interactive || localCompleted || isGroup || node.practice_loop_id) return; // Prevent editing completed, group, or practice loop tasks
     setIsEditing(true);
   };
 
@@ -189,7 +223,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
     if (editTitle.trim() !== node.title) updates.title = editTitle.trim();
     const nextDescription = editDescription.trim() || null;
     if (nextDescription !== (node.description || null)) updates.description = nextDescription;
-    
+
     const minutesVal = parseInt(editMinutes);
     if (!isNaN(minutesVal) && minutesVal !== node.estimated_minutes) {
       updates.estimated_minutes = minutesVal;
@@ -242,7 +276,12 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         {hasChildren && (
           <div className="flex flex-col space-y-2">
             {node.children!.map(child => (
-              <BoardTaskNode key={child.id} node={child} depth={node.title === 'root_dummy' ? depth : depth + 1} />
+              <BoardTaskNode
+                key={child.id}
+                node={child}
+                depth={node.title === 'root_dummy' ? depth : depth + 1}
+                interactive={interactive}
+              />
             ))}
           </div>
         )}
@@ -252,22 +291,23 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
 
   // Action Node
   return (
-    <motion.div 
+    <motion.div
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
       className={clsx(
         "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
-        localCompleted 
-          ? "bg-muted/10 border-transparent" 
+        !interactive && "cursor-default",
+        localCompleted
+          ? "bg-muted/10 border-transparent"
           : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
         isEditing && "cursor-default",
         isToggling && "cursor-wait",
         depth > 0 && "ml-4"
       )}
-      onClick={handleToggle}
-      onDoubleClick={handleDoubleClick}
+      onClick={interactive ? handleToggle : undefined}
+      onDoubleClick={interactive ? handleDoubleClick : undefined}
     >
       <div className="mt-0.5 shrink-0">
         {localCompleted ? (
@@ -353,7 +393,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
               </div>
             )}
             {(node.start_hint || node.fallback_action) && (
-              <details 
+              <details
                 className="mt-3 text-xs group/details outline-none"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -375,8 +415,9 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
           </>
         )}
       </div>
-      
-      <button
+
+      {interactive && (
+        <button
         onClick={handleToggleMyDay}
         className={clsx(
           "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
@@ -387,9 +428,10 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number }> = ({ node, dep
         title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
       >
         <Sun size={16} />
-      </button>
+        </button>
+      )}
 
-      {!localCompleted && !isEditing && (
+      {interactive && !localCompleted && !isEditing && (
         <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
           <button
             onClick={(e) => {
@@ -431,7 +473,7 @@ const InlineTaskInput: React.FC = () => {
       setIsAdding(false);
       return;
     }
-    
+
     const taskTitle = title.trim();
     setTitle(''); // Clear immediately for UX
     try {
@@ -451,9 +493,17 @@ const InlineTaskInput: React.FC = () => {
     }
   };
 
+  if (!selectedProjectId) {
+    return (
+      <div className="mt-8 text-center py-6 border border-dashed border-muted/30 rounded-xl bg-muted/5">
+        <span className="text-xs font-light text-muted-foreground/60">请先在侧边栏选择具体项目，以添加任务。</span>
+      </div>
+    );
+  }
+
   if (!isAdding) {
     return (
-      <button 
+      <button
         onClick={() => setIsAdding(true)}
         className="mt-8 flex items-center gap-2 text-muted-foreground/50 hover:text-foreground/80 transition-colors py-2 group w-full"
       >
@@ -466,7 +516,7 @@ const InlineTaskInput: React.FC = () => {
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       className="mt-8 flex items-center gap-3 p-2 rounded-xl border border-muted/50 bg-background focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-foreground/10 transition-all"
@@ -489,19 +539,83 @@ const InlineTaskInput: React.FC = () => {
 };
 
 export const TaskBoard: React.FC = () => {
-  const { currentViewBucket, selectedProjectId, boardTasks, boardError, fetchTasks, appState, taskTree } = useAppStore();
+  const {
+    currentViewBucket,
+    selectedProjectId,
+    boardTasks,
+    boardError,
+    fetchTasks,
+    appState,
+    committedTaskTree,
+    previewTaskTree,
+    loadProjectSnapshot,
+    previewMode
+  } = useAppStore();
+
+  useEffect(() => {
+    if (boardTasks === null) {
+      const bootstrap = async () => {
+        try {
+          if (selectedProjectId === null) {
+            useAppStore.setState({ committedTaskTree: null, previewTaskTree: null });
+            await fetchTasks('planned');
+          } else {
+            useAppStore.setState({ committedTaskTree: null, previewTaskTree: null });
+            await loadProjectSnapshot(selectedProjectId);
+            await fetchTasks('planned');
+          }
+        } catch (err) {
+          const errMsg = (err as Error).message;
+          const boardError = errMsg === 'Failed to load project snapshot' || errMsg === 'Failed to load task board'
+            ? '加载项目看板失败，请重试'
+            : errMsg;
+          useAppStore.setState({ boardError });
+        }
+      };
+      bootstrap();
+    }
+  }, [boardTasks, selectedProjectId, fetchTasks, loadProjectSnapshot]);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
-  
+
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
+
+  const projects = useMemo(() => {
+    if (!boardTasks) return [];
+    const projectMap = new Map<string, { id: string; title: string; source?: string }>();
+    boardTasks.forEach(task => {
+      if (task.parent_task_id === null && task.thread_id) {
+        const existing = projectMap.get(task.thread_id);
+        if (!existing || (existing.source === 'manual' && task.source === 'ai')) {
+          projectMap.set(task.thread_id, {
+            id: task.thread_id,
+            title: task.title,
+            source: task.source
+          });
+        }
+      }
+    });
+    return Array.from(projectMap.values());
+  }, [boardTasks]);
 
   const planningView = useMemo(() => {
     if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') return null;
     if (currentViewBucket !== 'planned' || !selectedProjectId) return null;
-    return selectPlanningView(taskTree, boardTasks || [], selectedProjectId);
-  }, [taskTree, boardTasks, currentViewBucket, selectedProjectId]);
+    return selectPlanningView(committedTaskTree, boardTasks || [], selectedProjectId);
+  }, [committedTaskTree, boardTasks, currentViewBucket, selectedProjectId]);
+
+  const previewTree = useMemo(() => {
+    if (currentViewBucket !== 'planned' || previewMode !== 'next_phase' || !selectedProjectId || !previewTaskTree?.root) {
+      return null;
+    }
+    return buildPreviewTree(previewTaskTree.root, selectedProjectId);
+  }, [currentViewBucket, previewMode, selectedProjectId, previewTaskTree]);
 
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;
+
+    if (previewTree) {
+      return previewTree;
+    }
 
     if (currentViewBucket === 'my_day') {
       // Flat list
@@ -530,7 +644,7 @@ export const TaskBoard: React.FC = () => {
       }
 
       const taskMap = new Map<string, TreeNode>();
-      
+
       tasksToRender.forEach(t => {
         taskMap.set(t.id, { ...t, children: [] });
       });
@@ -566,11 +680,11 @@ export const TaskBoard: React.FC = () => {
       };
       return root;
     }
-  }, [boardTasks, currentViewBucket, selectedProjectId]);
+  }, [boardTasks, currentViewBucket, selectedProjectId, planningView, previewTree]);
 
   if (boardError) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 20 }}
@@ -578,8 +692,8 @@ export const TaskBoard: React.FC = () => {
         className="fixed inset-0 bg-background flex flex-col items-center justify-center gap-4 z-40"
       >
         <p className="text-destructive font-medium">{boardError}</p>
-        <button 
-          onClick={() => fetchTasks()} 
+        <button
+          onClick={() => useAppStore.setState({ boardError: null, boardTasks: null })}
           className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-md transition-colors"
         >
           重新加载
@@ -590,7 +704,7 @@ export const TaskBoard: React.FC = () => {
 
   if (!displayTree) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 20 }}
@@ -609,7 +723,7 @@ export const TaskBoard: React.FC = () => {
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 20 }}
@@ -617,11 +731,11 @@ export const TaskBoard: React.FC = () => {
       className="fixed inset-0 bg-background flex z-40"
     >
       <Sidebar isOpen={sidebarOpen} toggle={() => setSidebarOpen(!sidebarOpen)} />
-      
+
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         <header className="h-16 border-b border-muted/20 flex items-center px-4 shrink-0 bg-background/80 backdrop-blur-sm z-10 justify-between">
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="text-muted-foreground hover:text-foreground transition-colors p-2 rounded-lg hover:bg-muted/20"
             >
@@ -631,9 +745,9 @@ export const TaskBoard: React.FC = () => {
               {currentViewBucket === 'my_day' ? '☀️ 我的一天' : '📅 计划中'}
             </h1>
           </div>
-          
+
           <div className="flex items-center gap-4">
-            <button 
+            <button
               onClick={handleNewPlan}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full hover:bg-muted/20"
             >
@@ -641,59 +755,66 @@ export const TaskBoard: React.FC = () => {
             </button>
           </div>
         </header>
-        
+
         <main className="flex-1 overflow-y-auto p-8 lg:px-24">
           <div className="max-w-3xl mx-auto pb-32">
-            {currentViewBucket === 'planned' && selectedProjectId && (
-              <PlanningOverview />
-            )}
-
-            {isEmpty ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-                <p className="text-muted-foreground/60 text-lg">
-                  {currentViewBucket === 'planned' 
-                    ? "您的专属空间空空如也。点击右上角，让 AI 为您分忧。"
-                    : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
-                </p>
-                {currentViewBucket === 'planned' && (
-                  <button
-                    onClick={handleNewPlan}
-                    className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
-                  >
-                    {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
-                  </button>                )}
-              </div>
+            {currentViewBucket === 'planned' && selectedProjectId === null ? (
+              <PortfolioOverview projects={projects} tasks={boardTasks ?? []} />
             ) : (
-              <BoardTaskNode node={displayTree} />
-            )}
-            
-            {planningView && planningView.historicalPhases.length > 0 && (
-              <div className="mt-12 space-y-4">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
-                {planningView.historicalPhases.map((hist, index) => (
-                  <details key={hist.phase.phase_id} className="border border-muted/50 rounded-xl overflow-hidden bg-background/50 group">
-                    <summary className="px-4 py-3 bg-muted/10 text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none outline-none flex items-center justify-between transition-colors">
-                      <span>Phase {index + 1}: {hist.phase.title}</span>
-                      <ChevronDown size={16} className="opacity-50 group-open:rotate-180 transition-transform" />
-                    </summary>
-                    <div className="p-4 space-y-2 border-t border-muted/30">
-                      {hist.tasks.map(task => (
-                        <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/10 border border-transparent opacity-70">
-                          <CheckCircle2 size={16} className="text-muted-foreground" />
-                          <span className="text-sm text-muted-foreground line-through">{task.title}</span>
+              <>
+                {currentViewBucket === 'planned' && selectedProjectId && (
+                  <PlanningOverview />
+                )}
+
+                {isEmpty ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+                    <p className="text-muted-foreground/60 text-lg">
+                      {currentViewBucket === 'planned'
+                        ? "您的专属 space 空空如也。点击右上角，让 AI 为您分忧。"
+                        : "今天的事情都搞定啦！去喝杯茶，享受生活吧 ☕️"}
+                    </p>
+                    {currentViewBucket === 'planned' && (
+                      <button
+                        onClick={handleNewPlan}
+                        className="px-4 py-2 border border-muted/50 rounded-lg text-sm text-foreground/70 hover:bg-muted/10 transition-colors"
+                      >
+                        {isGenerating ? '返回当前意图' : '🌱 播种新想法'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <BoardTaskNode node={displayTree} interactive={!previewTree} />
+                )}
+
+                {planningView && planningView.historicalPhases.length > 0 && previewMode !== 'next_phase' && (
+                  <div className="mt-12 space-y-4">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phase History</h3>
+                    {planningView.historicalPhases.map((hist, index) => (
+                      <details key={hist.phase.phase_id} className="border border-muted/50 rounded-xl overflow-hidden bg-background/50 group">
+                        <summary className="px-4 py-3 bg-muted/10 text-muted-foreground hover:text-foreground font-medium cursor-pointer select-none outline-none flex items-center justify-between transition-colors">
+                          <span>Phase {index + 1}: {hist.phase.title}</span>
+                          <ChevronDown size={16} className="opacity-50 group-open:rotate-180 transition-transform" />
+                        </summary>
+                        <div className="p-4 space-y-2 border-t border-muted/30">
+                          {hist.tasks.map(task => (
+                            <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/10 border border-transparent opacity-70">
+                              <CheckCircle2 size={16} className="text-muted-foreground" />
+                              <span className="text-sm text-muted-foreground line-through">{task.title}</span>
+                            </div>
+                          ))}
+                          {hist.tasks.length === 0 && (
+                            <div className="text-sm text-muted-foreground/50 py-2">No tasks found for this phase.</div>
+                          )}
                         </div>
-                      ))}
-                      {hist.tasks.length === 0 && (
-                        <div className="text-sm text-muted-foreground/50 py-2">No tasks found for this phase.</div>
-                      )}
-                    </div>
-                  </details>
-                ))}
-              </div>
+                      </details>
+                    ))}
+                  </div>
+                )}
+
+                {previewMode !== 'next_phase' && <InlineTaskInput />}
+              </>
             )}
 
-            <InlineTaskInput />
-            
           </div>
         </main>
       </div>

@@ -29,6 +29,13 @@ def test_openapi_contract_exposes_backend_protocol_endpoints():
     assert "/api/tasks/{task_id}" in schema["paths"]
     assert "patch" in schema["paths"]["/api/tasks/{task_id}"]
     assert "delete" in schema["paths"]["/api/tasks/{task_id}"]
+    expected_paths = {
+        "/api/threads/{thread_id}/practice-loops/{loop_id}/schedule-today": "post",
+        "/api/threads/{thread_id}/phases/{phase_id}/review": "put",
+        "/api/threads/{thread_id}/phases/{phase_id}/review/decision": "post",
+    }
+    for path, method in expected_paths.items():
+        assert method in schema["paths"][path]
 
 
 def test_openapi_contract_is_native_task_board_only():
@@ -131,8 +138,40 @@ def test_openapi_contract_exposes_phase_planning_contract():
     assert "planning_context" in tree_properties
     assert "NextPhaseRequest" in schema["components"]["schemas"]
     assert "NextPhaseResponse" in schema["components"]["schemas"]
-    cancel_response = schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]["responses"]["200"]
+    cancel_operation = schema["paths"]["/api/threads/{thread_id}/phases/next/cancel"]["delete"]
+    cancel_response = cancel_operation["responses"]["200"]
+    request_id_parameter = next(
+        parameter
+        for parameter in cancel_operation["parameters"]
+        if parameter["in"] == "query" and parameter["name"] == "request_id"
+    )
     assert cancel_response["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ThreadSnapshot"
+    assert request_id_parameter["required"] is True
+    assert request_id_parameter["schema"]["minLength"] == 8
+    assert request_id_parameter["schema"]["maxLength"] == 128
+
+
+def test_openapi_contract_exposes_long_term_execution_snapshot_and_requests():
+    schema = create_app().openapi()
+
+    thread_snapshot = schema["components"]["schemas"]["ThreadSnapshot"]
+    assert "long_term_execution" in thread_snapshot["properties"]
+    assert "PracticeLoopProgressResponse" in schema["components"]["schemas"]
+    assert "PhaseReviewResponse" in schema["components"]["schemas"]
+    assert "LongTermExecutionSnapshot" in schema["components"]["schemas"]
+    assert "PhaseReviewUpdateRequest" in schema["components"]["schemas"]
+    assert "PhaseReviewDecisionRequest" in schema["components"]["schemas"]
+
+
+def test_openapi_contract_requires_initial_run_request_id_in_intent_response():
+    app = create_app()
+
+    schema = app.openapi()
+
+    intent_response = schema["components"]["schemas"]["IntentCreateResponse"]
+    assert "request_id" in intent_response["properties"]
+    assert "request_id" in intent_response["required"]
+    assert intent_response["properties"]["request_id"]["format"] == "uuid"
 
 
 def test_openapi_contract_documents_sse_token_query_fallback():
@@ -157,8 +196,16 @@ def test_openapi_contract_documents_sse_last_event_id_query_fallback():
     schema = app.openapi()
 
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
+    request_id_param = next(
+        parameter
+        for parameter in schema["paths"]["/api/threads/{thread_id}/events"]["get"]["parameters"]
+        if parameter["name"] == "request_id"
+    )
 
     assert "last_event_id" in events_params
+    assert "run_type" in events_params
+    assert "request_id" in events_params
+    assert request_id_param["required"] is True
 
 
 def test_openapi_contract_documents_agent_error_sse_event_name():

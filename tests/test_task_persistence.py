@@ -3,11 +3,15 @@ from copy import deepcopy
 from uuid import UUID
 
 import pytest
+from langgraph.types import Command
 from sqlalchemy.sql import Select, Update
 
+from app.agents.graph import build_task_graph, create_graph_config
 from app.agents.nodes import flatten_task_tree_for_persistence, persist_internal_tasks_node
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
+from app.services.agent_runtime import AgentRuntime
+from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -109,6 +113,38 @@ def next_phase_tree() -> dict:
     return tree
 
 
+def long_term_v2_plan() -> dict:
+    tree = phase_tree_with_hierarchy_and_dependency()
+    context = tree["planning_context"]
+    context["schema_version"] = 2
+    context["current_phase"]["completion_rule"] = "long_term_execution_gate"
+    context["current_phase"]["estimated_duration_weeks"] = 4
+    context["practice_loops"] = [
+        {
+            "loop_id": "n3_vocab",
+            "title": "Complete one N3 vocabulary practice",
+            "target_per_week": 3,
+            "duration_weeks": 4,
+            "done_criteria": "Complete 20 questions and record mistakes",
+        }
+    ]
+    context["outcome_checkpoints"] = [
+        {
+            "checkpoint_id": "vocab_test",
+            "title": "Complete vocabulary test",
+            "evidence_type": "numeric",
+            "unit": "percent",
+            "operator": "gte",
+            "target_value": 65,
+        }
+    ]
+    context["phase_gate"] = {
+        "process_threshold": 0.8,
+        "outcome_rule": "all_required",
+    }
+    return tree
+
+
 def test_flatten_task_tree_preserves_client_node_parent_mapping_and_planned_bucket():
     tasks, dependencies = flatten_task_tree_for_persistence(
         valid_tree_with_hierarchy_and_dependency(),
@@ -206,6 +242,81 @@ def test_persist_internal_tasks_node_inserts_tasks_dependencies_and_marks_thread
     assert "succeeded" in compiled_params.values()
 
 
+def test_v2_persistence_syncs_loop_definitions_in_task_transaction(monkeypatch):
+    session = FakePersistSession()
+    calls = []
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    async def capture_definitions(repository, **kwargs):
+        calls.append((repository.session, kwargs))
+
+    import app.db.session as db_session
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "persist_definitions_from_tree",
+        capture_definitions,
+    )
+
+    result = asyncio.run(
+        persist_internal_tasks_node(
+            {
+                "user_id": USER_ID,
+                "thread_id": "thread-v2",
+                "task_tree": long_term_v2_plan(),
+                "planning_mode": "initial",
+                "user_timezone": "Asia/Shanghai",
+            }
+        )
+    )
+
+    assert result == {"task_persistence_status": "succeeded"}
+    assert len(calls) == 1
+    repository_session, kwargs = calls[0]
+    assert repository_session is session
+    assert kwargs["timezone_name"] == "Asia/Shanghai"
+    assert kwargs["task_tree"].planning_context.schema_version == 2
+
+
+def test_v2_persistence_does_not_update_thread_when_loop_sync_fails(monkeypatch):
+    session = FakePersistSession()
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    async def fail_definitions(_repository, **_kwargs):
+        raise RuntimeError("loop synchronization failed")
+
+    import app.db.session as db_session
+    from app.services.practice_repository import PracticeLoopRepository
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+    monkeypatch.setattr(
+        PracticeLoopRepository,
+        "persist_definitions_from_tree",
+        fail_definitions,
+    )
+
+    with pytest.raises(RuntimeError, match="loop synchronization failed"):
+        asyncio.run(
+            persist_internal_tasks_node(
+                {
+                    "user_id": USER_ID,
+                    "thread_id": "thread-v2",
+                    "task_tree": long_term_v2_plan(),
+                    "planning_mode": "initial",
+                    "user_timezone": "Asia/Shanghai",
+                }
+            )
+        )
+
+    assert session.executed_updates == []
+
+
 def test_persist_internal_tasks_node_does_not_use_add_all(monkeypatch):
     session = FakePersistSession(raise_on_add_all=True)
 
@@ -269,6 +380,7 @@ def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(m
             "type": "next_phase_review",
             "request_id": request_id,
             "status": "awaiting_confirmation",
+            "base_phase_id": "phase_01",
             "task_tree": next_phase_tree(),
             "history": {},
         },
@@ -315,8 +427,300 @@ def test_persist_next_phase_updates_same_thread_and_server_derived_next_action(m
     )
     assert persisted_tree["planning_context"]["next_action_client_node_id"] == "phase_02_outline"
     assert envelope["history"][request_id]["status"] == "confirmed"
+    assert envelope["base_phase_id"] == "phase_01"
     assert "task_tree" not in envelope
     assert session.task_rows_inserted == 3
+
+
+def test_persist_next_phase_rejects_existing_client_ids_without_confirming_thread(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    conflicting_tree = next_phase_tree()
+    conflicting_tree["root"]["client_node_id"] = "root"
+    conflicting_tree["root"]["children"][0]["client_node_id"] = "outline"
+    conflicting_tree["root"]["children"][1]["client_node_id"] = "review"
+    conflicting_tree["root"]["children"][1]["depends_on"] = ["outline"]
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="running",
+        current_node="next_phase_planner",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "confirming",
+            "task_tree": conflicting_tree,
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+    committed_tasks, _ = flatten_task_tree_for_persistence(
+        committed_tree,
+        user_id=USER_ID,
+        thread_id="thread-1",
+    )
+    session.persisted_tasks = {
+        task.client_node_id: task
+        for task in committed_tasks
+    }
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    with pytest.raises(RuntimeError, match="already exist"):
+        asyncio.run(
+            persist_internal_tasks_node(
+                {
+                    "user_id": USER_ID,
+                    "thread_id": "thread-1",
+                    "task_tree": conflicting_tree,
+                    "planning_mode": "next_phase",
+                    "phase_request_id": request_id,
+                }
+            )
+        )
+
+    assert session.task_rows_inserted == 0
+    assert session.executed_updates == []
+
+
+def test_persist_next_phase_retry_after_confirmed_request_is_idempotent(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = next_phase_tree()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="succeeded",
+        current_node="persist_internal_tasks",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "phase_generation_state",
+            "request_id": request_id,
+            "status": "confirmed",
+            "history": {
+                request_id: {
+                    "status": "confirmed",
+                    "updated_at": "2026-06-29T00:00:00+00:00",
+                }
+            },
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+    persisted_tasks, _ = flatten_task_tree_for_persistence(
+        committed_tree,
+        user_id=USER_ID,
+        thread_id="thread-1",
+    )
+    session.persisted_tasks = {
+        task.client_node_id: task
+        for task in persisted_tasks
+    }
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    result = asyncio.run(
+        persist_internal_tasks_node(
+            {
+                "user_id": USER_ID,
+                "thread_id": "thread-1",
+                "task_tree": committed_tree,
+                "planning_mode": "next_phase",
+                "phase_request_id": request_id,
+            }
+        )
+    )
+
+    assert result == {"task_persistence_status": "succeeded"}
+    assert session.task_rows_inserted == 0
+    assert session.executed_updates == []
+
+
+def test_graph_resume_approve_persists_next_phase_as_committed_plan(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="awaiting_confirmation",
+        current_node="human_review",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "awaiting_confirmation",
+            "task_tree": next_phase_tree(),
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    class StaticPlanner:
+        async def create_plan(self, prompt: str) -> dict:
+            return next_phase_tree()
+
+    graph = build_task_graph(
+        planner=StaticPlanner(),
+        checkpointer=TenantAwareMemorySaver(),
+    )
+    config = create_graph_config(
+        user_id=USER_ID,
+        thread_id="thread-1",
+        run_type="next_phase",
+        request_id=request_id,
+    )
+
+    first_chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                {
+                    "user_id": USER_ID,
+                    "thread_id": "thread-1",
+                    "intent_text": "Write a paper",
+                    "intent_profile": {
+                        "intent_type": "long_term_growth",
+                        "time_horizon": "months",
+                        "confidence_score": 1.0,
+                    },
+                    "planning_mode": "next_phase",
+                    "phase_request_id": request_id,
+                    "committed_task_tree": committed_tree,
+                    "current_phase_task_summary": "1/1 AI actions completed",
+                },
+                config,
+            )
+        )
+    )
+
+    assert "__interrupt__" in first_chunks[-1]
+
+    second_chunks = asyncio.run(
+        _collect_astream(
+            graph.astream(
+                Command(resume={"action": "approve", "request_id": request_id}),
+                config,
+            )
+        )
+    )
+
+    assert "__interrupt__" not in second_chunks[-1]
+    update_values = list(session.executed_updates[-1].compile().params.values())
+    persisted_tree = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and "planning_context" in value
+    )
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "phase_generation_state"
+    )
+    assert persisted_tree["planning_context"]["current_phase"]["phase_id"] == "phase_02"
+    assert persisted_tree["planning_context"]["roadmap"][0]["status"] == "completed"
+    assert persisted_tree["planning_context"]["roadmap"][1]["status"] == "current"
+    assert envelope["status"] == "confirmed"
+    assert envelope["history"][request_id]["status"] == "confirmed"
+
+
+def test_runtime_commits_durable_next_phase_preview_without_checkpoint(monkeypatch):
+    request_id = "11111111-1111-1111-1111-111111111111"
+    committed_tree = phase_tree_with_hierarchy_and_dependency()
+    preview_tree = next_phase_tree()
+    thread = AgentThread(
+        user_id=UUID(USER_ID),
+        thread_id="thread-1",
+        intent_text="Write a paper",
+        status="running",
+        current_node="next_phase_planner",
+        next_nodes=[],
+        interrupt_payload={
+            "type": "next_phase_review",
+            "request_id": request_id,
+            "status": "confirming",
+            "base_phase_id": "phase_01",
+            "task_tree": preview_tree,
+            "history": {},
+        },
+        latest_checkpoint_id=None,
+        task_tree=committed_tree,
+        error_code=None,
+        error_message=None,
+        expires_at=None,
+        interrupted_at=None,
+        completed_at=None,
+    )
+    session = FakePersistSession(thread=thread)
+
+    def fake_async_session():
+        return FakeSessionContext(session)
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(db_session, "async_session", fake_async_session, raising=False)
+
+    asyncio.run(
+        AgentRuntime().commit_next_phase(
+            user_id=USER_ID,
+            thread_id="thread-1",
+            request_id=request_id,
+            task_tree=preview_tree,
+        )
+    )
+
+    update_values = list(session.executed_updates[-1].compile().params.values())
+    persisted_tree = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and "planning_context" in value
+    )
+    envelope = next(
+        value
+        for value in update_values
+        if isinstance(value, dict) and value.get("type") == "phase_generation_state"
+    )
+    assert persisted_tree["planning_context"]["current_phase"]["phase_id"] == "phase_02"
+    assert envelope["status"] == "confirmed"
+    assert envelope["history"][request_id]["status"] == "confirmed"
 
 
 class FakePersistSession:
@@ -407,6 +811,10 @@ class FakeTransaction:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+async def _collect_astream(stream):
+    return [chunk async for chunk in stream]
 
 
 def _compile_postgresql(statement) -> str:

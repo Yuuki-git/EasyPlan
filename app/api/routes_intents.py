@@ -35,6 +35,7 @@ async def create_intent(
     runtime: Annotated[AgentRuntime, Depends(get_agent_runtime)],
 ) -> IntentCreateResponse:
     thread_id = f"thr_{uuid4().hex}"
+    request_id = uuid4()
     await repository.create_thread(
         user_id=current_user.id,
         thread_id=thread_id,
@@ -45,13 +46,19 @@ async def create_intent(
         runtime.run_new_thread,
         user_id=str(current_user.id),
         thread_id=thread_id,
+        request_id=str(request_id),
         intent_text=payload.intent_text,
         selected_provider=payload.preferred_provider,
         planner_provider=payload.planner_provider,
         planner_model=payload.planner_model,
+        user_timezone=user_timezone.key,
     )
     return IntentCreateResponse(
         thread_id=thread_id,
+        request_id=request_id,
         status="running",
-        events_url=f"/api/threads/{thread_id}/events",
+        events_url=(
+            f"/api/threads/{thread_id}/events"
+            f"?run_type=initial&request_id={request_id}"
+        ),
     )

@@ -90,13 +90,88 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **Schema Enum Drift Repair**：将 `pydantic.ValidationError` 纳入 JSON Repair 重试链路，防范小模型幻觉枚举值（如输出 `node_type="leader"`）。
 *   **Checklist 强制聚合**：在 Validator 中对 `context_checklist` 加入强校验，任务数 >=2 时必须存在 `group` 节点。
 
-#### 📍 v1.2.5: 三层规划与阶段视野 (Three-Tier Planning)
+#### ✅ v1.2.5: 三层规划与阶段视野 (Three-Tier Planning) (Completed)
 *   **执行领航员**：落地“远期只给地图，近期给计划，眼前给动作”。
 *   **条件触发的 Roadmap UI**：路线图绝非全局标配，严格由 Intent Profile 决定显示逻辑：
     *   `long_term_growth`：默认显示 3-5 个高层阶段路线图，提供长期方向感但不展开。
     *   `exploration_decision`：显示“探索路线”（如“澄清问题 → 收集信息 → 验证 → 做决定”），降低决策不确定性。
     *   `short_term_delivery` & `context_checklist`：**不显示路线图**，直接聚焦时间盒交付与情境聚合。
 *   **执行反馈**：增加 Current Phase 目标说明、Next Action 高亮，把计划列表升级为“执行引导界面”。
+*   **生成态重定义**：生成界面按单次 run 管理，不复用上一次 intent、retry 或 next phase 的 reasoning 历史；SSE 重连允许恢复当前 run，但重复事件不得重复渲染。
+*   **探索决策先答后拆**：`exploration_decision` 不再只展示生成过程，首屏必须先给一句当前判断，再进入阶段路线与行动树。
+*   **生成态逃生口**：AI 生成与下一阶段预览支持取消；确认后的 `SYNCING` 是不可撤销提交，只允许返回当前计划并在后台继续完成。
+*   **时间表达降精度**：生成态优先显示“低投入 / 中投入 / 较重投入”等时间档位；正式进入看板后再展示 rounded 预计时长，避免伪精确。
+*   **信息架构澄清**：“全部计划”明确为跨项目聚合视图，“项目”保留为 thread 级长期容器；同一任务可同时存在于项目视图和“全部计划”视图中，但 Roadmap 与 Current Phase 只属于项目上下文。
+
+**已完成工程闭环**：
+*   **同 thread 阶段推进**：下一阶段在原 thread 中生成、预览和确认追加，不再创建新的计划。
+*   **三层规划上下文**：`Roadmap / Current Phase / Next Action` 进入 TaskTree 契约；Next Action 由后端基于依赖和任务状态确定。
+*   **Committed / Preview 分离**：预览存放于 `interrupt_payload`，确认前不会覆盖已提交的 `task_tree`。
+*   **Run 身份协议**：initial、refine、next phase 均使用唯一 `request_id`；SSE 以 `thread_id + run_type + request_id` 隔离。
+*   **刷新与竞态恢复**：引入 active run、游标作用域、快照请求栅栏和 commit receipt，阻止历史事件或旧 Phase 1 快照覆盖 Phase 2。
+*   **请求级取消**：生成中和待确认预览支持幂等取消并写入 tombstone；迟到结果不能恢复已取消 run。
+*   **确认边界**：确认后进入不可撤销 `SYNCING`；用户可返回当前计划，后台继续完成并最终更新 Phase 2。
+*   **跨视图一致性**：全部计划、项目和我的一天共享同一任务 ID 与完成状态，不因视图切换破坏项目结构。
+
+#### 🩹 v1.2.5.1: Generation Experience Patch (Closed / Absorbed into v1.2.5 RC.2)
+*   **范围定位**：v1.2.5.1 只负责收口生成态稳定性与信息架构边界，不再增加新的核心功能。
+*   **已收口问题**：
+    *   `exploration_decision` 首屏先给“当前判断”，避免用户只看到 reasoning 却拿不到判断。
+    *   新 intent / retry / next phase preview 按单次 run 管理，不残留上一轮 reasoning。
+    *   SSE replay 去重、stalled 检测和“返回当前计划 / 取消本次生成”逃生口闭环。
+    *   “全部计划”与“项目”语义拆清，避免看起来像两套并列容器。
+    *   `exploration_decision` 场景下的 `time_horizon` 漂移与 raw validation error 暴露问题已专项修复。
+*   **收口结果**：该补丁后续发现的 cross-run SSE、旧快照覆盖、active-run 恢复和生成取消问题已在 v1.2.5 RC.2 修复并纳入自动化测试。
+
+#### ✅ v1.2.6: 总览层与回答层 (Portfolio Overview & Answer Layer) (RC.1)
+*   **全部计划升级为总览层**：
+    *   “全部计划”不再只是任务聚合流，而是所有计划的 portfolio overview。
+    *   展示计划标题、当前阶段摘要、下一步动作或最近任务，并支持点击进入对应项目。
+*   **探索决策回答层升级**：
+    *   `exploration_decision` 固定输出为“当前判断 -> 判断依据 -> 下一步探索”，先回答问题，再给路线。
+    *   当前判断必须是临时判断，不得伪装成最终结论。
+*   **重试语义收口**：
+    *   `Retry` 降级为异常恢复按钮，仅在失败、卡住或 SSE 中断时出现。
+    *   非异常场景如用户想换一种拆法，应提供“重新生成”而不是泛化 `Retry`。
+*   **生成态信息降噪**：
+    *   每次新生成只展示当前 run；旧 reasoning、节点状态、预览树和错误不会进入新 run。
+    *   stalled 状态重连同一 request，不创建重复规划请求。
+*   **2026-07-05 RC 验收**：
+    *   Backend：`265 passed`
+    *   Frontend Node 状态测试：全部通过
+    *   Mounted `useSSE` Hook：`11 passed`
+    *   Portfolio 组件测试：`11 passed`
+    *   Frontend build、lint：通过
+    *   DeepSeek Eval：`32/32`，Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality 和 Done Criteria Coverage 均为 `100%`
+    *   Average Actionability Score：`99.85%`
+    *   Abstract Task Violation Rate：`0.75%`
+
+#### ✅ v1.2.7-A: 长期执行循环 (Long-Term Execution Loop) (Completed / Release Gate)
+*   **Schema v2 边界**：
+    *   仅新建 `long_term_growth` 计划使用 schema v2；旧计划与其他 intent 继续使用 schema v1。
+    *   当前阶段最多包含 2 个 practice loop、2 个 outcome checkpoint，未来 occurrence 不会被预生成。
+*   **循环执行规则**：
+    *   周配额按本地周统计，不足部分不结转到下一周。
+    *   同一 loop 每个本地自然日最多记录一次完成；完成任务与写入 completion log 位于同一事务。
+    *   排程产生一个普通 planned task，并默认加入“我的一天”；之后是否保留在“我的一天”仍由用户控制。
+    *   频率调整从下一本地周创建新 revision，不改写历史周目标与完成日志。
+*   **阶段复盘与推进**：
+    *   readiness 同时计算 one-off、过程达成率和 outcome evidence。
+    *   用户可选择 `proceed`、`extend`、`adjust` 或带理由的 `override`。
+    *   下一阶段生成必须存在 finalized `proceed` 或 `override` review；override 理由长期保留在项目 Phase Records。
+*   **验收范围**：
+    *   新增 10 条长期执行 Eval，用例总数扩展为 42。
+    *   Backend：`324 passed`。
+    *   Frontend：全部 `.test.mjs`、Hook `11 passed`、Portfolio `12 passed`、长期执行 `15 passed`，build 与 lint 通过。
+    *   `git diff --check` 通过；未发现硬编码 API key，临时 Eval 日志已清理。
+    *   case 34 的“本周天气”正则误判已修复；有限交付 loop 与显式周频率均有确定性 Validator/replan，Eval 复用同一 Validator。
+    *   case 40 连续三次 DeepSeek 验证全部通过。
+    *   DeepSeek Validator-aware 42-case 实测 `42/42`；Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality、Done Criteria Coverage 与 Long-Term Loop Contract 均为 `100%`。
+
+#### 📍 v1.2.7-B/C: 短期交付与探索规划模型
+*   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。
+*   `exploration_decision` 继续演进独立的判断与验证路线。
+*   本阶段不改变 v1.2.7-A 已完成的长期执行数据契约。
 
 #### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
 *   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。

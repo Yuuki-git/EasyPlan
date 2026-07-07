@@ -18,6 +18,21 @@ def phase_planning_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def long_term_execution_enabled() -> bool:
+    value = os.getenv(
+        "EASYPLAN_LONG_TERM_EXECUTION_ENABLED",
+        "true",
+    ).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def uses_long_term_execution(context: PlanningContext) -> bool:
+    return (
+        context.schema_version == 2
+        and context.intent_type == "long_term_growth"
+    )
+
+
 def is_ai_phase_action(task: Any, phase_id: str) -> bool:
     metadata = getattr(task, "metadata_", None)
     return (
@@ -70,6 +85,8 @@ def validate_next_phase_transition(
     proposed: PlanningContext,
 ) -> list[str]:
     errors: list[str] = []
+    if proposed.schema_version != committed.schema_version:
+        errors.append("schema_version must remain unchanged")
     if proposed.intent_type != committed.intent_type:
         errors.append("intent_type must remain unchanged")
     if proposed.time_horizon != committed.time_horizon:

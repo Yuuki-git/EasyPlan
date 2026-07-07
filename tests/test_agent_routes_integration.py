@@ -17,6 +17,9 @@ from app.main import create_app
 from app.services.thread_repository import ThreadStateConflictError
 
 
+INITIAL_REQUEST_ID = "11111111-1111-1111-1111-111111111111"
+
+
 @dataclass
 class FakeThread:
     thread_id: str
@@ -72,7 +75,7 @@ class FakeThreadRepository:
     async def get_thread_for_user(self, *, user_id, thread_id):
         return self.threads.get((str(user_id), thread_id))
 
-    async def mark_confirmation_accepted(self, *, thread, request_id):
+    async def mark_confirmation_accepted(self, *, thread, request_id, action=None):
         payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
         if payload.get("type") == "next_phase_review":
             expected_request_id = payload.get("request_id")
@@ -81,6 +84,8 @@ class FakeThreadRepository:
                     code="REQUEST_ID_MISMATCH",
                     message="Next-phase preview request_id does not match the current pending preview",
                 )
+            if payload.get("status") == "confirming":
+                return True
             if payload.get("status") != "awaiting_confirmation":
                 raise ThreadStateConflictError(
                     code="PREVIEW_ALREADY_CONFIRMED",
@@ -90,16 +95,61 @@ class FakeThreadRepository:
                 **payload,
                 "status": "confirming",
             }
-        thread.status = "running"
-
-    async def cancel_pending_preview(self, *, thread):
-        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
-        if payload.get("type") != "next_phase_review" or payload.get("status") != "awaiting_confirmation":
+            thread.current_node = "next_phase_planner"
+        elif payload.get("type") == "phase_generation_state":
+            if (
+                payload.get("request_id") == request_id
+                and payload.get("status") == "confirmed"
+            ):
+                return False
             raise ThreadStateConflictError(
-                code="NO_PENDING_PREVIEW",
-                message="Thread has no pending preview to cancel",
+                code="PREVIEW_ALREADY_CONFIRMED",
+                message="This next-phase preview has already been confirmed, failed, or cancelled",
             )
-        request_id = str(payload.get("request_id") or "")
+        elif payload.get("type") == "task_tree_review":
+            next_payload = {
+                **payload,
+                "request_id": request_id,
+            }
+            if action == "refine":
+                next_payload["status"] = "regenerating"
+                thread.current_node = "planner"
+            elif action == "edit":
+                next_payload["status"] = "editing"
+                thread.current_node = "validator"
+            elif action == "approve":
+                next_payload["status"] = "confirming"
+                thread.current_node = "persist_internal_tasks"
+            elif action == "reject":
+                next_payload["status"] = "cancelled"
+            thread.interrupt_payload = next_payload
+        thread.status = "running"
+        return True
+
+    async def cancel_next_phase_request(self, *, user_id, thread_id, request_id):
+        thread = self.threads.get((str(user_id), thread_id))
+        if thread is None:
+            return None
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+        if str(payload.get("request_id") or "") != request_id:
+            raise ThreadStateConflictError(
+                code="REQUEST_ID_MISMATCH",
+                message="Next-phase request_id does not match the current lifecycle",
+            )
+        if payload.get("type") == "phase_generation_state" and payload.get("status") == "cancelled":
+            return thread
+        cancellable = (
+            payload.get("type") == "phase_generation_state"
+            and payload.get("status") == "running"
+        ) or (
+            payload.get("type") == "next_phase_review"
+            and payload.get("status") == "awaiting_confirmation"
+        )
+        if not cancellable:
+            raise ThreadStateConflictError(
+                code="NO_CANCELLABLE_PHASE",
+                message="Thread has no cancellable next-phase lifecycle for this request",
+            )
         history = dict(payload.get("history") or {})
         history[request_id] = {
             "status": "cancelled",
@@ -226,6 +276,34 @@ class FakeThreadRepository:
             )
         ]
 
+    async def get_next_phase_commit_receipt(self, *, user_id, thread_id, request_id):
+        thread = await self.get_thread_for_user(user_id=user_id, thread_id=thread_id)
+        if thread is None:
+            return None
+        payload = thread.interrupt_payload if isinstance(thread.interrupt_payload, dict) else {}
+        status = (
+            payload.get("status", "unknown")
+            if payload.get("request_id") == request_id
+            else "unknown"
+        )
+        context = (thread.task_tree or {}).get("planning_context") or {}
+        current_phase = context.get("current_phase") or {}
+        tasks = [
+            task
+            for task in self.tasks.values()
+            if str(task.user_id) == str(user_id)
+            and task.thread_id == thread_id
+            and task.view_bucket == "planned"
+        ]
+        return SimpleNamespace(
+            thread_id=thread_id,
+            request_id=request_id,
+            status=status,
+            current_phase_id=current_phase.get("phase_id"),
+            task_tree=thread.task_tree,
+            tasks=tasks,
+        )
+
 
 class FakeRuntime:
     def __init__(self) -> None:
@@ -233,6 +311,8 @@ class FakeRuntime:
         self.resumed: list[dict] = []
         self.streamed: list[dict] = []
         self.phase_runs: list[dict] = []
+        self.phase_commits: list[dict] = []
+        self.cancelled: list[dict] = []
         self.events = ["event: reasoning\ndata: {\"state_version\":1,\"message\":\"running\"}\n\n"]
 
     async def run_new_thread(self, **kwargs):
@@ -244,8 +324,30 @@ class FakeRuntime:
     async def run_next_phase(self, **kwargs):
         self.phase_runs.append(kwargs)
 
-    async def stream_thread_events(self, *, user_id, thread_id, last_event_id=None):
-        self.streamed.append({"user_id": user_id, "thread_id": thread_id, "last_event_id": last_event_id})
+    async def commit_next_phase(self, **kwargs):
+        self.phase_commits.append(kwargs)
+
+    def cancel_run(self, **kwargs):
+        self.cancelled.append(kwargs)
+
+    async def stream_thread_events(
+        self,
+        *,
+        user_id,
+        thread_id,
+        last_event_id=None,
+        run_type="initial",
+        request_id=None,
+    ):
+        self.streamed.append(
+            {
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "last_event_id": last_event_id,
+                "run_type": run_type,
+                "request_id": request_id,
+            }
+        )
         for event in self.events:
             yield event
 
@@ -285,17 +387,48 @@ def test_create_intent_persists_thread_and_starts_langgraph_background_task():
 
     assert response.status_code == 202
     payload = response.json()
-    assert payload["events_url"] == f"/api/threads/{payload['thread_id']}/events"
+    assert payload["request_id"]
+    assert payload["events_url"] == (
+        f"/api/threads/{payload['thread_id']}/events"
+        f"?run_type=initial&request_id={payload['request_id']}"
+    )
     assert repository.created[0].user_id == str(user.id)
     assert repository.created[0].intent_text == "写论文"
     assert runtime.started[0] == {
         "user_id": str(user.id),
         "thread_id": payload["thread_id"],
+        "request_id": payload["request_id"],
         "intent_text": "写论文",
         "selected_provider": "native",
-        "planner_provider": None,
-        "planner_model": None,
-    }
+            "planner_provider": None,
+            "planner_model": None,
+            "user_timezone": "Asia/Shanghai",
+        }
+
+
+def test_create_intent_assigns_unique_request_id_to_each_initial_run():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, _user = _client_with_overrides(repository, runtime)
+    headers = {"X-User-Timezone": "Asia/Shanghai"}
+    body = {"intent_text": "写论文", "preferred_provider": "native"}
+
+    first = client.post("/api/intents", headers=headers, json=body)
+    second = client.post("/api/intents", headers=headers, json=body)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["request_id"]
+    assert second_payload["request_id"]
+    assert first_payload["request_id"] != second_payload["request_id"]
+    assert first_payload["events_url"].endswith(
+        f"run_type=initial&request_id={first_payload['request_id']}"
+    )
+    assert second_payload["events_url"].endswith(
+        f"run_type=initial&request_id={second_payload['request_id']}"
+    )
 
 
 def test_create_intent_forwards_requested_planner_provider_and_model():
@@ -331,6 +464,44 @@ def test_create_intent_requires_authenticated_user():
     assert response.status_code == 401
 
 
+def test_get_next_phase_commit_receipt_returns_tree_and_thread_tasks():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "base_phase_id": "phase_00",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    task = _fake_route_task(
+        user_id=user.id,
+        thread_id=thread.thread_id,
+        title="Phase 1 task",
+        status="active",
+        phase_id="phase_01",
+        ai_generated=True,
+    )
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+    repository.tasks[task.id] = task
+
+    response = client.get(
+        f"/api/threads/{thread.thread_id}/phases/next/commit",
+        params={"request_id": request_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request_id"] == request_id
+    assert payload["status"] == "confirmed"
+    assert payload["current_phase_id"] == "phase_01"
+    assert payload["task_tree"]["root"]["client_node_id"] == "phase_01_root"
+    assert [item["id"] for item in payload["tasks"]] == [str(task.id)]
+
+
 def test_stream_thread_events_checks_thread_ownership_and_uses_runtime_stream():
     repository = FakeThreadRepository()
     runtime = FakeRuntime()
@@ -338,10 +509,14 @@ def test_stream_thread_events_checks_thread_ownership_and_uses_runtime_stream():
     thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
     repository.threads[(str(user.id), thread.thread_id)] = thread
 
-    response = client.get("/api/threads/thread-1/events")
+    response = client.get(
+        f"/api/threads/thread-1/events?run_type=initial&request_id={INITIAL_REQUEST_ID}"
+    )
 
     assert response.status_code == 200
     assert "event: reasoning" in response.text
+    assert runtime.streamed[0]["run_type"] == "initial"
+    assert runtime.streamed[0]["request_id"] == INITIAL_REQUEST_ID
 
 
 def test_stream_thread_events_uses_query_last_event_id_when_header_is_missing():
@@ -351,10 +526,59 @@ def test_stream_thread_events_uses_query_last_event_id_when_header_is_missing():
     thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
     repository.threads[(str(user.id), thread.thread_id)] = thread
 
-    response = client.get("/api/threads/thread-1/events?last_event_id=evt_00000002")
+    response = client.get(
+        "/api/threads/thread-1/events"
+        f"?run_type=initial&request_id={INITIAL_REQUEST_ID}"
+        "&last_event_id=evt_00000002"
+    )
 
     assert response.status_code == 200
     assert runtime.streamed[0]["last_event_id"] == "evt_00000002"
+
+
+def test_stream_thread_events_requires_request_id_for_initial_run():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.get("/api/threads/thread-1/events?run_type=initial")
+
+    assert response.status_code == 422
+    assert any(error["loc"][-1] == "request_id" for error in response.json()["detail"])
+    assert runtime.streamed == []
+
+
+def test_stream_thread_events_forwards_next_phase_run_identity():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+    request_id = "11111111-1111-1111-1111-111111111111"
+
+    response = client.get(
+        f"/api/threads/thread-1/events?run_type=next_phase&request_id={request_id}"
+    )
+
+    assert response.status_code == 200
+    assert runtime.streamed[0]["run_type"] == "next_phase"
+    assert runtime.streamed[0]["request_id"] == request_id
+
+
+def test_stream_thread_events_requires_request_id_for_next_phase():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = FakeThread(thread_id="thread-1", user_id=str(user.id), intent_text="写论文")
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.get("/api/threads/thread-1/events?run_type=next_phase")
+
+    assert response.status_code == 422
+    assert any(error["loc"][-1] == "request_id" for error in response.json()["detail"])
+    assert runtime.streamed == []
 
 
 def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
@@ -380,6 +604,8 @@ def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
     assert runtime.resumed[0]["thread_id"] == "thread-1"
     assert runtime.resumed[0]["decision"]["action"] == "refine"
     assert runtime.resumed[0]["decision"]["feedback"] == "更小一点"
+    assert runtime.resumed[0]["run_type"] == "initial"
+    assert runtime.resumed[0]["request_id"] == "req_12345678"
 
 
 def test_confirm_thread_requires_matching_next_phase_request_id():
@@ -409,7 +635,7 @@ def test_confirm_thread_requires_matching_next_phase_request_id():
     assert thread.interrupt_payload["status"] == "awaiting_confirmation"
 
 
-def test_confirm_thread_does_not_resume_same_next_phase_preview_twice():
+def test_confirm_thread_commits_durable_next_phase_preview_without_graph_resume():
     repository = FakeThreadRepository()
     runtime = FakeRuntime()
     client, user = _client_with_overrides(repository, runtime)
@@ -430,8 +656,37 @@ def test_confirm_thread_does_not_resume_same_next_phase_preview_twice():
     second = client.post(f"/api/threads/{thread.thread_id}/confirm", headers=headers, json=payload)
 
     assert first.status_code == 202
-    assert second.status_code == 409
-    assert len(runtime.resumed) == 1
+    assert second.status_code == 202
+    assert runtime.resumed == []
+    assert len(runtime.phase_commits) == 2
+    assert runtime.phase_commits[0]["request_id"] == payload["request_id"]
+    assert runtime.phase_commits[0]["task_tree"] == {"summary": "preview"}
+
+
+def test_confirm_thread_does_not_reschedule_already_confirmed_next_phase():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.status = "succeeded"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "confirmed",
+        "history": {request_id: {"status": "confirmed"}},
+    }
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.post(
+        f"/api/threads/{thread.thread_id}/confirm",
+        headers={"X-User-Timezone": "Asia/Shanghai"},
+        json={"request_id": request_id, "action": "approve"},
+    )
+
+    assert response.status_code == 202
+    assert runtime.phase_commits == []
+    assert runtime.resumed == []
 
 
 def test_cancel_next_phase_preview_returns_latest_snapshot():
@@ -453,18 +708,125 @@ def test_cancel_next_phase_preview_returns_latest_snapshot():
     }
     repository.threads[(str(user.id), thread.thread_id)] = thread
 
-    response = client.delete(f"/api/threads/{thread.thread_id}/phases/next/cancel")
+    response = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": "11111111-1111-1111-1111-111111111111"},
+    )
 
     assert response.status_code == 200
     body = response.json()
     assert body["thread_id"] == thread.thread_id
-    assert body["status"] == "succeeded"
+    assert body["status"] == "cancelled"
     assert body["interrupt_payload"]["type"] == "phase_generation_state"
     assert body["interrupt_payload"]["request_id"] == "11111111-1111-1111-1111-111111111111"
     assert body["interrupt_payload"]["status"] == "cancelled"
     assert body["interrupt_payload"]["history"]["11111111-1111-1111-1111-111111111111"]["status"] == "cancelled"
     assert "cancelled_at" in body["interrupt_payload"]["history"]["11111111-1111-1111-1111-111111111111"]
     assert body["task_tree"] == TaskTree.model_validate(committed_task_tree).model_dump(mode="json")
+    assert runtime.cancelled == [
+        {
+            "thread_id": thread.thread_id,
+            "run_type": "next_phase",
+            "request_id": "11111111-1111-1111-1111-111111111111",
+        }
+    ]
+
+
+def test_cancel_running_next_phase_is_idempotent_and_releases_runtime_run():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    committed_task_tree = thread.task_tree
+    thread.status = "running"
+    thread.current_node = "next_phase_planner"
+    thread.lease_owner = request_id
+    thread.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": request_id,
+        "status": "running",
+        "history": {},
+    }
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    first = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": request_id},
+    )
+    second = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": request_id},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["status"] == "cancelled"
+    assert second.json()["status"] == "cancelled"
+    assert thread.task_tree == committed_task_tree
+    assert thread.lease_owner is None
+    assert thread.lease_expires_at is None
+    assert len(runtime.cancelled) == 2
+
+
+def test_cancel_next_phase_rejects_mismatched_request_without_runtime_notification():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.status = "running"
+    thread.interrupt_payload = {
+        "type": "phase_generation_state",
+        "request_id": "11111111-1111-1111-1111-111111111111",
+        "status": "running",
+        "history": {},
+    }
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": "22222222-2222-2222-2222-222222222222"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "REQUEST_ID_MISMATCH"
+    assert runtime.cancelled == []
+
+
+def test_cancel_next_phase_rejects_confirmed_request_without_runtime_notification():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    request_id = "11111111-1111-1111-1111-111111111111"
+    thread = _phase_thread(user_id=user.id, thread_id="thread-phase")
+    thread.status = "running"
+    thread.interrupt_payload = {
+        "type": "next_phase_review",
+        "request_id": request_id,
+        "status": "confirming",
+        "history": {},
+    }
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": request_id},
+    )
+
+    assert response.status_code == 409
+    assert runtime.cancelled == []
+
+
+def test_cancel_next_phase_requires_request_id():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, _user = _client_with_overrides(repository, runtime)
+
+    response = client.delete("/api/threads/thread-phase/phases/next/cancel")
+
+    assert response.status_code == 422
+    assert runtime.cancelled == []
 
 
 def test_cancel_next_phase_preview_returns_404_for_other_users_thread():
@@ -483,7 +845,10 @@ def test_cancel_next_phase_preview_returns_404_for_other_users_thread():
     }
     repository.threads[(str(other_user_id), thread.thread_id)] = thread
 
-    response = client.delete(f"/api/threads/{thread.thread_id}/phases/next/cancel")
+    response = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": "11111111-1111-1111-1111-111111111111"},
+    )
 
     assert response.status_code == 404
 
@@ -496,7 +861,10 @@ def test_cancel_next_phase_preview_rejects_thread_without_pending_preview():
     committed_task_tree = thread.task_tree
     repository.threads[(str(user.id), thread.thread_id)] = thread
 
-    response = client.delete(f"/api/threads/{thread.thread_id}/phases/next/cancel")
+    response = client.delete(
+        f"/api/threads/{thread.thread_id}/phases/next/cancel",
+        params={"request_id": "11111111-1111-1111-1111-111111111111"},
+    )
 
     assert response.status_code == 409
     assert thread.task_tree == committed_task_tree
@@ -610,7 +978,10 @@ def test_start_next_phase_reuses_thread_and_runtime():
         "thread_id": thread.thread_id,
         "request_id": request_id,
         "status": "running",
-        "events_url": f"/api/threads/{thread.thread_id}/events",
+        "events_url": (
+            f"/api/threads/{thread.thread_id}/events"
+            f"?run_type=next_phase&request_id={request_id}"
+        ),
     }
     assert runtime.phase_runs[0]["thread_id"] == thread.thread_id
     assert runtime.phase_runs[0]["request_id"] == request_id

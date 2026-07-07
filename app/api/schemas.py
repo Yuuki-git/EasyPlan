@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 from typing import Any, Literal
@@ -11,7 +11,9 @@ MAX_TASK_TREE_SIBLINGS = 20
 MAX_TASK_TREE_NODES = 200
 ACTION_QUALITY_FIELDS = ("done_criteria", "start_hint", "fallback_action")
 PHASE_METADATA_FIELDS = ("source", "phase_id", "phase_order")
-TASK_METADATA_FIELDS = ACTION_QUALITY_FIELDS + PHASE_METADATA_FIELDS
+TASK_METADATA_FIELDS = ACTION_QUALITY_FIELDS + PHASE_METADATA_FIELDS + (
+    "practice_loop_id",
+)
 
 IntentType = Literal[
     "long_term_growth",
@@ -61,18 +63,76 @@ class CurrentPhase(BaseModel):
     phase_id: str = Field(..., min_length=1, max_length=80)
     title: str = Field(..., min_length=1, max_length=80)
     objective: str = Field(..., min_length=1, max_length=300)
-    completion_rule: Literal["all_ai_actions_completed"] = "all_ai_actions_completed"
+    completion_rule: Literal[
+        "all_ai_actions_completed",
+        "long_term_execution_gate",
+    ] = "all_ai_actions_completed"
+    estimated_duration_weeks: int | None = Field(default=None, ge=1, le=12)
+
+
+EvidenceType = Literal["numeric", "artifact", "self_assessment"]
+CheckpointOperator = Literal["gte", "lte", "exists"]
+
+
+class PracticeLoopDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    loop_id: str = Field(..., min_length=1, max_length=80)
+    title: str = Field(..., min_length=1, max_length=160)
+    target_per_week: int = Field(..., ge=1, le=7)
+    duration_weeks: int = Field(..., ge=1, le=12)
+    done_criteria: str = Field(..., min_length=1, max_length=1000)
+
+
+class OutcomeCheckpoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_id: str = Field(..., min_length=1, max_length=80)
+    title: str = Field(..., min_length=1, max_length=160)
+    evidence_type: EvidenceType
+    unit: str | None = Field(default=None, max_length=40)
+    operator: CheckpointOperator
+    target_value: float | None = None
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "OutcomeCheckpoint":
+        if self.evidence_type == "artifact" and self.operator != "exists":
+            raise ValueError("artifact checkpoint operator must be exists")
+        if self.evidence_type != "artifact" and self.target_value is None:
+            raise ValueError("numeric and self_assessment checkpoints require target_value")
+        if (
+            self.evidence_type == "self_assessment"
+            and not 1 <= float(self.target_value) <= 5
+        ):
+            raise ValueError("self_assessment target_value must be between 1 and 5")
+        return self
+
+
+class PhaseGate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    process_threshold: Literal[0.8] = 0.8
+    outcome_rule: Literal["all_required"] = "all_required"
 
 
 class PlanningContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     intent_type: Literal["long_term_growth", "exploration_decision"]
     time_horizon: TimeHorizon
     roadmap: list[RoadmapPhase] = Field(..., min_length=3, max_length=5)
     current_phase: CurrentPhase | None
     next_action_client_node_id: str | None = Field(default=None, max_length=160)
+    practice_loops: list[PracticeLoopDefinition] = Field(
+        default_factory=list,
+        max_length=2,
+    )
+    outcome_checkpoints: list[OutcomeCheckpoint] = Field(
+        default_factory=list,
+        max_length=2,
+    )
+    phase_gate: PhaseGate | None = None
 
     @model_validator(mode="after")
     def validate_roadmap_state(self) -> "PlanningContext":
@@ -88,17 +148,63 @@ class PlanningContext(BaseModel):
         if self.current_phase is None:
             if any(phase.status != "completed" for phase in self.roadmap):
                 raise ValueError("roadmap must be completed when current_phase is null")
+        else:
+            if len(current) != 1:
+                raise ValueError("exactly one current roadmap phase is required")
+            if current[0].phase_id != self.current_phase.phase_id:
+                raise ValueError("current_phase must match the current roadmap phase")
+            if (
+                current[0].title != self.current_phase.title
+                or current[0].objective != self.current_phase.objective
+            ):
+                raise ValueError("current_phase fields must match roadmap")
+
+        if self.schema_version == 1:
+            if self.practice_loops or self.outcome_checkpoints or self.phase_gate is not None:
+                raise ValueError(
+                    "schema version 1 cannot contain long-term execution fields"
+                )
+            if (
+                self.current_phase
+                and self.current_phase.completion_rule
+                != "all_ai_actions_completed"
+            ):
+                raise ValueError("schema version 1 requires all_ai_actions_completed")
+            if (
+                self.current_phase
+                and self.current_phase.estimated_duration_weeks is not None
+            ):
+                raise ValueError(
+                    "schema version 1 cannot define estimated_duration_weeks"
+                )
             return self
 
-        if len(current) != 1:
-            raise ValueError("exactly one current roadmap phase is required")
-        if current[0].phase_id != self.current_phase.phase_id:
-            raise ValueError("current_phase must match the current roadmap phase")
+        if self.intent_type != "long_term_growth":
+            raise ValueError("schema version 2 is only valid for long_term_growth")
         if (
-            current[0].title != self.current_phase.title
-            or current[0].objective != self.current_phase.objective
+            self.current_phase
+            and self.current_phase.completion_rule != "long_term_execution_gate"
         ):
-            raise ValueError("current_phase fields must match roadmap")
+            raise ValueError("schema version 2 requires long_term_execution_gate")
+        if self.current_phase and self.current_phase.estimated_duration_weeks is None:
+            raise ValueError("schema version 2 requires estimated_duration_weeks")
+        if not self.outcome_checkpoints:
+            raise ValueError("schema version 2 requires at least one outcome checkpoint")
+        if self.current_phase and any(
+            loop.duration_weeks > self.current_phase.estimated_duration_weeks
+            for loop in self.practice_loops
+        ):
+            raise ValueError(
+                "practice loop duration cannot exceed current phase duration"
+            )
+        if len({loop.loop_id for loop in self.practice_loops}) != len(
+            self.practice_loops
+        ):
+            raise ValueError("practice loop_id must be unique")
+        if len(
+            {item.checkpoint_id for item in self.outcome_checkpoints}
+        ) != len(self.outcome_checkpoints):
+            raise ValueError("checkpoint_id must be unique")
         return self
 
 
@@ -144,6 +250,7 @@ class IntentCreateRequest(BaseModel):
 
 class IntentCreateResponse(BaseModel):
     thread_id: str
+    request_id: UUID
     status: Literal["running"]
     events_url: str
 
@@ -179,6 +286,42 @@ class ConfirmationResponse(BaseModel):
     status: str
 
 
+class PhaseReviewUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: dict[str, dict[str, object]] = Field(default_factory=dict)
+    difficulty: str | None = Field(default=None, max_length=2000)
+    next_capacity: str | None = Field(default=None, max_length=1000)
+    early_review_requested: bool = False
+
+
+class PracticeLoopAdjustmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    loop_id: UUID
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    target_per_week: int | None = Field(default=None, ge=1, le=7)
+    done_criteria: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_adjustment(self) -> "PracticeLoopAdjustmentRequest":
+        if not {"title", "target_per_week", "done_criteria"} & self.model_fields_set:
+            raise ValueError("At least one practice loop field must be adjusted")
+        return self
+
+
+class PhaseReviewDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["proceed", "extend", "adjust", "override"]
+    override_reason: str | None = Field(default=None, max_length=1000)
+    extension_weeks: int | None = Field(default=None, ge=1, le=12)
+    adjustments: list[PracticeLoopAdjustmentRequest] = Field(
+        default_factory=list,
+        max_length=2,
+    )
+
+
 class NextPhaseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -202,6 +345,52 @@ class ThreadSnapshot(BaseModel):
     task_tree: TaskTree | None = None
     interrupt_payload: dict[str, Any] | None = None
     latest_checkpoint_id: str | None = None
+    long_term_execution: "LongTermExecutionSnapshot | None" = None
+
+
+class PracticeLoopProgressResponse(BaseModel):
+    loop_id: UUID
+    loop_key: str
+    title: str
+    done_criteria: str
+    target_per_week: int
+    current_week_completed: int
+    total_completed: int
+    required_completions: int
+    estimated_end: date
+    status: Literal["active", "paused", "completed", "superseded"]
+    can_schedule_today: bool
+    active_occurrence_task_id: UUID | None
+
+
+class PhaseReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    phase_id: str
+    status: Literal["draft", "finalized"]
+    recommendation: Literal["ready", "partial", "not_ready", "overridden"]
+    decision: Literal["proceed", "extend", "adjust", "override"] | None
+    evidence: dict[str, dict[str, object]]
+    difficulty: str | None
+    next_capacity: str | None
+    override_reason: str | None
+    statistics: dict[str, object]
+    created_at: datetime
+    updated_at: datetime
+
+
+class LongTermExecutionSnapshot(BaseModel):
+    phase_id: str
+    recommendation: Literal["ready", "partial", "not_ready", "overridden"]
+    review_available: bool
+    one_off_ready: bool
+    process_ready: bool
+    outcome_ready: bool
+    loops: list[PracticeLoopProgressResponse]
+    active_review: PhaseReviewResponse | None
+    latest_finalized_review: PhaseReviewResponse | None
+    review_history: list[PhaseReviewResponse]
 
 
 TaskViewBucket = Literal["planned", "my_day", "backlog"]
@@ -242,6 +431,7 @@ class TaskResponse(BaseModel):
     source: str | None = None
     phase_id: str | None = None
     phase_order: int | None = None
+    practice_loop_id: UUID | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -266,7 +456,29 @@ class TaskResponse(BaseModel):
                     payload[field] = _metadata_string_or_none(metadata.get(field))
             if payload.get("phase_order") is None:
                 payload["phase_order"] = _metadata_int_or_none(metadata.get("phase_order"))
+            if payload.get("practice_loop_id") is None:
+                payload["practice_loop_id"] = _metadata_uuid_or_none(
+                    metadata.get("practice_loop_id")
+                )
         return payload
+
+
+class NextPhaseCommitReceipt(BaseModel):
+    thread_id: str
+    request_id: str
+    status: Literal[
+        "confirmed",
+        "incomplete",
+        "running",
+        "awaiting_confirmation",
+        "confirming",
+        "cancelled",
+        "failed",
+        "unknown",
+    ]
+    current_phase_id: str | None
+    task_tree: TaskTree | None
+    tasks: list[TaskResponse]
 
 
 class TaskUpdateRequest(BaseModel):
@@ -334,3 +546,14 @@ def _metadata_string_or_none(value: Any) -> str | None:
 
 def _metadata_int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _metadata_uuid_or_none(value: Any) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None

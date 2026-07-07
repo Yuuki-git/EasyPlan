@@ -1,71 +1,199 @@
-# EasyPlan Frontend Design Document
+# EasyPlan 前端设计
 
-## 1. 概述
-本文档定义了 EasyPlan 前端系统的架构设计。我们致力于在“极致极简”与“大众易用性”之间取得平衡，通过主次分明的界面、渐进式的引导和具有仪式感的动效，打造一个既专业又亲和的意图驱动应用。
+版本：`v1.2.7`
 
-## 2. 技术规格 (Technical Specifications)
+## 1. 设计目标
 
-### 2.1 核心准则
-- **OpenAPI 严守**: 严格遵循后端接口契约。
-- **TypeScript 核心**: 强制类型安全，特别是针对 SSE 流式数据和 Store 状态。
-- **Monorepo 结构**: 独立的前端依赖管理 (`frontend/` 目录)。
-- **时区与安全**: 全局 ISO 8601 时区同步，环境变量管理敏感配置。
+前端承载两种不同工作：
 
-### 2.2 状态管理 (Zustand & Snapshot)
-- **状态对齐**: SSE 重连时通过快照请求恢复 UI。
-- **动态输入控制**: Zustand 驱动 `DynamicInput` 的 Placeholder、图标及提交逻辑的动态切换。
+1. 把模糊意图转化为可确认的 AI 规划。
+2. 在原生任务看板中持续执行、调整和推进阶段。
 
-## 3. 设计哲学 (Design Philosophy - Balanced Minimalism)
+因此 UI 不能把“生成中的草案”和“已经提交的计划”混为一种状态，也不能把
+“全部计划”“具体项目”“我的一天”渲染成同一个层级。
 
-### 3.1 主次分明 (Centrality)
-- **核心组件**: 全应用以 `DynamicInput` 为灵魂。它处于视觉中心，既是意图的入口，也是微调反馈的接收站。
+## 2. 信息架构
 
-### 3.2 渐进式引导 (Progressive Guidance)
-- **幽灵设计 (Ghost Design)**: `Confirm` 和 `Cancel` 按钮采用半透明或仅边框的“幽灵按钮”风格，减少视觉侵入。
-- **快捷键标注**: 在按钮旁以微细文字标注快捷键（如 `⌘↵`），在照顾普通用户的同时引导其向高效用户进阶。
-- **平滑显隐**: 按钮仅在必要阶段（如 `PENDING` 态）随任务树同步出现，非活跃状态下完全隐匿。
+### 全部计划
 
-### 3.3 仪式感动效 (Fluid Motion)
-- **生长式动画**: 任务树和按钮的出现模拟“植物生长”过程，利用 `stagger`（交错）效果和 `cubic-bezier` 曲线，实现丝滑、自然的伸展。
-- **状态过渡**: 避免生硬的弹出（Pop），优先使用 `opacity`、`blur` 和 `transform: scale/translate` 的组合动效。
+Portfolio 总览，只展示项目摘要、进度和进入项目的入口。这里不展示某一个项目
+的 `Roadmap / Current Phase / Next Action`，也不提供无归属的项目内任务添加。
 
-## 4. 组件树结构 (Component Tree)
+### 项目
+
+单个 thread 的执行空间，展示：
+
+- Roadmap：只在适合的 intent 类型中出现
+- Current Phase：当前阶段及其任务
+- Next Action：由后端根据当前状态确定
+- 历史阶段
+- 下一阶段生成与确认
+
+### 我的一天
+
+跨项目的执行视图，只聚合用户今天选择的任务。任务仍属于原项目，完成状态需要
+在“我的一天”和项目中同步。
+
+## 3. 主要组件
 
 ```text
 App
-└── Layout (全局布局)
-    ├── Header (Logo & Integration Modal Toggle)
-    └── Main (核心交互区域：The Void)
-        ├── DynamicInput (全应用唯一输入框)
-        │   └── SuggestionOverlay (微细提示语)
-        └── StageContainer (基于状态的舞台容器)
-            ├── ReasoningStream (流式思考轨迹)
-            ├── TaskTreeVisualizer (生长式任务树)
-            └── ActionLayer (幽灵按钮层 - 带快捷键提示)
+|- Header
+|- DynamicInput
+|- ReasoningStream
+|- TaskTreeVisualizer
+|- ActionLayer
+|- TaskBoard
+   |- PortfolioOverview
+   |- PlanningOverview
+   |- BoardTaskNode
+   `- InlineTaskInput
+`- AuthModal
 ```
 
-## 5. UI 状态机 (Balanced State Machine)
+- `DynamicInput`：新意图和 refine 输入。
+- `ReasoningStream`：显示简短生成进度，不展示内部推理链。
+- `TaskTreeVisualizer`：确认前的规划草案。
+- `ActionLayer`：确认、微调、取消、错误恢复。
+- `PortfolioOverview`：全部计划总览。
+- `PlanningOverview`：项目级三层规划及下一阶段生命周期。
+- `TaskBoard`：任务列表、项目切换、My Day 和任务操作。
 
-| 状态 (State) | 输入框角色 | 动作/引导 (Action) | 动效特征 |
-| :--- | :--- | :--- | :--- |
-| **INITIAL** | 捕获意图 | 极简预测提示 | 聚焦动效 |
-| **THINKING** | 状态展示 | 幽灵式 [取消] (Esc) | 呼吸感加载 |
-| **PENDING** | 意图微调 | 幽灵式 [确认] (⌘↵) | 树状节点交错生长 |
-| **SYNCING** | 进度反馈 | 无操作，仅保留进度感知 | 节点内部平滑填充 |
-| **SUCCESS** | 开启新循环 | 成功徽章 + 外部链接 | 整体淡出/新意图聚焦 |
+## 4. Zustand 状态边界
 
-## 6. 未来展望 (v1.2.0 Roadmap)
+核心状态必须分开：
 
-随着战略向原生闭环转移，前端将在下一版本重点发力以下架构扩展：
+```ts
+committedTaskTree: TaskTree | null;
+previewTaskTree: TaskTree | null;
+activeRun: {
+  threadId: string;
+  runType: 'initial' | 'next_phase';
+  requestId: string;
+} | null;
+```
 
-### 6.1 原生任务看板 (Native Task Board)
-- **UI 增补**: 当状态机流转至 `SUCCESS` 时，不再只是简单的成功提示，而是平滑转场至功能完整的任务面板。
-- **视图解耦与布局差异**:
-  - **我的一天 (My Day)**: 极致扁平化 (Flat List)。专注于执行，隐去复杂的父子层级关系，仅展示用户挑选出的具体微行动 (Action)，强调“划除”的快感。
-  - **计划中 (Planned)**: 结构化视角 (Structured Tree)。采用您意图生成的两级目录（Group -> Action）呈现，或者按日期聚类。作为任务“蓄水池”，用户在此总览全局，并将任务拖拽或点击加入“我的一天”。
+- `committedTaskTree` 只表示服务端已提交计划。
+- `previewTaskTree` 只表示当前 request 等待确认的草案。
+- `activeRun` 是 SSE 身份的唯一来源。
+- `previewMode` 只控制展示模式，不能用来推断 run 身份。
 
-### 6.2 深度沉浸体验 (Deep Immersion)
-- **阅后即焚**: 完善 `ReasoningStream` 的动画逻辑，在树状图渲染完毕后自动将其高度折叠为 0 并淡出，确保界面的极简呼吸感不受破坏。
+项目切换、退出登录、返回全部计划和开始新意图时，要明确处理上述三种状态以及
+对应 localStorage，避免上一用户或上一项目的内容泄漏到新上下文。
 
-### 6.3 行内编辑能力 (Inline Editing)
-- **交互逻辑**: 在现有的 `TaskTreeVisualizer` 组件基础上，支持双击节点直接修改任务标题与预估时间，补齐纯自然语言 Refine 的颗粒度控制短板。
+## 5. 生成状态机
+
+| 状态 | 含义 | 允许操作 |
+| --- | --- | --- |
+| `INITIAL` | 没有活动生成 | 提交意图、浏览看板 |
+| `THINKING` | 模型正在生成 | 取消本次生成 |
+| `PENDING` | 草案等待决定 | 确认、微调、取消 |
+| `SYNCING` | 确认已接受，正在提交 | 返回计划/全部计划/当前计划 |
+| `ERROR` | 当前 run 失败 | 重试本次生成、返回计划、播种新想法 |
+
+产品边界：
+
+- `THINKING` 和 `PENDING` 的本地退出（放弃等待/放弃此计划）不暗示后端 run 已取消；对于 next_phase 可以发送取消请求。
+- `SYNCING` 已进入不可撤销提交，不显示任何“取消”或“放弃”按钮。
+- `SYNCING` 的“返回全部计划/返回当前计划”只改变视图，不清除 `activeRun`，后台同步和 SSE 依然保持，直到完成后通过 SSE 更新看板。
+- `isRunStalled` (stalled 状态) 提供“重新连接”选项，通过增加 `sseReconnectNonce` 重新订阅当前 request，避免触发新的 intent/next_phase 生成请求。
+- 每个新 run 开始前，均原子清空旧 reasoningLogs、previewTaskTree、nodeStatuses 和错误状态，不保留或堆积前序生成历史。
+
+## 6. 下一阶段体验
+
+下一阶段在当前项目页原地进行，不跳转到独立生成页：
+
+1. 用户完成当前阶段后点击“解锁下一阶段”。
+2. `PlanningOverview` 在 Current Phase 区域显示轻量 loading。
+3. 生成完成后在原位置显示 `previewTaskTree`。
+4. 用户确认后进入 `SYNCING`；可以返回当前计划等待。
+5. commit receipt 确认同一 request 已提交后，以新 task tree 和 tasks 替换
+   committed 内容。
+
+生成过程中不能把旧阶段当作 preview，也不能让旧快照、旧 SSE `done` 或历史
+initial run 覆盖新阶段。
+
+## 7. SSE 与恢复
+
+`useSSE` 只在存在 `activeRun` 时建立连接，并使用：
+
+```text
+threadId + runType + requestId
+```
+
+作为事件身份。以下事件必须被丢弃：
+
+- 不属于当前 active run
+- 来自已被替换的 EventSource
+- 已经处理过的 event id
+- 退出当前生成流程后迟到的事件
+
+`alignState()` 和项目快照加载使用请求 gate，防止旧响应覆盖较新状态。刷新恢复
+需要同时恢复：
+
+- 当前 view
+- selected project
+- active run
+- committed / preview task tree
+- request id 和阶段生成状态
+
+## 8. 错误与长等待
+
+- SSE 长时间无事件时显示 stalled 提示，而不是立即展示重试。
+- `agent_error` 进入明确错误面板。
+- retry 开启新的 request 前先清理旧 reasoning、node status 和错误信息。
+- 401 使用用户可理解的鉴权提示，并清理上一用户项目上下文。
+- 409 展示服务端状态冲突，不进行本地假成功。
+- 每个生成态都有离开路径，但离开 UI 与取消后端任务必须按状态区分。
+
+## 9. 时间展示
+
+- 生成界面使用粗粒度投入文案，避免给用户虚假的分钟级精确感。
+- 正式任务看板继续显示经过取整的 `estimated_minutes`。
+- 任务是否可执行主要由 `done_criteria`、`start_hint` 和
+  `fallback_action` 保证，时间只是辅助信息。
+
+## 10. 验证要求
+
+```bash
+cd frontend
+npm run test:hooks
+npm run build
+npm run lint
+```
+
+同时运行 `frontend/tests/*.test.mjs`。SSE 和状态恢复变更应包含 Hook 级测试，不
+能只依赖 store helper 单测。
+
+## 11. v1.2.7-A 长期执行界面
+
+schema v2 项目在当前阶段内组合三个独立区域：
+
+1. `PracticeLoopPanel`：展示循环定义、本周进度、阶段累计和“安排到今天”。
+2. `PhaseReviewPanel`：展示系统 readiness，收集结果证据、困难、下阶段容量和用户 decision。
+3. `PhaseRecords`：在项目内展示已完成阶段的复盘历史、历史周目标和 override reason。
+
+边界：
+
+- future occurrence 不渲染，只有用户排程后才出现普通 Task；
+- occurrence 默认加入 My Day，但用户可通过既有太阳按钮控制；
+- loop-owned 标题和完成标准不可在任务卡中编辑；
+- 已完成 occurrence 只读，删除/完成语义服从后端不可变日志约束；
+- readiness 和 review availability 只读取 `longTermExecution` snapshot，不由组件推导；
+- schema v1 继续使用既有 task-count unlock；
+- Phase Records 仅出现在 selected project，不进入 Portfolio 或 My Day。
+
+Store mutation 复用现有 snapshot gate。schedule、review update、review decision
+完成后重新加载项目快照；occurrence completion 同时刷新执行进度和当前任务视图。
+
+## 12. 验证要求
+
+除原有 Hook、Portfolio、build 和 lint 外，运行：
+
+```bash
+cd frontend
+npm run test:long-term
+```
+
+长期执行测试必须覆盖 selector、store、loop panel、review panel、phase records、
+schema-v1 fallback、My Day 同 task ID 同步以及 stale snapshot 防线。

@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.2.5"
+    "version": "1.2.7"
   },
   "paths": {
     "/health": {
@@ -292,13 +292,83 @@
         }
       }
     },
+    "/api/threads/{thread_id}/phases/next/commit": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Get Next Phase Commit Receipt",
+        "operationId": "get_next_phase_commit_receipt_api_threads__thread_id__phases_next_commit_get",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextPhaseCommitReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/threads/{thread_id}/events": {
       "get": {
         "tags": [
           "threads"
         ],
         "summary": "Stream Thread Events",
-        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. The agent_error event payload contains state_version, code, and message.",
+        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. Every event payload contains thread_id, run_type, request_id, and state_version. Every stream requires the matching request_id. The agent_error event payload also contains code and message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -309,6 +379,17 @@
               "type": "string",
               "minLength": 1,
               "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Request Id"
             }
           },
           {
@@ -325,6 +406,20 @@
                 }
               ],
               "title": "Last Event Id"
+            }
+          },
+          {
+            "name": "run_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "initial",
+                "next_phase"
+              ],
+              "type": "string",
+              "default": "initial",
+              "title": "Run Type"
             }
           },
           {
@@ -497,6 +592,17 @@
             }
           },
           {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Request Id"
+            }
+          },
+          {
             "name": "Authorization",
             "in": "header",
             "required": false,
@@ -600,6 +706,271 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NextPhaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/practice-loops/{loop_id}/schedule-today": {
+      "post": {
+        "tags": [
+          "practice"
+        ],
+        "summary": "Schedule Practice Today",
+        "operationId": "schedule_practice_today_api_threads__thread_id__practice_loops__loop_id__schedule_today_post",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "loop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Loop Id"
+            }
+          },
+          {
+            "name": "X-User-Timezone",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
+              "title": "X-User-Timezone"
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/phases/{phase_id}/review": {
+      "put": {
+        "tags": [
+          "practice"
+        ],
+        "summary": "Update Phase Review",
+        "operationId": "update_phase_review_api_threads__thread_id__phases__phase_id__review_put",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "phase_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "title": "Phase Id"
+            }
+          },
+          {
+            "name": "X-User-Timezone",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
+              "title": "X-User-Timezone"
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhaseReviewUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseReviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/phases/{phase_id}/review/decision": {
+      "post": {
+        "tags": [
+          "practice"
+        ],
+        "summary": "Finalize Phase Review",
+        "operationId": "finalize_phase_review_api_threads__thread_id__phases__phase_id__review_decision_post",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "phase_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "title": "Phase Id"
+            }
+          },
+          {
+            "name": "X-User-Timezone",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone name, for example Asia/Shanghai.",
+              "title": "X-User-Timezone"
+            },
+            "description": "IANA timezone name, for example Asia/Shanghai."
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhaseReviewDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseReviewResponse"
                 }
               }
             }
@@ -979,9 +1350,25 @@
           },
           "completion_rule": {
             "type": "string",
-            "const": "all_ai_actions_completed",
+            "enum": [
+              "all_ai_actions_completed",
+              "long_term_execution_gate"
+            ],
             "title": "Completion Rule",
             "default": "all_ai_actions_completed"
+          },
+          "estimated_duration_weeks": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 12.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Duration Weeks"
           }
         },
         "additionalProperties": false,
@@ -1063,6 +1450,11 @@
             "type": "string",
             "title": "Thread Id"
           },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
           "status": {
             "type": "string",
             "const": "running",
@@ -1076,6 +1468,7 @@
         "type": "object",
         "required": [
           "thread_id",
+          "request_id",
           "status",
           "events_url"
         ],
@@ -1103,6 +1496,152 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "LongTermExecutionSnapshot": {
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "title": "Phase Id"
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "partial",
+              "not_ready",
+              "overridden"
+            ],
+            "title": "Recommendation"
+          },
+          "review_available": {
+            "type": "boolean",
+            "title": "Review Available"
+          },
+          "one_off_ready": {
+            "type": "boolean",
+            "title": "One Off Ready"
+          },
+          "process_ready": {
+            "type": "boolean",
+            "title": "Process Ready"
+          },
+          "outcome_ready": {
+            "type": "boolean",
+            "title": "Outcome Ready"
+          },
+          "loops": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeLoopProgressResponse"
+            },
+            "type": "array",
+            "title": "Loops"
+          },
+          "active_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PhaseReviewResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_finalized_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PhaseReviewResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review_history": {
+            "items": {
+              "$ref": "#/components/schemas/PhaseReviewResponse"
+            },
+            "type": "array",
+            "title": "Review History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase_id",
+          "recommendation",
+          "review_available",
+          "one_off_ready",
+          "process_ready",
+          "outcome_ready",
+          "loops",
+          "active_review",
+          "latest_finalized_review",
+          "review_history"
+        ],
+        "title": "LongTermExecutionSnapshot"
+      },
+      "NextPhaseCommitReceipt": {
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "incomplete",
+              "running",
+              "awaiting_confirmation",
+              "confirming",
+              "cancelled",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "current_phase_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Phase Id"
+          },
+          "task_tree": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskTree-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "type": "array",
+            "title": "Tasks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "thread_id",
+          "request_id",
+          "status",
+          "current_phase_id",
+          "task_tree",
+          "tasks"
+        ],
+        "title": "NextPhaseCommitReceipt"
       },
       "NextPhaseRequest": {
         "properties": {
@@ -1148,11 +1687,316 @@
         ],
         "title": "NextPhaseResponse"
       },
+      "OutcomeCheckpoint": {
+        "properties": {
+          "checkpoint_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Checkpoint Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "evidence_type": {
+            "type": "string",
+            "enum": [
+              "numeric",
+              "artifact",
+              "self_assessment"
+            ],
+            "title": "Evidence Type"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "gte",
+              "lte",
+              "exists"
+            ],
+            "title": "Operator"
+          },
+          "target_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "title",
+          "evidence_type",
+          "operator"
+        ],
+        "title": "OutcomeCheckpoint"
+      },
+      "PhaseGate": {
+        "properties": {
+          "process_threshold": {
+            "type": "number",
+            "const": 0.8,
+            "title": "Process Threshold",
+            "default": 0.8
+          },
+          "outcome_rule": {
+            "type": "string",
+            "const": "all_required",
+            "title": "Outcome Rule",
+            "default": "all_required"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PhaseGate"
+      },
+      "PhaseReviewDecisionRequest": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "proceed",
+              "extend",
+              "adjust",
+              "override"
+            ],
+            "title": "Decision"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          },
+          "extension_weeks": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 12.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extension Weeks"
+          },
+          "adjustments": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeLoopAdjustmentRequest"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Adjustments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "PhaseReviewDecisionRequest"
+      },
+      "PhaseReviewResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "phase_id": {
+            "type": "string",
+            "title": "Phase Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "finalized"
+            ],
+            "title": "Status"
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "partial",
+              "not_ready",
+              "overridden"
+            ],
+            "title": "Recommendation"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "proceed",
+                  "extend",
+                  "adjust",
+                  "override"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Evidence"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "next_capacity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Capacity"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          },
+          "statistics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Statistics"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "phase_id",
+          "status",
+          "recommendation",
+          "decision",
+          "evidence",
+          "difficulty",
+          "next_capacity",
+          "override_reason",
+          "statistics",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PhaseReviewResponse"
+      },
+      "PhaseReviewUpdateRequest": {
+        "properties": {
+          "evidence": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Evidence"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "next_capacity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Capacity"
+          },
+          "early_review_requested": {
+            "type": "boolean",
+            "title": "Early Review Requested",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PhaseReviewUpdateRequest"
+      },
       "PlanningContext": {
         "properties": {
           "schema_version": {
             "type": "integer",
-            "const": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Schema Version",
             "default": 1
           },
@@ -1205,6 +2049,32 @@
               }
             ],
             "title": "Next Action Client Node Id"
+          },
+          "practice_loops": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeLoopDefinition"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Practice Loops"
+          },
+          "outcome_checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/OutcomeCheckpoint"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Outcome Checkpoints"
+          },
+          "phase_gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PhaseGate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1216,6 +2086,188 @@
           "current_phase"
         ],
         "title": "PlanningContext"
+      },
+      "PracticeLoopAdjustmentRequest": {
+        "properties": {
+          "loop_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Loop Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "target_per_week": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 7.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Per Week"
+          },
+          "done_criteria": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done Criteria"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "loop_id"
+        ],
+        "title": "PracticeLoopAdjustmentRequest"
+      },
+      "PracticeLoopDefinition": {
+        "properties": {
+          "loop_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Loop Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "target_per_week": {
+            "type": "integer",
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Target Per Week"
+          },
+          "duration_weeks": {
+            "type": "integer",
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Duration Weeks"
+          },
+          "done_criteria": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Done Criteria"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "loop_id",
+          "title",
+          "target_per_week",
+          "duration_weeks",
+          "done_criteria"
+        ],
+        "title": "PracticeLoopDefinition"
+      },
+      "PracticeLoopProgressResponse": {
+        "properties": {
+          "loop_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Loop Id"
+          },
+          "loop_key": {
+            "type": "string",
+            "title": "Loop Key"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "done_criteria": {
+            "type": "string",
+            "title": "Done Criteria"
+          },
+          "target_per_week": {
+            "type": "integer",
+            "title": "Target Per Week"
+          },
+          "current_week_completed": {
+            "type": "integer",
+            "title": "Current Week Completed"
+          },
+          "total_completed": {
+            "type": "integer",
+            "title": "Total Completed"
+          },
+          "required_completions": {
+            "type": "integer",
+            "title": "Required Completions"
+          },
+          "estimated_end": {
+            "type": "string",
+            "format": "date",
+            "title": "Estimated End"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "completed",
+              "superseded"
+            ],
+            "title": "Status"
+          },
+          "can_schedule_today": {
+            "type": "boolean",
+            "title": "Can Schedule Today"
+          },
+          "active_occurrence_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Occurrence Task Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loop_id",
+          "loop_key",
+          "title",
+          "done_criteria",
+          "target_per_week",
+          "current_week_completed",
+          "total_completed",
+          "required_completions",
+          "estimated_end",
+          "status",
+          "can_schedule_today",
+          "active_occurrence_task_id"
+        ],
+        "title": "PracticeLoopProgressResponse"
       },
       "RegisterRequest": {
         "properties": {
@@ -1728,6 +2780,18 @@
               }
             ],
             "title": "Phase Order"
+          },
+          "practice_loop_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practice Loop Id"
           }
         },
         "type": "object",
@@ -1996,6 +3060,16 @@
               }
             ],
             "title": "Latest Checkpoint Id"
+          },
+          "long_term_execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LongTermExecutionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import var_child_runnable_config
@@ -22,8 +22,24 @@ from app.agents.state import AgentState
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
-def create_graph_config(user_id: str, thread_id: str) -> dict[str, dict[str, str]]:
-    return {"configurable": {"user_id": user_id, "thread_id": thread_id}}
+def create_graph_config(
+    user_id: str,
+    thread_id: str,
+    *,
+    run_type: Literal["initial", "next_phase"] | None = None,
+    request_id: str | None = None,
+) -> dict[str, dict[str, str]]:
+    configurable = {
+        "user_id": user_id,
+        "thread_id": thread_id,
+    }
+    if run_type is not None and request_id is not None:
+        configurable["checkpoint_ns"] = (
+            "initial" if run_type == "initial" else f"next_phase:{request_id}"
+        )
+    elif run_type is not None or request_id is not None:
+        raise ValueError("run_type and request_id must be provided together")
+    return {"configurable": configurable}
 
 
 async def human_review_node(state: AgentState, config: RunnableConfig) -> AgentState:
