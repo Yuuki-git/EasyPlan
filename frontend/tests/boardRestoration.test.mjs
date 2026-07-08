@@ -361,6 +361,32 @@ async function runTests() {
 
   // --- 测试场景 5: Token 缺失时 fetchTasks 触发 AuthModal 弹出并设置 boardError ---
   {
+    const { useAppStore } = loadAppStoreModule(() => {}, {
+      'auth_token': '',
+      'easyplan_view': 'board',
+      'easyplan_selected_project_id': 'proj-cold-start',
+      'easyplan_thread_id': 'proj-cold-start',
+      'easyplan_preview_mode': 'next_phase',
+      'easyplan_phase_request_id': 'req-cold-start',
+      'easyplan_active_run': JSON.stringify({
+        threadId: 'proj-cold-start',
+        runType: 'next_phase',
+        requestId: 'req-cold-start'
+      })
+    });
+
+    const state = useAppStore.getState();
+    assert.equal(state.token, null);
+    assert.equal(state.view, 'input', 'Should show the normal input page before the user asks a question');
+    assert.equal(state.showAuthModal, false, 'Should not pop AuthModal on cold start');
+    assert.equal(state.selectedProjectId, null);
+    assert.equal(state.threadId, null);
+    assert.equal(state.previewMode, null);
+    assert.equal(state.phaseRequestId, null);
+    assert.equal(state.activeRun, null);
+  }
+
+  {
     const { useAppStore } = loadAppStoreModule(() => {});
     useAppStore.setState({ token: null, showAuthModal: false, boardError: null });
 

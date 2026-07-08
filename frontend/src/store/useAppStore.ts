@@ -20,6 +20,39 @@ const clearActiveRunStorage = () => {
   localStorage.removeItem('easyplan_active_run');
 };
 
+const getStoredAuthToken = () => localStorage.getItem('auth_token') || null;
+
+const getInitialView = (): 'input' | 'board' => {
+  if (!getStoredAuthToken()) return 'input';
+  const storedView = localStorage.getItem('easyplan_view');
+  return storedView === 'board' ? 'board' : 'input';
+};
+
+const getInitialValueForAuthenticatedSession = (key: string) => (
+  getStoredAuthToken() ? localStorage.getItem(key) || null : null
+);
+
+const getInitialActiveRun = (): ActiveRun | null => {
+  if (!getStoredAuthToken()) return null;
+  try {
+    const stored = localStorage.getItem('easyplan_active_run');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (
+        parsed &&
+        typeof parsed.threadId === 'string' &&
+        (parsed.runType === 'initial' || parsed.runType === 'next_phase') &&
+        typeof parsed.requestId === 'string'
+      ) {
+        return parsed as ActiveRun;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
@@ -206,7 +239,7 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
 export const useAppStore = create<AppStore>((set, get) => ({
   intent: '',
   appState: 'INITIAL',
-  threadId: localStorage.getItem('easyplan_thread_id') || null,
+  threadId: getInitialValueForAuthenticatedSession('easyplan_thread_id'),
   syncRequestId: null,
   reasoningLogs: [],
   committedTaskTree: null,
@@ -215,43 +248,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferredProvider: 'microsoft_todo',
   isIntegrated: false,
   error: null,
-  token: localStorage.getItem('auth_token'),
+  token: getStoredAuthToken(),
   showAuthModal: false,
   pendingIntent: null,
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
-  view: (localStorage.getItem('easyplan_view') as 'input' | 'board') || 'input',
+  view: getInitialView(),
   currentViewBucket: 'planned', // Default to planned after transition
-  selectedProjectId: localStorage.getItem('easyplan_selected_project_id') || null,
+  selectedProjectId: getInitialValueForAuthenticatedSession('easyplan_selected_project_id'),
   boardTasks: null,
   boardError: null,
-  previewMode: (localStorage.getItem('easyplan_preview_mode') as PreviewMode) || null,
-  phaseRequestId: localStorage.getItem('easyplan_phase_request_id') || null,
-  basePhaseId: localStorage.getItem('easyplan_base_phase_id') || null,
+  previewMode: getInitialValueForAuthenticatedSession('easyplan_preview_mode') as PreviewMode,
+  phaseRequestId: getInitialValueForAuthenticatedSession('easyplan_phase_request_id'),
+  basePhaseId: getInitialValueForAuthenticatedSession('easyplan_base_phase_id'),
   isPhaseRequestPending: false,
   isRunStalled: false,
   isCancelPending: false,
   projectSnapshots: {},
   highlightedProjectId: null,
   lastDoneEvent: null,
-  activeRun: (() => {
-    try {
-      const stored = localStorage.getItem('easyplan_active_run');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (
-          parsed &&
-          typeof parsed.threadId === 'string' &&
-          (parsed.runType === 'initial' || parsed.runType === 'next_phase') &&
-          typeof parsed.requestId === 'string'
-        ) {
-          return parsed as ActiveRun;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  })(),
+  activeRun: getInitialActiveRun(),
   sseReconnectNonce: 0,
   longTermExecution: null,
   practiceError: null,

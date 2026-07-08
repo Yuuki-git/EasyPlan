@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, PreviewMode } from '../store/useAppStore';
-import { createRunEventTracker, matchesRunIdentity, matchesActiveRun } from '../lib/runEvents';
+import { RUN_STALL_THRESHOLD_MS, createRunEventTracker, matchesRunIdentity, matchesActiveRun } from '../lib/runEvents';
 import { getFriendlyErrorMessage } from '../lib/errorHelper';
 import { reconcileSseCursor } from '../lib/sseCursor';
 import { TaskTree, AgentRunEventMeta } from '../types/api';
@@ -46,7 +46,7 @@ export const useSSE = () => {
     if (appState === 'THINKING') {
       stallTimerRef.current = setTimeout(() => {
         setRunStalled(true);
-      }, 10000);
+      }, RUN_STALL_THRESHOLD_MS);
     }
   };
 

@@ -457,7 +457,7 @@ async function runTests() {
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-confirmed',
       'easyplan_base_phase_id': 'phase_01',
-      'auth_token': '',
+      'auth_token': 'mock-token',
     };
 
     const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);

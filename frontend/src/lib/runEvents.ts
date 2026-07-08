@@ -44,6 +44,8 @@ export function createRunEventTracker() {
   };
 }
 
-export function isRunStalled(lastActivityAt: number | null, now: number, thresholdMs = 10_000) {
+export const RUN_STALL_THRESHOLD_MS = 30_000;
+
+export function isRunStalled(lastActivityAt: number | null, now: number, thresholdMs = RUN_STALL_THRESHOLD_MS) {
   return lastActivityAt !== null && now - lastActivityAt >= thresholdMs;
 }
