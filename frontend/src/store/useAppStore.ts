@@ -10,7 +10,7 @@ import {
   PhaseReviewUpdateRequest,
   PhaseReviewDecisionRequest
 } from '../types/api';
-import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
+import { isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 import { createLatestRequestGate } from './snapshotRequestGate';
 
@@ -23,14 +23,11 @@ const clearActiveRunStorage = () => {
 const getStoredAuthToken = () => localStorage.getItem('auth_token') || null;
 
 const getInitialView = (): 'input' | 'board' => {
-  if (!getStoredAuthToken()) return 'input';
-  const storedView = localStorage.getItem('easyplan_view');
-  return storedView === 'board' ? 'board' : 'input';
+  if (getStoredAuthToken()) return 'board';
+  return 'input';
 };
 
-const getInitialValueForAuthenticatedSession = (key: string) => (
-  getStoredAuthToken() ? localStorage.getItem(key) || null : null
-);
+
 
 const getInitialActiveRun = (): ActiveRun | null => {
   if (!getStoredAuthToken()) return null;
@@ -239,7 +236,7 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
 export const useAppStore = create<AppStore>((set, get) => ({
   intent: '',
   appState: 'INITIAL',
-  threadId: getInitialValueForAuthenticatedSession('easyplan_thread_id'),
+  threadId: null,
   syncRequestId: null,
   reasoningLogs: [],
   committedTaskTree: null,
@@ -254,12 +251,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
   view: getInitialView(),
   currentViewBucket: 'planned', // Default to planned after transition
-  selectedProjectId: getInitialValueForAuthenticatedSession('easyplan_selected_project_id'),
+  selectedProjectId: null,
   boardTasks: null,
   boardError: null,
-  previewMode: getInitialValueForAuthenticatedSession('easyplan_preview_mode') as PreviewMode,
-  phaseRequestId: getInitialValueForAuthenticatedSession('easyplan_phase_request_id'),
-  basePhaseId: getInitialValueForAuthenticatedSession('easyplan_base_phase_id'),
+  previewMode: null,
+  phaseRequestId: null,
+  basePhaseId: null,
   isPhaseRequestPending: false,
   isRunStalled: false,
   isCancelPending: false,
@@ -502,12 +499,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (isUnauthorizedResponse(response)) {
           if (!isCurrent()) return;
           get().setToken(null, false);
-          set({
-            showAuthModal: true,
-            error: '登录已失效，请重新登录',
-            appState: 'ERROR',
-            lastDoneEvent: event
-          });
+          get().reset();
           return;
         }
         if (!response.ok) {
@@ -548,12 +540,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           if (isUnauthorizedResponse(retryResponse)) {
             if (!isCurrent()) return;
             get().setToken(null, false);
-            set({
-              showAuthModal: true,
-              error: '登录已失效，请重新登录',
-              appState: 'ERROR',
-              lastDoneEvent: event
-            });
+            get().reset();
             return;
           }
           if (!retryResponse.ok && retryResponse.status !== 409) {
@@ -673,7 +660,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (isUnauthorizedResponse(response)) {
         if (!isCurrent()) return;
         get().setToken(null, false);
-        set({ showAuthModal: true });
+        get().reset();
         throw new Error('请先登录以查看项目看板');
       }
 
@@ -728,8 +715,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -877,7 +864,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -926,7 +913,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -960,7 +947,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -995,8 +982,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1046,8 +1033,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         taskStatusOverrides.delete(taskId);
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         throw new Error('Authentication required');
       }
 
@@ -1099,8 +1086,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1155,8 +1142,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1203,8 +1190,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         set({ boardTasks: originalTasks });
         return;
       }
@@ -1239,8 +1226,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1300,8 +1287,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1387,18 +1374,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({
-          showAuthModal: true,
-          isPhaseRequestPending: false,
-          previewMode: null,
-          appState: 'INITIAL',
-          activeRun: null,
-        });
-        localStorage.removeItem('easyplan_preview_mode');
-        localStorage.removeItem('easyplan_phase_request_id');
-        localStorage.removeItem('easyplan_base_phase_id');
-        clearActiveRunStorage();
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1458,8 +1435,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        localStorage.removeItem('auth_token');
-        set(buildAuthRecoveryState(intentText));
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1799,8 +1776,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, appState: 'PENDING', error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1877,8 +1854,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, appState: 'PENDING', error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 

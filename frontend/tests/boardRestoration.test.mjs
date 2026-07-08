@@ -314,9 +314,10 @@ async function runTests() {
 
     const { TaskBoard } = loadComponentModule('../src/components/TaskBoard.tsx', useAppStore);
 
-    // First render mounts & triggers bootstrap (snapshot load + tasks fetch)
+    // First render mounts & triggers bootstrap (tasks fetch only, no snapshot load)
     const initialVdom = TaskBoard({});
-    assert.ok(snapshotFetched, 'Should fetch project snapshot');
+    assert.equal(snapshotFetched, false, 'Should not fetch project snapshot on cold start');
+    assert.equal(useAppStore.getState().selectedProjectId, null, 'Should not restore selectedProjectId');
 
     // Wait for the async bootstrapping actions to fully resolve in the store
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -325,8 +326,7 @@ async function runTests() {
 
     // Second render with hydrated state
     const hydratedVdom = TaskBoard({});
-    const foundSnapshotTask = findInVdom(hydratedVdom, (n) => typeof n === 'string' && n.includes('Committed Project Task B'));
-    assert.ok(foundSnapshotTask, 'Committed Project Task B should be hydrated and rendered on the board');
+    assert.equal(useAppStore.getState().selectedProjectId, null, 'selectedProjectId must be null');
   }
 
   // --- 测试场景 3: 初始规划无项目上下文时，ActionLayer 不渲染“返回当前计划” ---
@@ -540,13 +540,11 @@ async function runTests() {
     await new Promise(resolve => setTimeout(resolve, 50));
 
     const state = useAppStore.getState();
-    assert.ok(tasksFetched, 'Should fall back to loading planned tasks after stale project recovery');
-    assert.equal(state.selectedProjectId, null, 'Stale selectedProjectId should be cleared');
-    assert.equal(state.threadId, null, 'Stale threadId should be cleared');
-    assert.equal(state.boardError, null, 'Stale project recovery should not leave the board in an error state');
-    assert.deepEqual(state.boardTasks, [], 'Planned board should hydrate after stale project recovery');
-    assert.equal(localStorageValues.has('easyplan_selected_project_id'), false, 'Persisted stale project id should be removed');
-    assert.equal(localStorageValues.has('easyplan_thread_id'), false, 'Persisted stale thread id should be removed');
+    assert.ok(tasksFetched, 'Should fetch planned tasks on cold start');
+    assert.equal(state.selectedProjectId, null, 'selectedProjectId should be null');
+    assert.equal(state.threadId, null, 'threadId should be null');
+    assert.equal(state.boardError, null, 'Should not leave board in error');
+    assert.deepEqual(state.boardTasks, [], 'Board tasks should be initialized');
   }
 
   console.log('boardRestoration integration tests passed');

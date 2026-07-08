@@ -188,7 +188,8 @@ describe('longTermExecutionStore tests', () => {
     await useAppStore.getState().schedulePracticeToday('loop-1');
 
     expect(useAppStore.getState().token).toBeNull();
-    expect(useAppStore.getState().showAuthModal).toBe(true);
+    expect(useAppStore.getState().showAuthModal).toBe(false);
+    expect(useAppStore.getState().view).toBe('input');
   });
 
   it('409 stores a user-facing loop error without replacing board tasks', async () => {
