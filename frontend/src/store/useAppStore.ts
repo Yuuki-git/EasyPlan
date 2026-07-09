@@ -38,7 +38,7 @@ const getInitialActiveRun = (): ActiveRun | null => {
       if (
         parsed &&
         typeof parsed.threadId === 'string' &&
-        (parsed.runType === 'initial' || parsed.runType === 'next_phase') &&
+        (parsed.runType === 'initial' || parsed.runType === 'next_phase' || parsed.runType === 'refine') &&
         typeof parsed.requestId === 'string'
       ) {
         return parsed as ActiveRun;
@@ -136,8 +136,12 @@ interface AppStore {
   longTermExecution: LongTermExecutionSnapshot | null;
   practiceError: string | null;
   isPracticeRequestPending: boolean;
+  currentStage: string | null;
+  recentEvents: string[];
+  isProcessPanelExpanded: boolean;
+  lastRunErrorSummary: string | null;
 
-  // Actions
+  // Setters
   setActiveRun: (run: ActiveRun | null) => void;
   clearActiveRun: () => void;
   setIntent: (intent: string) => void;
@@ -163,6 +167,10 @@ interface AppStore {
   reset: () => void;
   reconnectActiveRun: () => void;
   dismissInitialSync: () => void;
+  setCurrentStage: (stage: string | null) => void;
+  addRecentEvent: (event: string) => void;
+  setProcessPanelExpanded: (expanded: boolean) => void;
+  setLastRunErrorSummary: (summary: string | null) => void;
 
   // Actions
   alignState: (threadId: string) => Promise<void>;
@@ -194,8 +202,8 @@ type AppStoreGet = () => AppStore;
 
 const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleThreadId: string) => {
   const state = get();
-  const shouldClearSelectedProject = state.selectedProjectId === staleThreadId;
-  const shouldClearThread = state.threadId === staleThreadId;
+  const shouldClearSelectedProject = state.selectedProjectId === staleThreadId || localStorage.getItem('easyplan_selected_project_id') === staleThreadId;
+  const shouldClearThread = state.threadId === staleThreadId || localStorage.getItem('easyplan_thread_id') === staleThreadId;
 
   snapshotGate.invalidate();
 
@@ -219,6 +227,10 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     longTermExecution: null,
     practiceError: null,
     isPracticeRequestPending: false,
+    currentStage: null,
+    recentEvents: [],
+    isProcessPanelExpanded: true,
+    lastRunErrorSummary: null,
   });
 
   if (shouldClearSelectedProject) {
@@ -268,6 +280,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   longTermExecution: null,
   practiceError: null,
   isPracticeRequestPending: false,
+  currentStage: null,
+  recentEvents: [],
+  isProcessPanelExpanded: true,
+  lastRunErrorSummary: null,
 
   setActiveRun: (run) => {
     set({ activeRun: run });
@@ -396,6 +412,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setError: (error) => set({ error, appState: error ? 'ERROR' : 'INITIAL' }),
 
+  setCurrentStage: (currentStage) => set({ currentStage }),
+  addRecentEvent: (event) => set((state) => ({
+    recentEvents: [...state.recentEvents, event]
+  })),
+  setProcessPanelExpanded: (isProcessPanelExpanded) => set({ isProcessPanelExpanded }),
+  setLastRunErrorSummary: (lastRunErrorSummary) => set({ lastRunErrorSummary }),
+
   reset: () => {
     taskStatusOverrides.clear();
     snapshotGate.invalidate();
@@ -423,6 +446,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPhaseRequestPending: false,
       activeRun: null,
       sseReconnectNonce: 0,
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: null,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -453,6 +480,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       appState: 'INITIAL',
       error: null,
       isRunStalled: false,
+      currentStage: null,
+      recentEvents: [],
+      reasoningLogs: [],
+      lastRunErrorSummary: null,
     });
 
     localStorage.setItem('easyplan_view', 'board');
@@ -752,6 +783,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_preview_mode');
@@ -818,6 +853,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         error: null,
         isRunStalled: false,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_preview_mode');
@@ -838,6 +877,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         committedTaskTree: null,
         previewTaskTree: null,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'input');
       localStorage.removeItem('easyplan_thread_id');
@@ -1267,6 +1310,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       nodeStatuses: {},
       isRunStalled: false,
       activeRun: null,
+      currentStage: null,
+      recentEvents: [],
+      lastRunErrorSummary: null,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -1340,6 +1386,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       runType: 'next_phase',
       requestId: requestId,
     });
+    const prevError = get().error;
     set({
       isPhaseRequestPending: true,
       isRunStalled: false,
@@ -1350,7 +1397,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       basePhaseId: basePhaseId,
       previewMode: 'next_phase',
       appState: 'THINKING',
-      previewTaskTree: null
+      previewTaskTree: null,
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: prevError,
     });
     localStorage.setItem('easyplan_view', 'board');
     localStorage.setItem('easyplan_thread_id', selectedProjectId);
@@ -1409,6 +1460,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     try {
+      const prevError = get().error;
       set({
         appState: 'THINKING',
         error: null,
@@ -1416,7 +1468,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         reasoningLogs: [],
         committedTaskTree: null,
         previewTaskTree: null,
-        nodeStatuses: {}
+        nodeStatuses: {},
+        currentStage: null,
+        recentEvents: [],
+        isProcessPanelExpanded: true,
+        lastRunErrorSummary: prevError,
       });
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -1557,7 +1613,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         snapshot.status === 'running'
         && !!currentActiveRun
         && currentActiveRun.threadId === snapshot.thread_id
-        && currentActiveRun.runType === 'initial'
+        && (currentActiveRun.runType === 'initial' || currentActiveRun.runType === 'refine')
         && currentActiveRun.requestId.length > 0;
 
       let savedPreviewMode: PreviewMode = null;
@@ -1605,7 +1661,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           requestId: localPhaseRequestId || '',
         };
       } else if (preserveInitialRunning) {
-        savedPreviewMode = 'initial';
+        savedPreviewMode = currentActiveRun.runType === 'initial' ? 'initial' : get().previewMode;
         recoveredActiveRun = currentActiveRun;
       } else {
         localStorage.removeItem('easyplan_preview_mode');
@@ -1809,7 +1865,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   collapsePlanningPanel: () => {
     set({
       previewMode: null,
-      appState: 'INITIAL'
+      appState: 'INITIAL',
+      currentStage: null,
+      recentEvents: [],
+      reasoningLogs: [],
+      lastRunErrorSummary: null,
     });
     localStorage.removeItem('easyplan_preview_mode');
   },
@@ -1818,6 +1878,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { threadId, token } = get();
     if (!threadId) return;
 
+    const prevError = get().error;
     set({
       appState: 'THINKING',
       error: null,
@@ -1825,7 +1886,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       reasoningLogs: [],
       committedTaskTree: null,
       previewTaskTree: null,
-      nodeStatuses: {}
+      nodeStatuses: {},
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: prevError,
     });
 
     try {
@@ -1838,7 +1903,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const requestId = generateUUID();
       get().setActiveRun({
         threadId,
-        runType: 'initial',
+        runType: 'refine',
         requestId,
       });
       set({ syncRequestId: requestId });

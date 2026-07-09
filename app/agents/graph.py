@@ -35,7 +35,7 @@ def create_graph_config(
     }
     if run_type is not None and request_id is not None:
         configurable["checkpoint_ns"] = (
-            "initial" if run_type == "initial" else f"next_phase:{request_id}"
+            "initial" if run_type in {"initial", "refine"} else f"next_phase:{request_id}"
         )
     elif run_type is not None or request_id is not None:
         raise ValueError("run_type and request_id must be provided together")

@@ -112,12 +112,21 @@ EventRunKey = thread_id + run_type + request_id
 运行时规则：
 
 - SSE buffer 和终态按 run 隔离。
-- 每个事件携带 `thread_id`、`run_type`、`request_id` 和 `state_version`。
-- 历史 run 的 `done` 不能截断或完成当前 run。
+- 每个事件使用统一 envelope，携带 `event_id`、`thread_id`、`run_type`、
+  `request_id`、`event_type`、`seq`、`created_at` 和 `payload`。
+- `event_id` 派生自 `thread_id:run_type:request_id:seq`，`seq` 在单个 run
+  内单调递增，不同 request 不共享计数器。
+- 历史 run 的 `done` 或 `plan_ready` 不能截断、完成或污染当前 run。
 - `Last-Event-ID` 只在同一 run 内用于增量重放。
 - 无法继续增量重放时发送 `snapshot_required`。
+- 长耗时 run 每 5-8 秒发送 `still_running` heartbeat；`done`、`agent_error`
+  或用户取消后停止。
+- `sync_status` / `sync_complete` 是 stage-only 事件，payload 不包含成功/失败
+  `status`；终态仍由 `done` 或 `agent_error` 表达。
 
-业务错误使用 `agent_error`，不使用浏览器保留的 `error` 事件名。
+业务错误使用 `agent_error`，不使用浏览器保留的 `error` 事件名。阶段事件
+是产品级状态反馈，不得携带 chain-of-thought、原始 prompt、provider payload、
+secret 或 traceback。
 
 ## 8. 下一阶段状态机
 
@@ -167,8 +176,9 @@ GET /api/threads/{thread_id}/phases/next/commit?request_id=...
 `state_version` 和 `last_event_id`。
 
 当前 snapshot 中 `state_version=0`、`last_event_id=null` 仍是兼容占位值；
-SSE 事件使用进程内递增版本。持久化 snapshot 版本尚未落地，因此前端必须使用
-请求 gate 和 active run identity 拒绝过期异步响应。服务端 lease、request
+SSE 事件使用 run-scoped `seq` 和 envelope `event_id`。持久化 snapshot 版本
+尚未落地，因此前端必须使用请求 gate 和 active run identity 拒绝过期异步响应。
+服务端 lease、request
 idempotency 与前端 stale-response gate 共同防止：
 
 - 重复生成

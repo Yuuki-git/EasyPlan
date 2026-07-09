@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.2.7"
+    "version": "1.2.7.2"
   },
   "paths": {
     "/health": {
@@ -368,7 +368,7 @@
           "threads"
         ],
         "summary": "Stream Thread Events",
-        "description": "Server-Sent Events stream. Events include reasoning, checkpoint, plan_ready, done, snapshot_required, and agent_error. Every event payload contains thread_id, run_type, request_id, and state_version. Every stream requires the matching request_id. The agent_error event payload also contains code and message.",
+        "description": "Server-Sent Events stream. Events include run_started, intent_profile_started, intent_profile_completed, strategy_selected, planning_started, validation_started, repair_started, persistence_started, still_running, plan_ready, sync_status, sync_complete, done, snapshot_required, and agent_error. Every event data payload is a run-scoped envelope with event_id, thread_id, request_id, run_type, event_type, seq, created_at, and payload. Every stream requires the matching request_id. The agent_error event payload contains code and a user-safe message.",
         "operationId": "stream_thread_events_api_threads__thread_id__events_get",
         "parameters": [
           {
@@ -415,7 +415,8 @@
             "schema": {
               "enum": [
                 "initial",
-                "next_phase"
+                "next_phase",
+                "refine"
               ],
               "type": "string",
               "default": "initial",

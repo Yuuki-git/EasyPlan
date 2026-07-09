@@ -168,6 +168,51 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
     *   case 40 连续三次 DeepSeek 验证全部通过。
     *   DeepSeek Validator-aware 42-case 实测 `42/42`；Pass Rate、Intent、Strategy、JSON、Horizon、Action Quality、Done Criteria Coverage 与 Long-Term Loop Contract 均为 `100%`。
 
+#### ✅ v1.2.7.2: SSE Reliability & Generation UX (Backend Implemented)
+**版本目标**：把 AI 生成过程从“黑盒等待 + 一次性刷日志”升级为“实时、稳定、低噪音、可恢复的过程反馈”。
+
+**执行计划**：详见 `docs/superpowers/plans/2026-07-08-v1.2.7.2-sse-reliability-generation-ux.md`。
+
+**非目标**：
+*   不新增规划能力。
+*   不修改 intent 策略。
+*   不展示真实 chain-of-thought，只展示用户可理解的过程状态。
+
+**后端任务**：
+*   **统一 SSE event envelope**：所有事件统一携带 `event_id`、`thread_id`、`request_id`、`run_type`、`event_type`、`seq`、`created_at` 与 `payload`；`plan_ready`、`done`、`agent_error` 也必须带完整 envelope。
+*   **阶段级实时 emit**：不能等 Planner 全部完成后再一次性推送 reasoning；关键阶段开始时立即推送 `run_started`、`intent_profile_started`、`intent_profile_completed`、`strategy_selected`、`planning_started`、`validation_started`、`repair_started`、`persistence_started`、`plan_ready`、`done`、`agent_error`。
+*   **长耗时 heartbeat**：LLM 调用或保存过程超过 5-8 秒时发送 `still_running`；heartbeat 必须携带同一个 `request_id`，并在 run cancelled / done / error 后停止。
+*   **run-scoped replay / reconnect**：`Last-Event-ID` 按 `thread_id + run_type + request_id` 恢复；历史 `done` 不得截断当前 run；事件缓存必须有 run 边界；`snapshot_required` 只在事件缺口时触发。
+*   **后端测试**：覆盖阶段事件在 Planner 完成前发出、长耗时 heartbeat、终态事件携带 run 身份、旧 run 不截断新 run、同一 thread 多次 run 不串流。
+
+**后端落地状态**：
+*   FastAPI / AgentRuntime 已统一输出 run-scoped SSE envelope。
+*   `initial`、`refine`、`next_phase` 均支持真实 run identity。
+*   Stage events 与 `still_running` heartbeat 已接入，取消或 terminal 后停止。
+*   Replay / reconnect 继续按 `thread_id + run_type + request_id` 隔离。
+
+**前端任务**：
+*   **ReasoningStream 改造为生成过程面板**：展示“当前状态 + 最近 3-5 条动态 + 折叠详细日志”，不再作为无限日志流占据主界面。
+*   **展开 / 折叠规则**：生成中默认展开；`done` 后自动折叠并保留“已完成规划”摘要；`error` / `stalled` 保持展开；30 秒前不显示网络超时提示。
+*   **retry / new run 清理**：重试时清空上一轮可见过程日志，不把旧 reasoning 堆到新 run；可保留一条“上次失败原因”；新 intent 清空旧 run 的过程信息与 `nodeStatuses`。
+*   **activeRun 严格过滤**：前端只处理 `thread_id`、`request_id`、`run_type` 与当前 `activeRun` 完全匹配的事件；旧 EventSource cleanup 后，旧 handler 不得继续写 store。
+*   **前端测试**：覆盖生成开始后立即展示过程、`done` 后自动折叠、`error` / `stalled` 保持展开、30 秒前不显示网络超时、retry 不混入旧日志、不匹配事件被丢弃、next phase 不受旧 initial run 干扰。
+
+**前后端联调验收**：
+1. 用户点击生成后，1 秒内看到“正在理解目标”等过程反馈。
+2. LLM 较慢时，每 5-8 秒有 `still_running` 反馈。
+3. 30 秒前不出现网络超时提示。
+4. 生成完成后，过程面板自动折叠。
+5. 重试不会堆叠上一轮日志。
+6. 刷新 / 重连后不会回放旧 run 干扰当前 run。
+7. 下一阶段生成不会被历史 initial `done` / `plan_ready` 影响。
+8. `agent_error` 能正确显示错误，并保留恢复入口。
+
+**优先级**：
+*   **P0**：SSE envelope、真实 `request_id` / `run_type` / `seq`、阶段级实时 emit、activeRun 严格过滤、旧 run 不串流、`done` 后折叠与 `error` 保持展开。
+*   **P1**：heartbeat、retry 日志清理、run-scoped replay、重连去重、前端过程面板降噪。
+*   **P2**：更细阶段文案、详细日志折叠区、run lifecycle 可观测性指标。
+
 #### 📍 v1.2.7-B/C: 短期交付与探索规划模型
 *   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。
 *   `exploration_decision` 继续演进独立的判断与验证路线。

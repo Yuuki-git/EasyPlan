@@ -43,6 +43,25 @@ const TestComponent = () => {
 };
 
 describe('useSSE hook lifecycle tests', () => {
+  const makeEnvelope = (
+    eventType: string,
+    threadId: string,
+    runType: string,
+    requestId: string,
+    payload?: unknown,
+    seq: number = 1
+  ) => {
+    return {
+      event_id: `${threadId}:${runType}:${requestId}:${seq}`,
+      thread_id: threadId,
+      request_id: requestId,
+      run_type: runType,
+      event_type: eventType,
+      seq,
+      created_at: new Date().toISOString(),
+      payload,
+    };
+  };
   beforeEach(() => {
     MockEventSource.instances = [];
     vi.stubGlobal('__test__', true);
@@ -214,12 +233,9 @@ describe('useSSE hook lifecycle tests', () => {
 
     // Attempt to dispatch historical initial 'done' event; should be rejected by finishAgentRun & useSSE callback
     await act(async () => {
-      esInstance.dispatchEvent('done', {
-        thread_id: 'proj-1',
-        run_type: 'initial',
-        request_id: 'req-historical-initial',
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-1', 'initial', 'req-historical-initial', {
         state_version: 1
-      });
+      }));
     });
 
     // Verify nothing changed
@@ -229,12 +245,9 @@ describe('useSSE hook lifecycle tests', () => {
     // Dispatch matching next_phase done event
     await act(async () => {
       isDoneDispatched = true;
-      esInstance.dispatchEvent('done', {
-        thread_id: 'proj-1',
-        run_type: 'next_phase',
-        request_id: 'req-next-phase',
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-1', 'next_phase', 'req-next-phase', {
         state_version: 2
-      });
+      }));
     });
 
     // Verify terminal cleanups occurred
@@ -377,12 +390,9 @@ describe('useSSE hook lifecycle tests', () => {
 
     // Dispatch done for A
     await act(async () => {
-      esInstance.dispatchEvent('done', {
-        thread_id: 'proj-initial',
-        run_type: 'initial',
-        request_id: 'req-initial-a',
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-initial', 'initial', 'req-initial-a', {
         state_version: 1
-      });
+      }));
     });
 
     // Valid initial completion path runs: activeRun cleared, view is board, selectedProjectId is null
@@ -542,12 +552,9 @@ describe('useSSE hook lifecycle tests', () => {
 
     // Dispatch late event
     await act(async () => {
-      esInstance.dispatchEvent('done', {
-        thread_id: 'proj-exit',
-        run_type: 'initial',
-        request_id: 'req-exit-a',
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-exit', 'initial', 'req-exit-a', {
         state_version: 100
-      });
+      }));
     });
 
     // Assert state did not change
@@ -712,12 +719,9 @@ describe('useSSE hook lifecycle tests', () => {
 
     // Dispatch matching done event
     await act(async () => {
-      esInstance.dispatchEvent('done', {
-        thread_id: 'proj-sync',
-        run_type: 'initial',
-        request_id: 'req-sync-a',
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-sync', 'initial', 'req-sync-a', {
         state_version: 1
-      });
+      }));
     });
 
     // Assert finishAgentRun was called, fetched tasks, cleared activeRun, and highlighted project
@@ -726,6 +730,192 @@ describe('useSSE hook lifecycle tests', () => {
     const finalState = useAppStore.getState();
     expect(finalState.activeRun).toBeNull();
     expect(finalState.highlightedProjectId).toBe('proj-sync');
+
+    unmount();
+  });
+
+  test('refine run contract and new envelope validations', async () => {
+
+    // Setup Mock Fetch for confirm (refine) and alignState
+    let fetchCalled = false;
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      fetchCalled = true;
+      if (url.includes('/api/threads/proj-refine/confirm')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({})
+        };
+      }
+      if (url.includes('/api/threads/proj-refine')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            thread_id: 'proj-refine',
+            status: 'running',
+            intent_text: 'refine intent',
+            task_tree: { root: { title: 'old root' } }
+          })
+        };
+      }
+      if (url.includes('/tasks')) {
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    // Preset store state
+    act(() => {
+      useAppStore.getState().reset();
+      useAppStore.getState().setToken('mock-token');
+      // Use setState directly to avoid triggering async alignState via setSelectedProjectId
+      useAppStore.setState({
+        selectedProjectId: 'proj-refine',
+        threadId: 'proj-refine',
+        currentStage: 'old stage',
+        recentEvents: ['old event'],
+        reasoningLogs: ['old log'],
+        error: 'old error',
+        lastRunErrorSummary: 'old error',
+        isProcessPanelExpanded: true,
+      });
+    });
+
+    // Mount hook
+    const { unmount } = render(<TestComponent />);
+
+    // Trigger refine
+    await act(async () => {
+      await useAppStore.getState().refinePlan('refine feedback');
+    });
+
+    expect(fetchCalled).toBe(true);
+
+    // Verify ActiveRun has runType 'refine'
+    const activeRun = useAppStore.getState().activeRun;
+    expect(activeRun).not.toBeNull();
+    expect(activeRun?.runType).toBe('refine');
+    const capturedReqId = activeRun?.requestId || '';
+
+    // Verify EventSource is established
+    expect(MockEventSource.instances).toHaveLength(1);
+    const esInstance = MockEventSource.instances[0];
+
+    // Verify process panel has cleared old run process info on refine start
+    expect(useAppStore.getState().currentStage).toBeNull();
+    expect(useAppStore.getState().recentEvents).toEqual([]);
+    expect(useAppStore.getState().reasoningLogs).toEqual([]);
+    expect(useAppStore.getState().lastRunErrorSummary).toBe('old error'); // starts clean but retains last error
+
+    // --- Scenario 2: run_type mismatch gets discarded ---
+    act(() => {
+      esInstance.dispatchEvent('plan_ready', makeEnvelope('plan_ready', 'proj-refine', 'initial', capturedReqId, {
+        task_tree: { root: { title: 'mismatch tree' } }
+      }));
+    });
+
+    // Should ignore plan_ready since run_type is 'initial' but active is 'refine'
+    expect(useAppStore.getState().previewTaskTree).toBeNull();
+
+    // --- Scenario 1: refine run_type=refine plan_ready is received ---
+    act(() => {
+      esInstance.dispatchEvent('plan_ready', makeEnvelope('plan_ready', 'proj-refine', 'refine', capturedReqId, {
+        task_tree: { root: { title: 'refine tree' } }
+      }));
+    });
+
+    // Should receive plan_ready, and auto collapse process panel
+    expect(useAppStore.getState().previewTaskTree).not.toBeNull();
+    expect(useAppStore.getState().previewTaskTree?.root?.title).toBe('refine tree');
+    expect(useAppStore.getState().isProcessPanelExpanded).toBe(false);
+
+    // --- Scenario 4: sync_status missing node_id/status doesn't pollute nodeStatuses ---
+    act(() => {
+      esInstance.dispatchEvent('sync_status', makeEnvelope('sync_status', 'proj-refine', 'refine', capturedReqId, {
+        stage: 'syncing stage',
+        label: 'syncing label'
+      }));
+    });
+
+    expect(useAppStore.getState().nodeStatuses).toEqual({});
+    expect(useAppStore.getState().currentStage).toBe('syncing label');
+
+    // --- Scenario 3: sync_complete new payload doesn't mistakenly set PARTIAL_ERROR ---
+    act(() => {
+      esInstance.dispatchEvent('sync_complete', makeEnvelope('sync_complete', 'proj-refine', 'refine', capturedReqId, {
+        stage: 'completed stage',
+        label: 'completed label'
+      }));
+    });
+
+    expect(useAppStore.getState().appState).toBe('SUCCESS'); // not PARTIAL_ERROR
+
+    // --- Scenario 5: done automatically collapses process panel ---
+    // First, expand it manually to test if it collapses on done
+    act(() => {
+      useAppStore.getState().setProcessPanelExpanded(true);
+    });
+    expect(useAppStore.getState().isProcessPanelExpanded).toBe(true);
+
+    await act(async () => {
+      esInstance.dispatchEvent('done', makeEnvelope('done', 'proj-refine', 'refine', capturedReqId, {
+        state_version: 1
+      }));
+    });
+
+    expect(useAppStore.getState().isProcessPanelExpanded).toBe(false);
+
+    // --- Scenario 6: returnToCommittedPlan cleans process panel (does not residue) ---
+    // First, populate some progress info
+    act(() => {
+      useAppStore.setState({
+        currentStage: 'done stage',
+        recentEvents: ['event1'],
+        reasoningLogs: ['log1'],
+        lastRunErrorSummary: 'error1',
+      });
+    });
+
+    await act(async () => {
+      await useAppStore.getState().returnToCommittedPlan();
+    });
+
+    expect(useAppStore.getState().currentStage).toBeNull();
+    expect(useAppStore.getState().recentEvents).toEqual([]);
+    expect(useAppStore.getState().reasoningLogs).toEqual([]);
+    expect(useAppStore.getState().lastRunErrorSummary).toBeNull();
+
+    // --- Scenario 7: agent_error clears connection and sets ERROR state ---
+    // Preset store state for another run
+    act(() => {
+      useAppStore.setState({
+        activeRun: {
+          threadId: 'proj-refine',
+          runType: 'refine',
+          requestId: 'req-err-123'
+        },
+        appState: 'THINKING',
+        error: null,
+      });
+    });
+
+    // EventSource instances should have 2 now
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(2);
+    });
+    const esInstanceErr = MockEventSource.instances[1];
+
+    act(() => {
+      esInstanceErr.dispatchEvent('agent_error', makeEnvelope('agent_error', 'proj-refine', 'refine', 'req-err-123', {
+        code: 'GEN_FAILED',
+        message: 'Generation failed'
+      }));
+    });
+
+    expect(useAppStore.getState().appState).toBe('ERROR');
+    expect(useAppStore.getState().error).toBe('这次规划没有顺利完成，请重试一次');
+    expect(esInstanceErr.closed).toBe(true);
 
     unmount();
   });

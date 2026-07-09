@@ -1,6 +1,6 @@
 export interface RunIdentityScope {
   threadId: string | null | undefined;
-  runType: 'initial' | 'next_phase' | null | undefined;
+  runType: 'initial' | 'next_phase' | 'refine' | null | undefined;
   requestId: string | null | undefined;
 }
 

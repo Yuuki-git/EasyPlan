@@ -55,20 +55,28 @@ type ActiveRun = {
 
 ```http
 GET /api/threads/{thread_id}/events
-  ?run_type=initial|next_phase
+  ?run_type=initial|refine|next_phase
   &request_id={request_id}
   &token={access_token}
   &last_event_id={optional_cursor}
 ```
 
-每个业务事件都包含真实 run 身份：
+每个业务事件的 `data` 都是统一 envelope：
 
 ```json
 {
+  "event_id": "thread-id:next_phase:request-id:000001",
   "thread_id": "thread-id",
-  "run_type": "next_phase",
   "request_id": "request-id",
-  "state_version": 12
+  "run_type": "next_phase",
+  "event_type": "planning_started",
+  "seq": 1,
+  "created_at": "2026-07-08T00:00:00Z",
+  "payload": {
+    "stage": "planning_started",
+    "label": "正在生成任务",
+    "state_version": 12
+  }
 }
 ```
 
@@ -76,15 +84,30 @@ GET /api/threads/{thread_id}/events
 
 | 事件 | 用途 |
 | --- | --- |
-| `reasoning` | 简短进度反馈，不展示内部推理 |
-| `checkpoint` | 节点状态更新 |
+| `run_started` | run 已启动 |
+| `intent_profile_started` | 正在判断目标类型 |
+| `intent_profile_completed` | 意图画像完成 |
+| `strategy_selected` | 已选择规划策略 |
+| `planning_started` | Planner 开始生成任务 |
+| `validation_started` | Validator 开始检查 |
+| `repair_started` | 有限重试修复开始 |
+| `persistence_started` | 开始保存计划 |
+| `still_running` | 长耗时 run 心跳 |
 | `plan_ready` | 预览任务树可用，进入 `PENDING` |
+| `sync_status` | 确认后的保存/同步进度 |
+| `sync_complete` | 保存/同步完成 |
 | `done` | 当前 request 已完成 |
 | `agent_error` | 当前 request 失败 |
 | `snapshot_required` | 游标失效，需要重新读取线程快照 |
 
+`sync_status` 和 `sync_complete` 是 stage-only 事件，只读取
+`payload.stage`、`payload.label`、`payload.state_version`。不要从这两个事件读取
+`payload.status`；成功/失败分别以 `done` 和 `agent_error` 为准。
+
 前端只处理同时匹配 `thread_id + run_type + request_id` 的事件。旧
+request 的 `done` 不能结束当前生成；旧 request 的 `plan_ready` 不能覆盖当前预览。
 `EventSource` handler 还必须确认自己仍是当前连接，避免迟到事件修改新页面。
+这些事件是产品状态反馈，不是模型 chain-of-thought。
 
 ## 4. 快照恢复
 
@@ -101,8 +124,8 @@ GET /api/threads/{thread_id}
 - `last_event_id`
 
 当前实现中，snapshot 的 `state_version` 固定为 `0`，`last_event_id` 为 `null`；
-它们是契约保留字段，不能作为前端防乱序的权威版本。SSE 事件自身仍带递增的
-`state_version`。
+它们是契约保留字段，不能作为前端防乱序的权威版本。SSE 事件自身使用
+run-scoped `seq` 和 envelope `event_id`。
 
 前端恢复时应区分：
 

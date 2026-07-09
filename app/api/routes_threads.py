@@ -101,11 +101,15 @@ async def get_next_phase_commit_receipt(
 @router.get(
     "/{thread_id}/events",
     description=(
-        "Server-Sent Events stream. Events include reasoning, checkpoint, "
-        "plan_ready, done, snapshot_required, and agent_error. "
-        "Every event payload contains thread_id, run_type, request_id, and state_version. "
+        "Server-Sent Events stream. Events include run_started, "
+        "intent_profile_started, intent_profile_completed, strategy_selected, "
+        "planning_started, validation_started, repair_started, "
+        "persistence_started, still_running, plan_ready, sync_status, "
+        "sync_complete, done, snapshot_required, and agent_error. "
+        "Every event data payload is a run-scoped envelope with event_id, "
+        "thread_id, request_id, run_type, event_type, seq, created_at, and payload. "
         "Every stream requires the matching request_id. "
-        "The agent_error event payload also contains code and message."
+        "The agent_error event payload contains code and a user-safe message."
     ),
 )
 async def stream_thread_events(
@@ -116,7 +120,7 @@ async def stream_thread_events(
     request_id: Annotated[str, Query(min_length=1, max_length=128)],
     last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     last_event_id_query: Annotated[str | None, Query(alias="last_event_id")] = None,
-    run_type: Annotated[Literal["initial", "next_phase"], Query()] = "initial",
+    run_type: Annotated[Literal["initial", "next_phase", "refine"], Query()] = "initial",
 ) -> StreamingResponse:
     thread = await repository.get_thread_for_user(user_id=current_user.id, thread_id=thread_id)
     if thread is None:
@@ -155,9 +159,13 @@ async def confirm_thread(
         pending_payload.get("type") == "phase_generation_state"
         and str(pending_payload.get("request_id") or "") == payload.request_id
     )
-    run_type: Literal["initial", "next_phase"] = (
-        "next_phase" if is_next_phase_payload else "initial"
-    )
+    run_type: Literal["initial", "next_phase", "refine"]
+    if is_next_phase_payload:
+        run_type = "next_phase"
+    elif payload.action.value == "refine":
+        run_type = "refine"
+    else:
+        run_type = "initial"
     next_phase_task_tree = (
         pending_payload.get("task_tree")
         if pending_payload.get("type") == "next_phase_review"

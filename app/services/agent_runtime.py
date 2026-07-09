@@ -1,10 +1,11 @@
 import asyncio
+import contextlib
 import itertools
 import logging
 import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, AsyncIterator, Callable, Literal
 from uuid import UUID
 
@@ -21,7 +22,26 @@ from app.services.llm_service import create_planner_client
 logger = logging.getLogger(__name__)
 _global_checkpointer = TenantAwareMemorySaver()
 SAFE_PLANNING_ERROR_MESSAGE = "AI 在规划时遇到了一点小麻烦，正在尝试重新组织，请稍候。"
-RunType = Literal["initial", "next_phase"]
+RunType = Literal["initial", "next_phase", "refine"]
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 6.0
+
+STAGE_LABELS: dict[str, str] = {
+    "run_started": "正在理解你的目标",
+    "intent_profile_started": "正在判断目标类型",
+    "intent_profile_completed": "已识别目标类型",
+    "strategy_selected": "正在选择规划策略",
+    "planning_started": "正在生成任务",
+    "validation_started": "正在检查任务是否可执行",
+    "repair_started": "正在根据校验结果修复计划",
+    "persistence_started": "正在保存计划",
+    "still_running": "还在处理中，请稍候",
+    "sync_status": "正在同步计划状态",
+    "sync_complete": "已完成计划保存",
+    "plan_ready": "计划已生成，请查阅",
+    "done": "已完成规划",
+    "agent_error": "生成遇到问题",
+    "snapshot_required": "需要重新对齐计划状态",
+}
 
 
 @dataclass(frozen=True)
@@ -50,15 +70,18 @@ class AgentRuntime:
         graph_factory: Callable[..., Any] | None = None,
         planner_client_factory: Callable[..., Any] | None = None,
         max_events_per_thread: int = 200,
+        heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     ) -> None:
         self._graph_factory = graph_factory or build_task_graph
         self._planner_client_factory = planner_client_factory or create_planner_client
+        self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._events: dict[EventRunKey, deque[str]] = defaultdict(
             lambda: deque(maxlen=max_events_per_thread)
         )
         self._subscribers: dict[EventRunKey, list[_EventSubscriber]] = defaultdict(list)
         self._active_runs: set[EventRunKey] = set()
         self._cancelled_runs: set[EventRunKey] = set()
+        self._run_sequences: dict[EventRunKey, int] = defaultdict(int)
         self._planner_selection: dict[str, tuple[str | None, str | None]] = {}
         self._counter = itertools.count(1)
         self._lock = threading.Lock()
@@ -100,6 +123,13 @@ class AgentRuntime:
         planner_model: str | None,
         user_timezone: str,
     ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type="initial",
+            request_id=request_id,
+        )
+        self._activate_run(run_key)
+        heartbeat_stop, heartbeat_task = self._start_heartbeat(run_key)
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
         config = create_graph_config(
             user_id=user_id,
@@ -118,6 +148,12 @@ class AgentRuntime:
             "user_timezone": user_timezone,
         }
         try:
+            self._append_stage_event(
+                run_key,
+                "run_started",
+                {"planning_mode": "initial"},
+            )
+            self._append_stage_event(run_key, "intent_profile_started")
             interrupted = False
             emitted_terminal = False
             async for chunk in graph.astream(initial_state, config):
@@ -146,6 +182,9 @@ class AgentRuntime:
                 run_type="initial",
                 request_id=request_id,
             )
+        finally:
+            await self._stop_heartbeat(heartbeat_stop, heartbeat_task)
+            self._deactivate_run(run_key)
 
     async def run_next_phase(
         self,
@@ -163,9 +202,15 @@ class AgentRuntime:
             run_type="next_phase",
             request_id=request_id,
         )
-        with self._lock:
-            self._active_runs.add(run_key)
+        self._activate_run(run_key)
+        heartbeat_stop, heartbeat_task = self._start_heartbeat(run_key)
         try:
+            self._append_stage_event(
+                run_key,
+                "run_started",
+                {"planning_mode": "next_phase"},
+            )
+            self._append_stage_event(run_key, "planning_started")
             await self._run_active_next_phase(
                 user_id=user_id,
                 thread_id=thread_id,
@@ -176,9 +221,8 @@ class AgentRuntime:
                 user_timezone=user_timezone,
             )
         finally:
-            with self._lock:
-                self._active_runs.discard(run_key)
-                self._cancelled_runs.discard(run_key)
+            await self._stop_heartbeat(heartbeat_stop, heartbeat_task)
+            self._deactivate_run(run_key)
 
     async def commit_next_phase(
         self,
@@ -189,7 +233,14 @@ class AgentRuntime:
         task_tree: dict[str, Any],
         user_timezone: str = "UTC",
     ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type="next_phase",
+            request_id=request_id,
+        )
         try:
+            self._append_stage_event(run_key, "persistence_started")
+            self._append_stage_event(run_key, "sync_status")
             await persist_internal_tasks_node(
                 {
                     "user_id": user_id,
@@ -228,6 +279,7 @@ class AgentRuntime:
                 request_id=request_id,
             )
             return
+        self._append_stage_event(run_key, "sync_complete")
         self._append_done(
             thread_id,
             status="completed",
@@ -358,6 +410,7 @@ class AgentRuntime:
         with self._lock:
             if run_key in self._active_runs:
                 self._cancelled_runs.add(run_key)
+            self._events.pop(run_key, None)
             subscribers = self._subscribers.pop(run_key, [])
         for subscriber in subscribers:
             try:
@@ -408,6 +461,13 @@ class AgentRuntime:
         run_type: RunType,
         request_id: str,
     ) -> None:
+        run_key = _event_run_key(
+            thread_id=thread_id,
+            run_type=run_type,
+            request_id=request_id,
+        )
+        self._activate_run(run_key)
+        heartbeat_stop, heartbeat_task = self._start_heartbeat(run_key)
         graph = self._build_graph(planner_provider=planner_provider, planner_model=planner_model)
         config = create_graph_config(
             user_id=user_id,
@@ -417,6 +477,22 @@ class AgentRuntime:
         )
         command = resume_with_human_input(**decision)
         try:
+            action = decision.get("action")
+            self._append_stage_event(
+                run_key,
+                "run_started",
+                {
+                    "planning_mode": run_type,
+                    "action": action,
+                },
+            )
+            if action == "refine":
+                self._append_stage_event(run_key, "planning_started")
+            elif action == "edit":
+                self._append_stage_event(run_key, "validation_started")
+            elif action == "approve":
+                self._append_stage_event(run_key, "persistence_started")
+                self._append_stage_event(run_key, "sync_status")
             interrupted = False
             emitted_terminal = False
             async for chunk in graph.astream(command, config):
@@ -445,6 +521,9 @@ class AgentRuntime:
                 run_type=run_type,
                 request_id=request_id,
             )
+        finally:
+            await self._stop_heartbeat(heartbeat_stop, heartbeat_task)
+            self._deactivate_run(run_key)
 
     def _build_graph(self, *, planner_provider: str | None, planner_model: str | None):
         planner = self._planner_client_factory(provider=planner_provider, model=planner_model)
@@ -473,7 +552,7 @@ class AgentRuntime:
             if cancelled:
                 pass
             elif not events and last_event_id:
-                snapshot_event = self._format_run_event(
+                snapshot_event = self._format_transient_event(
                     run_key,
                     "snapshot_required",
                     {"reason": "event_buffer_empty"},
@@ -481,7 +560,7 @@ class AgentRuntime:
             elif last_event_id:
                 replay_start = self._find_event_index(events, last_event_id)
                 if replay_start is None:
-                    snapshot_event = self._format_run_event(
+                    snapshot_event = self._format_transient_event(
                         run_key,
                         "snapshot_required",
                         {"reason": "last_event_id_not_found"},
@@ -568,8 +647,6 @@ class AgentRuntime:
                 thread_id,
                 "plan_ready",
                 {
-                    "state_version": next(self._counter),
-                    "thread_id": thread_id,
                     "task_tree": interrupt_payload.get("task_tree"),
                 },
                 run_type=run_type,
@@ -594,31 +671,8 @@ class AgentRuntime:
                 request_id=request_id,
             )
         for node_name, payload in chunk.items():
-            if isinstance(payload, dict) and payload.get("reasoning_events"):
-                for event in payload["reasoning_events"]:
-                    if not self._append_event(
-                        thread_id,
-                        "reasoning",
-                        {
-                            "state_version": next(self._counter),
-                            **event,
-                        },
-                        run_type=run_type,
-                        request_id=request_id,
-                    ):
-                        return False
-            else:
-                if not self._append_event(
-                    thread_id,
-                    "checkpoint",
-                    {
-                        "state_version": next(self._counter),
-                        "node": node_name,
-                    },
-                    run_type=run_type,
-                    request_id=request_id,
-                ):
-                    return False
+            if not self._append_node_stage(run_key, node_name, payload):
+                return False
         return True
 
     def _append_error(
@@ -634,7 +688,6 @@ class AgentRuntime:
             thread_id,
             "agent_error",
             {
-                "state_version": next(self._counter),
                 "code": code,
                 "message": message,
             },
@@ -654,7 +707,6 @@ class AgentRuntime:
             thread_id,
             "done",
             {
-                "state_version": next(self._counter),
                 "status": status,
             },
             run_type=run_type,
@@ -678,14 +730,14 @@ class AgentRuntime:
         with self._lock:
             if run_key in self._cancelled_runs:
                 return False
-            event_sequence = next(self._counter)
-            event_id = f"evt_{event_sequence:08d}"
+            seq = self._next_run_sequence(run_key)
+            state_version = next(self._counter)
             formatted_event = self._format_run_event(
                 run_key,
                 event,
                 data,
-                event_id=event_id,
-                default_state_version=event_sequence,
+                seq=seq,
+                state_version=state_version,
             )
             self._events[run_key].append(formatted_event)
             subscribers = list(self._subscribers.get(run_key, []))
@@ -703,26 +755,161 @@ class AgentRuntime:
                 )
         return True
 
+    def _append_stage_event(
+        self,
+        run_key: EventRunKey,
+        event: str,
+        data: dict[str, Any] | None = None,
+    ) -> bool:
+        payload = {
+            "stage": event,
+            "label": STAGE_LABELS.get(event, event),
+        }
+        if data:
+            payload.update(data)
+        return self._append_event(
+            run_key.thread_id,
+            event,
+            payload,
+            run_type=run_key.run_type,
+            request_id=run_key.request_id,
+        )
+
+    def _append_node_stage(
+        self,
+        run_key: EventRunKey,
+        node_name: str,
+        payload: Any,
+    ) -> bool:
+        payload_dict = payload if isinstance(payload, dict) else {}
+        if node_name == "intent_profiler":
+            intent_profile = payload_dict.get("intent_profile") or {}
+            intent_type = (
+                intent_profile.get("intent_type")
+                if isinstance(intent_profile, dict)
+                else None
+            )
+            if not self._append_stage_event(
+                run_key,
+                "intent_profile_completed",
+                {"intent_type": intent_type} if intent_type else None,
+            ):
+                return False
+            if not self._append_stage_event(
+                run_key,
+                "strategy_selected",
+                {"strategy": intent_type} if intent_type else None,
+            ):
+                return False
+            return self._append_stage_event(run_key, "planning_started")
+        if node_name == "planner":
+            return self._append_stage_event(run_key, "validation_started")
+        if node_name == "validator":
+            if payload_dict.get("validation_status") == "needs_replan":
+                errors = payload_dict.get("validation_errors")
+                error_codes = _extract_validation_error_codes(errors)
+                data = {"error_codes": error_codes} if error_codes else None
+                return self._append_stage_event(run_key, "repair_started", data)
+            return True
+        if node_name == "persist_tasks":
+            return self._append_stage_event(run_key, "sync_complete")
+        return True
+
     def _format_run_event(
         self,
         run_key: EventRunKey,
         event: str,
         data: dict[str, Any],
         *,
-        event_id: str | None = None,
-        default_state_version: int | None = None,
+        seq: int,
+        state_version: int,
     ) -> str:
+        event_id = _format_run_event_id(run_key, seq)
         payload = dict(data)
-        payload.setdefault(
-            "state_version",
-            default_state_version if default_state_version is not None else next(self._counter),
+        payload.setdefault("state_version", state_version)
+        envelope = {
+            "event_id": event_id,
+            "thread_id": run_key.thread_id,
+            "request_id": run_key.request_id,
+            "run_type": run_key.run_type,
+            "event_type": event,
+            "seq": seq,
+            "created_at": _utc_now_iso(),
+            "payload": payload,
+        }
+        return format_sse_event(
+            event,
+            _json_safe(envelope),
+            event_id=event_id,
         )
-        payload.update(
-            thread_id=run_key.thread_id,
-            run_type=run_key.run_type,
-            request_id=run_key.request_id,
+
+    def _format_transient_event(
+        self,
+        run_key: EventRunKey,
+        event: str,
+        data: dict[str, Any],
+    ) -> str:
+        seq = self._next_run_sequence(run_key)
+        state_version = next(self._counter)
+        return self._format_run_event(
+            run_key,
+            event,
+            {
+                "stage": event,
+                "label": STAGE_LABELS.get(event, event),
+                **data,
+            },
+            seq=seq,
+            state_version=state_version,
         )
-        return format_sse_event(event, payload, event_id=event_id)
+
+    def _next_run_sequence(self, run_key: EventRunKey) -> int:
+        self._run_sequences[run_key] += 1
+        return self._run_sequences[run_key]
+
+    def _activate_run(self, run_key: EventRunKey) -> None:
+        with self._lock:
+            self._active_runs.add(run_key)
+
+    def _deactivate_run(self, run_key: EventRunKey) -> None:
+        with self._lock:
+            self._active_runs.discard(run_key)
+            self._cancelled_runs.discard(run_key)
+
+    def _start_heartbeat(
+        self,
+        run_key: EventRunKey,
+    ) -> tuple[asyncio.Event, asyncio.Task[None]]:
+        stop_event = asyncio.Event()
+
+        async def heartbeat_loop() -> None:
+            try:
+                while True:
+                    try:
+                        await asyncio.wait_for(
+                            stop_event.wait(),
+                            timeout=self._heartbeat_interval_seconds,
+                        )
+                        return
+                    except asyncio.TimeoutError:
+                        if self._is_run_cancelled(run_key):
+                            return
+                        if not self._append_stage_event(run_key, "still_running"):
+                            return
+            except asyncio.CancelledError:
+                return
+
+        return stop_event, asyncio.create_task(heartbeat_loop())
+
+    async def _stop_heartbeat(
+        self,
+        stop_event: asyncio.Event,
+        heartbeat_task: asyncio.Task[None],
+    ) -> None:
+        stop_event.set()
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
 
     async def _persist_interrupt(
         self,
@@ -907,6 +1094,42 @@ def _event_run_key(
         run_type=run_type,
         request_id=request_id,
     )
+
+
+def _format_run_event_id(run_key: EventRunKey, seq: int) -> str:
+    return f"{run_key.thread_id}:{run_key.run_type}:{run_key.request_id}:{seq:06d}"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump(mode="json"))
+    return value
+
+
+def _extract_validation_error_codes(errors: Any) -> list[str]:
+    if not isinstance(errors, list):
+        return []
+    codes: list[str] = []
+    for error in errors:
+        if isinstance(error, str) and "错误代码:" in error:
+            code = error.split("错误代码:", 1)[1].splitlines()[0].strip()
+            if code:
+                codes.append(code)
+        elif isinstance(error, dict) and isinstance(error.get("code"), str):
+            codes.append(error["code"])
+    return codes
 
 
 def _extract_event_id(event: str) -> str | None:

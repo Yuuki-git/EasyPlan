@@ -1,6 +1,6 @@
 # EasyPlan Backend API
 
-版本：`v1.2.6-rc.1`
+版本：`v1.2.7.2`
 OpenAPI：[`docs/openapi.json`](./openapi.json)
 本地地址：`http://localhost:8000`
 
@@ -159,35 +159,68 @@ SSE 业务错误统一使用 `agent_error`，不使用浏览器保留的 `error`
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
 | `request_id` | 是 | 当前 run 的唯一身份 |
-| `run_type` | 否 | `initial` 或 `next_phase`，默认 `initial` |
+| `run_type` | 否 | `initial`、`refine` 或 `next_phase`，默认 `initial` |
 | `last_event_id` | 否 | query cursor fallback |
 | `token` | SSE 登录时 | EventSource query token |
 
-也支持标准 `Last-Event-ID` Header。
+也支持标准 `Last-Event-ID` Header。`last_event_id` 只在同一个
+`thread_id + run_type + request_id` 内生效；如果游标不在当前 run 的 buffer
+中，服务端发送 `snapshot_required` 并关闭流，前端应重新读取 thread snapshot。
 
-每个 run 事件都包含：
+每个 SSE 的 `data` 都是统一 event envelope：
 
 ```json
 {
-  "thread_id": "thr_...",
+  "event_id": "thr_123:next_phase:req_456:000001",
+  "thread_id": "thr_123",
+  "request_id": "req_456",
   "run_type": "next_phase",
-  "request_id": "uuid",
-  "state_version": 42
+  "event_type": "planning_started",
+  "seq": 1,
+  "created_at": "2026-07-08T00:00:00Z",
+  "payload": {
+    "stage": "planning_started",
+    "label": "正在生成任务",
+    "state_version": 42
+  }
 }
 ```
 
+SSE `id:` 与 envelope 内的 `event_id` 一致，格式为
+`thread_id:run_type:request_id:seq`。`seq` 在单个 run 内单调递增，不同
+request 不共享计数器。
+
 事件：
 
-| 事件 | 附加字段 | 说明 |
+| 事件 | payload | 说明 |
 | --- | --- | --- |
-| `reasoning` | `message` | 当前 run 的轻量进度 |
-| `checkpoint` | `node` | LangGraph 节点进度 |
+| `run_started` | `stage`, `label`, `planning_mode` | run 已启动 |
+| `intent_profile_started` | `stage`, `label` | 正在判断目标类型 |
+| `intent_profile_completed` | `stage`, `label`, `intent_type` | 意图画像完成 |
+| `strategy_selected` | `stage`, `label`, `strategy` | 已选择规划策略 |
+| `planning_started` | `stage`, `label` | Planner 开始生成任务 |
+| `validation_started` | `stage`, `label` | Validator 开始检查 |
+| `repair_started` | `stage`, `label`, `error_codes` | 有限重试修复开始 |
+| `persistence_started` | `stage`, `label` | 开始保存计划 |
+| `still_running` | `stage`, `label` | 长耗时 run 心跳 |
 | `plan_ready` | `task_tree` | 计划预览可用 |
+| `sync_status` | `stage`, `label` | 确认后的保存/同步进度 |
+| `sync_complete` | `stage`, `label` | 保存/同步完成 |
 | `done` | `status` | 当前 run 完成 |
 | `agent_error` | `code`, `message` | 脱敏业务错误 |
 | `snapshot_required` | `reason` | cursor 无法回放，需要快照对齐 |
 
-事件缓存、订阅和 terminal 结束均按 `thread_id + run_type + request_id` 隔离。历史 run 的 `done` 不得截断新 run。
+`sync_status` 和 `sync_complete` 采用 stage-only payload：
+`stage`、`label`、`state_version`。客户端不得从这两个事件读取 `status`；
+成功以 `done.payload.status` 为准，失败以 `agent_error.payload.code/message` 为准。
+
+事件缓存、订阅和 terminal 结束均按 `thread_id + run_type + request_id` 隔离。
+历史 run 的 `done` 或 `plan_ready` 不得截断或污染新 run。`still_running` 只表示
+服务端仍在处理，不改变业务状态；run `done`、`agent_error` 或用户取消后 heartbeat
+停止。
+
+这些事件是产品级进度反馈，不是模型 chain-of-thought。服务端不得发送原始 prompt、
+provider payload、secret、traceback 或私密推理全文。
 
 ## 8. Human Review
 

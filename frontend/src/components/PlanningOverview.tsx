@@ -5,7 +5,7 @@ import { selectLongTermExecutionView } from '../store/longTermExecution';
 import { PracticeLoopPanel } from './PracticeLoopPanel';
 import { PhaseReviewPanel } from './PhaseReviewPanel';
 import { PhaseRecords } from './PhaseRecords';
-import { CheckCircle2, Circle, Lock, Unlock, ArrowRight } from 'lucide-react';
+import { CheckCircle2, Circle, Lock, Unlock, ArrowRight, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { RoadmapPhase, TaskNode, ThreadSnapshot } from '../types/api';
 
@@ -34,7 +34,9 @@ export const PlanningOverview: React.FC = () => {
     isPracticeRequestPending,
     schedulePracticeToday,
     savePhaseReview,
-    decidePhaseReview
+    decidePhaseReview,
+    currentStage,
+    error
   } = useAppStore();
 
   if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') {
@@ -156,6 +158,36 @@ export const PlanningOverview: React.FC = () => {
                     </button>
                   </div>
                 </div>
+              ) : appState === 'ERROR' ? (
+                <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5 h-full flex flex-col justify-center items-center text-center min-h-[140px]">
+                  <div className="flex items-center gap-2 text-red-500 font-medium mb-2">
+                    <AlertTriangle size={16} />
+                    <span>规划下一阶段失败</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-4 px-4">
+                    {error || '生成下一阶段计划时遇到错误，请重试。'}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={() => generateNextPhasePlan()}
+                      className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      重试本次生成
+                    </button>
+                    <button
+                      onClick={() => cancelPlanPreview()}
+                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                    >
+                      放弃此计划
+                    </button>
+                    <button
+                      onClick={() => returnToCommittedPlan()}
+                      className="px-3 py-1.5 border border-muted hover:border-foreground/30 text-xs text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                    >
+                      返回当前计划
+                    </button>
+                  </div>
+                </div>
               ) : appState === 'THINKING' ? (
                 <div className="p-4 rounded-lg bg-foreground/5 border border-foreground/10 h-full flex flex-col justify-center items-center text-center min-h-[140px]">
                   <div className="flex items-center gap-2 text-foreground font-medium mb-2">
@@ -165,9 +197,9 @@ export const PlanningOverview: React.FC = () => {
                     </svg>
                     <span>正在规划下一阶段...</span>
                   </div>
-                  {reasoningLogs.length > 0 && (
+                  {(currentStage || reasoningLogs.length > 0) && (
                     <p className="text-xs text-muted-foreground line-clamp-2 mt-1 animate-pulse px-4 max-w-[300px]">
-                      AI: {reasoningLogs[reasoningLogs.length - 1]}
+                      AI: {currentStage || reasoningLogs[reasoningLogs.length - 1]}
                     </p>
                   )}
                   <button
