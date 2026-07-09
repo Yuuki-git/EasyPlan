@@ -313,7 +313,17 @@ class FakeRuntime:
         self.phase_runs: list[dict] = []
         self.phase_commits: list[dict] = []
         self.cancelled: list[dict] = []
-        self.events = ["event: reasoning\ndata: {\"state_version\":1,\"message\":\"running\"}\n\n"]
+        self.events = [
+            (
+                "id: thread-1:initial:11111111-1111-1111-1111-111111111111:000001\n"
+                "event: run_started\n"
+                "data: {\"event_id\":\"thread-1:initial:11111111-1111-1111-1111-111111111111:000001\","
+                "\"thread_id\":\"thread-1\",\"request_id\":\"11111111-1111-1111-1111-111111111111\","
+                "\"run_type\":\"initial\",\"event_type\":\"run_started\",\"seq\":1,"
+                "\"created_at\":\"2026-07-08T00:00:00Z\","
+                "\"payload\":{\"stage\":\"run_started\",\"label\":\"正在理解你的目标\",\"state_version\":1}}\n\n"
+            )
+        ]
 
     async def run_new_thread(self, **kwargs):
         self.started.append(kwargs)
@@ -514,7 +524,7 @@ def test_stream_thread_events_checks_thread_ownership_and_uses_runtime_stream():
     )
 
     assert response.status_code == 200
-    assert "event: reasoning" in response.text
+    assert "event: run_started" in response.text
     assert runtime.streamed[0]["run_type"] == "initial"
     assert runtime.streamed[0]["request_id"] == INITIAL_REQUEST_ID
 
@@ -529,11 +539,14 @@ def test_stream_thread_events_uses_query_last_event_id_when_header_is_missing():
     response = client.get(
         "/api/threads/thread-1/events"
         f"?run_type=initial&request_id={INITIAL_REQUEST_ID}"
-        "&last_event_id=evt_00000002"
+        f"&last_event_id=thread-1:initial:{INITIAL_REQUEST_ID}:000002"
     )
 
     assert response.status_code == 200
-    assert runtime.streamed[0]["last_event_id"] == "evt_00000002"
+    assert (
+        runtime.streamed[0]["last_event_id"]
+        == f"thread-1:initial:{INITIAL_REQUEST_ID}:000002"
+    )
 
 
 def test_stream_thread_events_requires_request_id_for_initial_run():
@@ -604,7 +617,7 @@ def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
     assert runtime.resumed[0]["thread_id"] == "thread-1"
     assert runtime.resumed[0]["decision"]["action"] == "refine"
     assert runtime.resumed[0]["decision"]["feedback"] == "更小一点"
-    assert runtime.resumed[0]["run_type"] == "initial"
+    assert runtime.resumed[0]["run_type"] == "refine"
     assert runtime.resumed[0]["request_id"] == "req_12345678"
 
 

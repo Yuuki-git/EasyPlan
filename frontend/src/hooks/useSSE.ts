@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, PreviewMode } from '../store/useAppStore';
-import { createRunEventTracker, matchesRunIdentity, matchesActiveRun } from '../lib/runEvents';
+import { RUN_STALL_THRESHOLD_MS, createRunEventTracker, matchesRunIdentity, matchesActiveRun } from '../lib/runEvents';
 import { getFriendlyErrorMessage } from '../lib/errorHelper';
 import { reconcileSseCursor } from '../lib/sseCursor';
-import { TaskTree, AgentRunEventMeta } from '../types/api';
+import { AgentRunEventMeta } from '../types/api';
 
 export const useSSE = () => {
   const {
@@ -46,7 +46,7 @@ export const useSSE = () => {
     if (appState === 'THINKING') {
       stallTimerRef.current = setTimeout(() => {
         setRunStalled(true);
-      }, 10000);
+      }, RUN_STALL_THRESHOLD_MS);
     }
   };
 
@@ -154,129 +154,157 @@ export const useSSE = () => {
       const es = new EventSource(url.toString());
       eventSourceRef.current = es;
 
-      es.addEventListener('reasoning', (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+      const processSSEEvent = (e: MessageEvent) => {
+        if (!isMounted || eventSourceRef.current !== es) return null;
+        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return null;
 
-        let parsedData: {
-          thread_id?: string;
-          run_type?: 'initial' | 'next_phase';
-          request_id?: string;
-          message?: string;
-        } | null = null;
+        let envelope: any = null; // eslint-disable-line @typescript-eslint/no-explicit-any
         try {
-          parsedData = JSON.parse(e.data);
+          envelope = JSON.parse(e.data);
         } catch {
-          // ignore parsing error
+          console.error("Failed to parse SSE event data", e.data);
+          return null;
         }
 
-        if (parsedData && parsedData.thread_id) {
-          if (!matchesRunIdentity(
-            {
-              thread_id: parsedData.thread_id,
-              run_type: parsedData.run_type || '',
-              request_id: parsedData.request_id || ''
-            },
-            { threadId: activeThreadId, runType: activeRunType, requestId: activeRequestId }
-          )) {
-            return;
-          }
+        if (!envelope) return null;
+
+        // Backward compatibility mapping: check both root and payload
+        const thread_id = envelope.thread_id || envelope.payload?.thread_id || '';
+        const run_type = envelope.run_type || envelope.payload?.run_type || '';
+        const request_id = envelope.request_id || envelope.payload?.request_id || '';
+
+        if (!matchesRunIdentity(
+          { thread_id, run_type, request_id },
+          { threadId: activeThreadId, runType: activeRunType, requestId: activeRequestId }
+        )) {
+          return null;
         }
 
         if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
+          return null;
         }
+
         handleEventActivity();
         lastEventIdRef.current[cursorKey] = e.lastEventId;
-        try {
-          const data = parsedData || JSON.parse(e.data);
-          addReasoningLog(data.message || JSON.stringify(data));
-        } catch {
-          addReasoningLog(e.data);
-        }
+
+        return envelope;
+      };
+
+      // 1. Stage Events (run_started, intent_profile_started, intent_profile_completed, strategy_selected, planning_started, validation_started, repair_started, persistence_started, still_running)
+      const stageEvents = [
+        'run_started',
+        'intent_profile_started',
+        'intent_profile_completed',
+        'strategy_selected',
+        'planning_started',
+        'validation_started',
+        'repair_started',
+        'persistence_started',
+        'still_running'
+      ];
+      stageEvents.forEach(evtType => {
+        es.addEventListener(evtType, (e) => {
+          const envelope = processSSEEvent(e);
+          if (!envelope) return;
+
+          const label = envelope.payload?.label || envelope.payload?.stage || evtType;
+          useAppStore.setState((state) => {
+            const alreadyExists = state.recentEvents.includes(label);
+            const newEvents = alreadyExists ? state.recentEvents : [...state.recentEvents, label];
+            return {
+              currentStage: label,
+              recentEvents: newEvents,
+              reasoningLogs: [...state.reasoningLogs, label]
+            };
+          });
+        });
+      });
+
+      // Backward compatibility for old reasoning event
+      es.addEventListener('reasoning', (e) => {
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
+
+        const message = envelope.payload?.message || envelope.message || e.data;
+        useAppStore.setState((state) => ({
+          currentStage: message,
+          recentEvents: state.recentEvents.includes(message) ? state.recentEvents : [...state.recentEvents, message],
+          reasoningLogs: [...state.reasoningLogs, message]
+        }));
       });
 
       es.addEventListener('plan_ready', (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
 
-        let parsedData: { thread_id?: string; run_type?: 'initial' | 'next_phase'; request_id?: string; task_tree?: TaskTree } | null = null;
-        try {
-          parsedData = JSON.parse(e.data);
-        } catch {
-          // ignore parsing error
-        }
-
-        if (
-          !parsedData ||
-          !matchesRunIdentity(
-            { thread_id: parsedData.thread_id || '', run_type: parsedData.run_type || '', request_id: parsedData.request_id || '' },
-            { threadId: activeThreadId, runType: activeRunType, requestId: activeRequestId }
-          )
-        ) {
-          return;
-        }
-
-        if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
-        }
-        handleEventActivity();
-        lastEventIdRef.current[cursorKey] = e.lastEventId;
-        if (parsedData.task_tree) {
-          setPreviewTaskTree(parsedData.task_tree);
+        const task_tree = envelope.payload?.task_tree !== undefined ? envelope.payload.task_tree : envelope.task_tree;
+        if (task_tree) {
+          setPreviewTaskTree(task_tree);
         }
         setAppState('PENDING');
         clearStallTimer();
+
+        const label = envelope.payload?.label || '已生成预览计划';
+        useAppStore.setState((state) => ({
+          currentStage: label,
+          recentEvents: state.recentEvents.includes(label) ? state.recentEvents : [...state.recentEvents, label],
+          reasoningLogs: [...state.reasoningLogs, label],
+          isProcessPanelExpanded: false,
+        }));
       });
 
       es.addEventListener('sync_status', (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
 
-        if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
+        const node_id = envelope.payload?.node_id !== undefined ? envelope.payload.node_id : envelope.node_id;
+        const status = envelope.payload?.status !== undefined ? envelope.payload.status : envelope.status;
+        if (node_id !== undefined && status !== undefined) {
+          setNodeStatus(node_id, status);
         }
-        handleEventActivity();
-        lastEventIdRef.current[cursorKey] = e.lastEventId;
-        const { node_id, status } = JSON.parse(e.data);
-        setNodeStatus(node_id, status);
+
+        const label = envelope.payload?.label || envelope.payload?.stage || '正在同步计划...';
+        useAppStore.setState((state) => {
+          const alreadyExists = state.recentEvents.includes(label);
+          const newEvents = alreadyExists ? state.recentEvents : [...state.recentEvents, label];
+          return {
+            currentStage: label,
+            recentEvents: newEvents,
+            reasoningLogs: [...state.reasoningLogs, label]
+          };
+        });
       });
 
       es.addEventListener('sync_complete', (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
 
-        if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
-        }
-        handleEventActivity();
-        lastEventIdRef.current[cursorKey] = e.lastEventId;
-        const { status } = JSON.parse(e.data);
-        setAppState(status === 'success' ? 'SUCCESS' : 'PARTIAL_ERROR');
+        const status = envelope.payload?.status !== undefined ? envelope.payload.status : envelope.status;
+        const isSuccess = status === undefined || status === 'success';
+        setAppState(isSuccess ? 'SUCCESS' : 'PARTIAL_ERROR');
         clearStallTimer();
+
+        const label = envelope.payload?.label || envelope.payload?.stage || (isSuccess ? '已完成计划同步' : '同步出现部分错误');
+        useAppStore.setState((state) => ({
+          currentStage: label,
+          recentEvents: state.recentEvents.includes(label) ? state.recentEvents : [...state.recentEvents, label],
+          reasoningLogs: [...state.reasoningLogs, label]
+        }));
       });
 
       es.addEventListener('done', async (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
 
-        let parsedData: AgentRunEventMeta | null = null;
-        try {
-          parsedData = JSON.parse(e.data);
-        } catch {
-          // ignore parsing error
-        }
+        const state_version = envelope.state_version !== undefined ? envelope.state_version : (envelope.payload?.state_version !== undefined ? envelope.payload.state_version : 0);
+        const parsedData: AgentRunEventMeta = {
+          thread_id: envelope.thread_id || envelope.payload?.thread_id || '',
+          run_type: (envelope.run_type || envelope.payload?.run_type || '') as 'initial' | 'next_phase' | 'refine',
+          request_id: envelope.request_id || envelope.payload?.request_id || '',
+          state_version: state_version
+        };
 
-        if (!parsedData || !matchesRunIdentity(parsedData, { threadId: activeThreadId, runType: activeRunType, requestId: activeRequestId })) {
-          return;
-        }
-
-        if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
-        }
         clearStallTimer();
-        lastEventIdRef.current[cursorKey] = e.lastEventId;
-
         await finishAgentRun(parsedData);
 
         const currentStore = useAppStore.getState();
@@ -287,6 +315,14 @@ export const useSSE = () => {
             eventSourceRef.current = null;
           }
         }
+
+        const label = '规划已结束';
+        useAppStore.setState((state) => ({
+          currentStage: label,
+          recentEvents: state.recentEvents.includes(label) ? state.recentEvents : [...state.recentEvents, label],
+          reasoningLogs: [...state.reasoningLogs, label],
+          isProcessPanelExpanded: false,
+        }));
       });
 
       es.addEventListener('snapshot_required', async () => {
@@ -305,38 +341,16 @@ export const useSSE = () => {
       });
 
       es.addEventListener('agent_error', (e) => {
-        if (!isMounted || eventSourceRef.current !== es) return;
-        if (!matchesActiveRun(useAppStore.getState().activeRun, capturedRun)) return;
+        const envelope = processSSEEvent(e);
+        if (!envelope) return;
 
-        let parsedData: { thread_id?: string; run_type?: 'initial' | 'next_phase'; request_id?: string; message?: string; code?: string } | null = null;
-        try {
-          parsedData = JSON.parse(e.data);
-        } catch {
-          // ignore parsing error
-        }
-
-        if (
-          !parsedData ||
-          !matchesRunIdentity(
-            { thread_id: parsedData.thread_id || '', run_type: parsedData.run_type || '', request_id: parsedData.request_id || '' },
-            { threadId: activeThreadId, runType: activeRunType, requestId: activeRequestId }
-          )
-        ) {
-          return;
-        }
-
-        if (!trackerRef.current.accept(e.lastEventId, activeThreadId)) {
-          return;
-        }
         clearStallTimer();
-        lastEventIdRef.current[cursorKey] = e.lastEventId;
         setAppState('ERROR');
-        try {
-          const rawMsg = parsedData.message || parsedData.code || 'An error occurred';
-          setError(getFriendlyErrorMessage(rawMsg));
-        } catch {
-          setError(getFriendlyErrorMessage(e.data));
-        }
+        const rawMsg = envelope.payload?.message || envelope.message || envelope.payload?.code || envelope.code || 'An error occurred';
+        const friendlyMsg = getFriendlyErrorMessage(rawMsg);
+        setError(friendlyMsg);
+        useAppStore.setState({ lastRunErrorSummary: friendlyMsg });
+
         es.close();
         if (eventSourceRef.current === es) {
           eventSourceRef.current = null;

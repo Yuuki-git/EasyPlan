@@ -54,12 +54,18 @@ thread_id + run_type + request_id
 要求：
 
 - initial、refine、next phase 都使用真实且可区分的 request id。
-- 所有 SSE 业务事件携带 run identity 与 `state_version`。
+- 所有 SSE 业务事件使用统一 envelope，携带 `event_id`、run identity、
+  `event_type`、run-scoped `seq`、`created_at` 与 `payload`。
 - 事件缓存和终态按 run 隔离。
-- 历史 `done` 不能结束当前 run。
+- 历史 `done` 或 `plan_ready` 不能结束或污染当前 run。
 - `Last-Event-ID` 只在同一 run 内解释。
 - 业务错误事件名固定为 `agent_error`。
 - 无法增量恢复时发送 `snapshot_required`。
+- 长耗时 run 使用 `still_running` heartbeat，且 terminal 或取消后必须停止。
+- `sync_status` / `sync_complete` 是 stage-only 事件，payload 只表达
+  `stage`、`label`、`state_version`；不要加入成功/失败 `status`。
+- SSE stage 是用户可见状态文案，不得暴露 chain-of-thought、prompt、provider
+  payload、secret 或 traceback。
 
 ## 4. 下一阶段状态边界
 

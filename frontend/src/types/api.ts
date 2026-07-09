@@ -320,15 +320,31 @@ export interface HTTPValidationError {
 
 export interface AgentRunEventMeta {
   thread_id: string;
-  run_type: 'initial' | 'next_phase';
+  run_type: 'initial' | 'next_phase' | 'refine';
   request_id: string;
   state_version: number;
 }
 
-export type AgentRunType = 'initial' | 'next_phase';
+export type AgentRunType = 'initial' | 'next_phase' | 'refine';
 
 export interface ActiveRun {
   threadId: string;
   runType: AgentRunType;
   requestId: string;
+}
+
+export interface SSEEventEnvelope {
+  event_id: string;
+  thread_id: string;
+  request_id: string;
+  run_type: AgentRunType;
+  event_type: string;
+  seq: number;
+  created_at: string;
+  payload: {
+    stage?: string;
+    label?: string;
+    state_version?: number;
+    [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  };
 }

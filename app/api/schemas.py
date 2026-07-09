@@ -23,6 +23,37 @@ IntentType = Literal[
 ]
 TimeHorizon = Literal["minutes", "hours", "days", "weeks", "months"]
 RoadmapStatus = Literal["planned", "current", "completed"]
+SseRunType = Literal["initial", "next_phase", "refine"]
+SseEventType = Literal[
+    "run_started",
+    "intent_profile_started",
+    "intent_profile_completed",
+    "strategy_selected",
+    "planning_started",
+    "validation_started",
+    "repair_started",
+    "persistence_started",
+    "still_running",
+    "plan_ready",
+    "sync_status",
+    "sync_complete",
+    "done",
+    "agent_error",
+    "snapshot_required",
+]
+
+
+class SseEventEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(..., min_length=1)
+    thread_id: str = Field(..., min_length=1)
+    request_id: str = Field(..., min_length=1)
+    run_type: SseRunType
+    event_type: SseEventType
+    seq: int = Field(..., ge=1)
+    created_at: datetime
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskNode(BaseModel):

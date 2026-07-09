@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -105,6 +106,64 @@ class BlockingNextPhaseGraph:
         }
 
 
+class SlowInitialGraph:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
+        self.started.set()
+        await self.release.wait()
+        yield {
+            "__interrupt__": [
+                type(
+                    "Interrupt",
+                    (),
+                    {
+                        "value": {
+                            "type": "task_tree_review",
+                            "task_tree": {"root": {}},
+                            "planning_mode": "initial",
+                        }
+                    },
+                )()
+            ]
+        }
+
+
+class SlowResumeGraph:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.inputs: list[Any] = []
+
+    def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
+        self.inputs.append((input_value, config))
+        self.started.set()
+        await self.release.wait()
+        yield {"planner": {"reasoning_events": [{"code": "PLAN_STARTED", "message": "planning"}]}}
+
+
+class SlowApproveResumeGraph:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def stream(self, input_value, config):
+        raise AssertionError("AgentRuntime must use graph.astream")
+
+    async def astream(self, input_value, config):
+        self.started.set()
+        await self.release.wait()
+        yield {"persist_tasks": {"task_persistence_status": "succeeded"}}
+
+
 class ValidationFailureGraph:
     async def astream(self, input_value, config):
         yield {
@@ -115,6 +174,219 @@ class ValidationFailureGraph:
                 }
             }
         }
+
+
+def test_agent_runtime_sse_envelope_uses_run_scoped_sequence_and_event_id():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+    request_a = "request-a"
+    request_b = "request-b"
+
+    runtime._append_event(
+        "thread-1",
+        "plan_ready",
+        {"task_tree": {"summary": "request A"}},
+        run_type="initial",
+        request_id=request_a,
+    )
+    runtime._append_done(
+        "thread-1",
+        status="completed",
+        run_type="initial",
+        request_id=request_a,
+    )
+    runtime._append_error(
+        "thread-1",
+        code="AGENT_RUN_FAILED",
+        message="friendly",
+        run_type="initial",
+        request_id=request_b,
+    )
+
+    first, second = [
+        _parse_sse_event(event)
+        for event in runtime._events[
+            EventRunKey(thread_id="thread-1", run_type="initial", request_id=request_a)
+        ]
+    ]
+    third = _parse_sse_event(
+        runtime._events[
+            EventRunKey(thread_id="thread-1", run_type="initial", request_id=request_b)
+        ][0]
+    )
+
+    assert first["id"] == "thread-1:initial:request-a:000001"
+    assert first["event"] == "plan_ready"
+    assert first["data"]["event_id"] == first["id"]
+    assert first["data"]["thread_id"] == "thread-1"
+    assert first["data"]["request_id"] == request_a
+    assert first["data"]["run_type"] == "initial"
+    assert first["data"]["event_type"] == "plan_ready"
+    assert first["data"]["seq"] == 1
+    assert first["data"]["created_at"].endswith("Z")
+    assert first["data"]["payload"]["task_tree"] == {"summary": "request A"}
+    assert second["id"] == "thread-1:initial:request-a:000002"
+    assert second["data"]["seq"] == 2
+    assert second["data"]["payload"]["status"] == "completed"
+    assert third["id"] == "thread-1:initial:request-b:000001"
+    assert third["data"]["seq"] == 1
+    assert third["data"]["payload"]["code"] == "AGENT_RUN_FAILED"
+
+
+def test_initial_run_emits_stage_events_before_slow_planner_finishes(monkeypatch):
+    async def collect_before_release():
+        graph = SlowInitialGraph()
+        runtime = AgentRuntime(
+            graph_factory=lambda **_: graph,
+            heartbeat_interval_seconds=60,
+        )
+        _patch_async_session(monkeypatch)
+        run_task = asyncio.create_task(
+            runtime.run_new_thread(
+                user_id="11111111-1111-1111-1111-111111111111",
+                thread_id="thread-1",
+                request_id=INITIAL_REQUEST_ID,
+                intent_text="write paper",
+                selected_provider="native",
+            )
+        )
+        await asyncio.wait_for(graph.started.wait(), timeout=1)
+        events = list(
+            runtime._events[
+                EventRunKey(
+                    thread_id="thread-1",
+                    run_type="initial",
+                    request_id=INITIAL_REQUEST_ID,
+                )
+            ]
+        )
+        assert any("event: run_started" in event for event in events)
+        assert any("event: intent_profile_started" in event for event in events)
+        graph.release.set()
+        await asyncio.wait_for(run_task, timeout=1)
+        return events
+
+    events = asyncio.run(collect_before_release())
+    parsed = [_parse_sse_event(event)["data"] for event in events]
+    assert [event["event_type"] for event in parsed[:2]] == [
+        "run_started",
+        "intent_profile_started",
+    ]
+
+
+def test_next_phase_run_emits_stage_events_before_slow_planner_finishes():
+    async def collect_before_release():
+        graph = BlockingNextPhaseGraph()
+        runtime = AgentRuntime(
+            graph_factory=lambda **_: graph,
+            planner_client_factory=lambda **_: object(),
+            heartbeat_interval_seconds=60,
+        )
+        request_id = "request-a"
+        run_task = asyncio.create_task(
+            runtime.run_next_phase(
+                user_id="11111111-1111-1111-1111-111111111111",
+                thread_id="thread-1",
+                request_id=request_id,
+                intent_text="continue plan",
+                committed_task_tree={"planning_context": {}},
+                current_phase_task_summary="1/1 AI actions completed",
+            )
+        )
+        await asyncio.wait_for(graph.started.wait(), timeout=1)
+        events = list(
+            runtime._events[
+                EventRunKey(
+                    thread_id="thread-1",
+                    run_type="next_phase",
+                    request_id=request_id,
+                )
+            ]
+        )
+        graph.release.set()
+        await asyncio.wait_for(run_task, timeout=1)
+        return events
+
+    parsed = [_parse_sse_event(event)["data"] for event in asyncio.run(collect_before_release())]
+    assert [event["event_type"] for event in parsed[:2]] == [
+        "run_started",
+        "planning_started",
+    ]
+
+
+def test_intent_profile_chunk_advances_to_strategy_and_planning_stage():
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+    request_id = "request-a"
+
+    processed = asyncio.run(
+        runtime._append_chunk(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-1",
+            chunk={
+                "intent_profiler": {
+                    "intent_profile": {
+                        "intent_type": "long_term_growth",
+                        "time_horizon": "months",
+                    }
+                }
+            },
+            run_type="initial",
+            request_id=request_id,
+        )
+    )
+
+    assert processed is True
+    events = [
+        _parse_sse_event(event)["data"]
+        for event in runtime._events[
+            EventRunKey(thread_id="thread-1", run_type="initial", request_id=request_id)
+        ]
+    ]
+    assert [event["event_type"] for event in events] == [
+        "intent_profile_completed",
+        "strategy_selected",
+        "planning_started",
+    ]
+    assert events[1]["payload"]["strategy"] == "long_term_growth"
+
+
+def test_slow_run_emits_and_stops_heartbeat(monkeypatch):
+    async def collect_heartbeat_events():
+        graph = SlowInitialGraph()
+        runtime = AgentRuntime(
+            graph_factory=lambda **_: graph,
+            heartbeat_interval_seconds=0.01,
+        )
+        _patch_async_session(monkeypatch)
+        run_task = asyncio.create_task(
+            runtime.run_new_thread(
+                user_id="11111111-1111-1111-1111-111111111111",
+                thread_id="thread-1",
+                request_id=INITIAL_REQUEST_ID,
+                intent_text="write paper",
+                selected_provider="native",
+            )
+        )
+        await asyncio.wait_for(graph.started.wait(), timeout=1)
+        await asyncio.sleep(0.03)
+        run_key = EventRunKey(
+            thread_id="thread-1",
+            run_type="initial",
+            request_id=INITIAL_REQUEST_ID,
+        )
+        heartbeat_events = [
+            event for event in runtime._events[run_key] if "event: still_running" in event
+        ]
+        assert heartbeat_events
+        graph.release.set()
+        await asyncio.wait_for(run_task, timeout=1)
+        event_count_after_done = len(runtime._events[run_key])
+        await asyncio.sleep(0.03)
+        return runtime._events[run_key], event_count_after_done
+
+    events, event_count_after_done = asyncio.run(collect_heartbeat_events())
+    assert len(events) == event_count_after_done
+    assert any("event: still_running" in event for event in events)
+    assert any("event: plan_ready" in event for event in events)
 
 
 def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
@@ -152,7 +424,9 @@ def test_agent_runtime_runs_langgraph_astream_in_background_worker(monkeypatch):
         graph.inputs[0][1]["configurable"]["checkpoint_ns"]
         == "initial"
     )
-    assert "event: reasoning" in "".join(events)
+    assert "event: run_started" in "".join(events)
+    assert "event: intent_profile_started" in "".join(events)
+    assert "event: validation_started" in "".join(events)
     assert "event: plan_ready" in "".join(events)
 
 
@@ -279,6 +553,97 @@ def test_agent_runtime_resume_without_cached_selection_uses_factory_default():
     )
 
     assert created_planners[0] == {"provider": None, "model": None}
+
+
+def test_resume_refine_uses_run_lifecycle_and_heartbeat():
+    async def collect_refine_events():
+        graph = SlowResumeGraph()
+        runtime = AgentRuntime(
+            graph_factory=lambda **_: graph,
+            heartbeat_interval_seconds=0.01,
+        )
+        request_id = "22222222-2222-2222-2222-222222222222"
+        run_key = EventRunKey(
+            thread_id="thread-1",
+            run_type="refine",
+            request_id=request_id,
+        )
+        run_task = asyncio.create_task(
+            runtime.resume_thread(
+                user_id="user-1",
+                thread_id="thread-1",
+                decision={"action": "refine", "feedback": "make it smaller"},
+                run_type="refine",
+                request_id=request_id,
+            )
+        )
+        await asyncio.wait_for(graph.started.wait(), timeout=1)
+        await asyncio.sleep(0.03)
+        in_flight_events = list(runtime._events[run_key])
+        assert run_key in runtime._active_runs
+        graph.release.set()
+        await asyncio.wait_for(run_task, timeout=1)
+        assert run_key not in runtime._active_runs
+        return in_flight_events, runtime._events[run_key]
+
+    in_flight_events, final_events = asyncio.run(collect_refine_events())
+    in_flight_types = [
+        _parse_sse_event(event)["data"]["event_type"]
+        for event in in_flight_events
+    ]
+    final_types = [
+        _parse_sse_event(event)["data"]["event_type"]
+        for event in final_events
+    ]
+    assert in_flight_types[:2] == ["run_started", "planning_started"]
+    assert "still_running" in in_flight_types
+    assert final_types[-1] == "done"
+
+
+def test_resume_approve_emits_persistence_started_before_persist_finishes():
+    async def collect_approve_events():
+        graph = SlowApproveResumeGraph()
+        runtime = AgentRuntime(
+            graph_factory=lambda **_: graph,
+            heartbeat_interval_seconds=60,
+        )
+        request_id = "22222222-2222-2222-2222-222222222222"
+        run_key = EventRunKey(
+            thread_id="thread-1",
+            run_type="initial",
+            request_id=request_id,
+        )
+        run_task = asyncio.create_task(
+            runtime.resume_thread(
+                user_id="user-1",
+                thread_id="thread-1",
+                decision={"action": "approve"},
+                run_type="initial",
+                request_id=request_id,
+            )
+        )
+        await asyncio.wait_for(graph.started.wait(), timeout=1)
+        in_flight_events = list(runtime._events[run_key])
+        graph.release.set()
+        await asyncio.wait_for(run_task, timeout=1)
+        return in_flight_events, list(runtime._events[run_key])
+
+    in_flight_events, final_events = asyncio.run(collect_approve_events())
+    in_flight_types = [
+        _parse_sse_event(event)["data"]["event_type"]
+        for event in in_flight_events
+    ]
+    final_payloads = [_parse_sse_event(event)["data"] for event in final_events]
+    final_types = [event["event_type"] for event in final_payloads]
+
+    assert in_flight_types[:3] == ["run_started", "persistence_started", "sync_status"]
+    assert "sync_complete" not in in_flight_types
+    assert final_types[-2:] == ["sync_complete", "done"]
+    sync_complete = next(event for event in final_payloads if event["event_type"] == "sync_complete")
+    assert sync_complete["payload"]["stage"] == "sync_complete"
+    assert sync_complete["payload"]["label"] == "已完成计划保存"
+    assert "state_version" in sync_complete["payload"]
+    assert "status" not in sync_complete["payload"]
 
 
 def test_next_phase_runtime_uses_deepseek_and_preserves_committed_tree(monkeypatch):
@@ -522,16 +887,18 @@ def test_next_phase_runtime_failure_releases_lease_without_overwriting_tree(monk
         isinstance(value, dict) and value.get("summary") == "committed phase"
         for value in params.values()
     )
-    event = asyncio.run(
-        _next_event(
+    events = asyncio.run(
+        _collect_until(
             runtime.stream_thread_events(
                 user_id="user-1",
                 thread_id="thread-1",
                 run_type="next_phase",
                 request_id=request_id,
-            )
+            ),
+            lambda event: "event: agent_error" in event,
         )
     )
+    event = events[-1]
     assert "event: agent_error" in event
     assert '"thread_id":"thread-1"' in event
     assert '"run_type":"next_phase"' in event
@@ -660,6 +1027,8 @@ def test_agent_runtime_tracks_cancellation_only_while_next_phase_run_is_active()
             request_id="request-a",
         )
         iterator = stream.__aiter__()
+        assert "event: run_started" in await asyncio.wait_for(iterator.__anext__(), timeout=1)
+        assert "event: planning_started" in await asyncio.wait_for(iterator.__anext__(), timeout=1)
         pending_event = asyncio.create_task(iterator.__anext__())
         await asyncio.sleep(0)
         assert not pending_event.done()
@@ -932,7 +1301,9 @@ def test_agent_runtime_streams_only_events_after_last_event_id():
             runtime.stream_thread_events(
                 user_id="user-1",
                 thread_id="thread-1",
-                last_event_id="evt_00000002",
+                last_event_id=(
+                    f"thread-1:initial:{INITIAL_REQUEST_ID}:000002"
+                ),
                 run_type="initial",
                 request_id=INITIAL_REQUEST_ID,
             )
@@ -1058,7 +1429,7 @@ def test_next_phase_stream_rejects_cursor_from_a_different_request():
                 thread_id="thread-1",
                 run_type="next_phase",
                 request_id="request-b",
-                last_event_id="evt_00000001",
+                last_event_id="thread-1:next_phase:request-a:000001",
             )
         )
     )
@@ -1081,16 +1452,18 @@ def test_agent_runtime_sanitizes_internal_graph_errors_in_sse(caplog):
         )
     )
 
-    event = asyncio.run(
-        _next_event(
+    events = asyncio.run(
+        _collect_until(
             runtime.stream_thread_events(
                 user_id="user-1",
                 thread_id="thread-1",
                 run_type="initial",
                 request_id=INITIAL_REQUEST_ID,
-            )
+            ),
+            lambda event: "event: agent_error" in event,
         )
     )
+    event = events[-1]
 
     assert "event: agent_error" in event
     assert "event: error" not in event
@@ -1154,3 +1527,15 @@ async def _collect_until(stream, predicate, limit: int = 10):
         raise AssertionError("stream predicate was not reached")
     finally:
         await stream.aclose()
+
+
+def _parse_sse_event(event: str) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    for line in event.splitlines():
+        if line.startswith("id: "):
+            parsed["id"] = line[4:]
+        elif line.startswith("event: "):
+            parsed["event"] = line[7:]
+        elif line.startswith("data: "):
+            parsed["data"] = json.loads(line[6:])
+    return parsed

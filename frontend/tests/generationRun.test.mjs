@@ -372,6 +372,7 @@ async function runTests() {
 
     // Preset some old run states
     useAppStore.setState({
+      threadId: 'thread-refine',
       appState: 'PENDING',
       reasoningLogs: ['old log 1', 'old log 2'],
       committedTaskTree: { root: { title: 'old root' } },

@@ -130,8 +130,9 @@ async function runTests() {
     const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
 
     const state = useAppStore.getState();
-    assert.equal(state.selectedProjectId, 'thread-committed');
-    assert.equal(state.threadId, 'thread-committed');
+    assert.equal(state.selectedProjectId, null);
+    assert.equal(state.threadId, null);
+    useAppStore.setState({ selectedProjectId: 'thread-committed', threadId: 'thread-committed' });
 
     await state.alignState('thread-committed');
 
@@ -177,10 +178,16 @@ async function runTests() {
     const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
 
     const state = useAppStore.getState();
-    assert.equal(state.selectedProjectId, 'thread-preview');
-    assert.equal(state.threadId, 'thread-preview');
-    assert.equal(state.previewMode, 'next_phase');
-    assert.equal(state.phaseRequestId, 'req-preview');
+    assert.equal(state.selectedProjectId, null);
+    assert.equal(state.threadId, null);
+    assert.equal(state.previewMode, null);
+    assert.equal(state.phaseRequestId, null);
+    useAppStore.setState({
+      selectedProjectId: 'thread-preview',
+      threadId: 'thread-preview',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-preview'
+    });
 
     await state.alignState('thread-preview');
 
@@ -222,10 +229,16 @@ async function runTests() {
     const { useAppStore } = loadAppStoreModule(fetchMock, initialLocal);
 
     const state = useAppStore.getState();
-    assert.equal(state.selectedProjectId, 'thread-running');
-    assert.equal(state.threadId, 'thread-running');
-    assert.equal(state.previewMode, 'next_phase');
-    assert.equal(state.phaseRequestId, 'req-running');
+    assert.equal(state.selectedProjectId, null);
+    assert.equal(state.threadId, null);
+    assert.equal(state.previewMode, null);
+    assert.equal(state.phaseRequestId, null);
+    useAppStore.setState({
+      selectedProjectId: 'thread-running',
+      threadId: 'thread-running',
+      previewMode: 'next_phase',
+      phaseRequestId: 'req-running'
+    });
 
     await state.alignState('thread-running');
 
@@ -457,7 +470,7 @@ async function runTests() {
       'easyplan_preview_mode': 'next_phase',
       'easyplan_phase_request_id': 'req-confirmed',
       'easyplan_base_phase_id': 'phase_01',
-      'auth_token': '',
+      'auth_token': 'mock-token',
     };
 
     const { useAppStore, localStorageValues } = loadAppStoreModule(fetchMock, initialLocal);

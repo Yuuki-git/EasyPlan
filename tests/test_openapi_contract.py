@@ -195,26 +195,35 @@ def test_openapi_contract_documents_sse_last_event_id_query_fallback():
 
     schema = app.openapi()
 
+    event_parameters = schema["paths"]["/api/threads/{thread_id}/events"]["get"]["parameters"]
     events_params = _parameter_names(schema["paths"]["/api/threads/{thread_id}/events"]["get"])
     request_id_param = next(
         parameter
-        for parameter in schema["paths"]["/api/threads/{thread_id}/events"]["get"]["parameters"]
+        for parameter in event_parameters
         if parameter["name"] == "request_id"
     )
+    run_type_param = next(parameter for parameter in event_parameters if parameter["name"] == "run_type")
 
     assert "last_event_id" in events_params
     assert "run_type" in events_params
     assert "request_id" in events_params
     assert request_id_param["required"] is True
+    assert run_type_param["schema"]["enum"] == ["initial", "next_phase", "refine"]
 
 
-def test_openapi_contract_documents_agent_error_sse_event_name():
+def test_openapi_contract_documents_sse_envelope_and_agent_error_event_name():
     app = create_app()
 
     schema = app.openapi()
 
     description = schema["paths"]["/api/threads/{thread_id}/events"]["get"]["description"]
     assert "agent_error" in description
+    assert "still_running" in description
+    assert "event_id" in description
+    assert "seq" in description
+    assert "payload" in description
+    assert "reasoning" not in description
+    assert "checkpoint" not in description
     assert " and error" not in description
     assert "The error event payload" not in description
 

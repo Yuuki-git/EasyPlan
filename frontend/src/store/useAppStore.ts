@@ -10,7 +10,7 @@ import {
   PhaseReviewUpdateRequest,
   PhaseReviewDecisionRequest
 } from '../types/api';
-import { buildAuthRecoveryState, isUnauthorizedResponse } from './authRecovery';
+import { isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 import { createLatestRequestGate } from './snapshotRequestGate';
 
@@ -18,6 +18,36 @@ const snapshotGate = createLatestRequestGate();
 
 const clearActiveRunStorage = () => {
   localStorage.removeItem('easyplan_active_run');
+};
+
+const getStoredAuthToken = () => localStorage.getItem('auth_token') || null;
+
+const getInitialView = (): 'input' | 'board' => {
+  if (getStoredAuthToken()) return 'board';
+  return 'input';
+};
+
+
+
+const getInitialActiveRun = (): ActiveRun | null => {
+  if (!getStoredAuthToken()) return null;
+  try {
+    const stored = localStorage.getItem('easyplan_active_run');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (
+        parsed &&
+        typeof parsed.threadId === 'string' &&
+        (parsed.runType === 'initial' || parsed.runType === 'next_phase' || parsed.runType === 'refine') &&
+        typeof parsed.requestId === 'string'
+      ) {
+        return parsed as ActiveRun;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 };
 
 const generateUUID = () => {
@@ -106,8 +136,12 @@ interface AppStore {
   longTermExecution: LongTermExecutionSnapshot | null;
   practiceError: string | null;
   isPracticeRequestPending: boolean;
+  currentStage: string | null;
+  recentEvents: string[];
+  isProcessPanelExpanded: boolean;
+  lastRunErrorSummary: string | null;
 
-  // Actions
+  // Setters
   setActiveRun: (run: ActiveRun | null) => void;
   clearActiveRun: () => void;
   setIntent: (intent: string) => void;
@@ -133,6 +167,10 @@ interface AppStore {
   reset: () => void;
   reconnectActiveRun: () => void;
   dismissInitialSync: () => void;
+  setCurrentStage: (stage: string | null) => void;
+  addRecentEvent: (event: string) => void;
+  setProcessPanelExpanded: (expanded: boolean) => void;
+  setLastRunErrorSummary: (summary: string | null) => void;
 
   // Actions
   alignState: (threadId: string) => Promise<void>;
@@ -164,8 +202,8 @@ type AppStoreGet = () => AppStore;
 
 const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleThreadId: string) => {
   const state = get();
-  const shouldClearSelectedProject = state.selectedProjectId === staleThreadId;
-  const shouldClearThread = state.threadId === staleThreadId;
+  const shouldClearSelectedProject = state.selectedProjectId === staleThreadId || localStorage.getItem('easyplan_selected_project_id') === staleThreadId;
+  const shouldClearThread = state.threadId === staleThreadId || localStorage.getItem('easyplan_thread_id') === staleThreadId;
 
   snapshotGate.invalidate();
 
@@ -189,6 +227,10 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     longTermExecution: null,
     practiceError: null,
     isPracticeRequestPending: false,
+    currentStage: null,
+    recentEvents: [],
+    isProcessPanelExpanded: true,
+    lastRunErrorSummary: null,
   });
 
   if (shouldClearSelectedProject) {
@@ -206,7 +248,7 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
 export const useAppStore = create<AppStore>((set, get) => ({
   intent: '',
   appState: 'INITIAL',
-  threadId: localStorage.getItem('easyplan_thread_id') || null,
+  threadId: null,
   syncRequestId: null,
   reasoningLogs: [],
   committedTaskTree: null,
@@ -215,47 +257,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferredProvider: 'microsoft_todo',
   isIntegrated: false,
   error: null,
-  token: localStorage.getItem('auth_token'),
+  token: getStoredAuthToken(),
   showAuthModal: false,
   pendingIntent: null,
   theme: (localStorage.getItem('app_theme') as ThemeType) || 'parchment', // using parchment since zen was removed, wait, let me check what it currently is
-  view: (localStorage.getItem('easyplan_view') as 'input' | 'board') || 'input',
+  view: getInitialView(),
   currentViewBucket: 'planned', // Default to planned after transition
-  selectedProjectId: localStorage.getItem('easyplan_selected_project_id') || null,
+  selectedProjectId: null,
   boardTasks: null,
   boardError: null,
-  previewMode: (localStorage.getItem('easyplan_preview_mode') as PreviewMode) || null,
-  phaseRequestId: localStorage.getItem('easyplan_phase_request_id') || null,
-  basePhaseId: localStorage.getItem('easyplan_base_phase_id') || null,
+  previewMode: null,
+  phaseRequestId: null,
+  basePhaseId: null,
   isPhaseRequestPending: false,
   isRunStalled: false,
   isCancelPending: false,
   projectSnapshots: {},
   highlightedProjectId: null,
   lastDoneEvent: null,
-  activeRun: (() => {
-    try {
-      const stored = localStorage.getItem('easyplan_active_run');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (
-          parsed &&
-          typeof parsed.threadId === 'string' &&
-          (parsed.runType === 'initial' || parsed.runType === 'next_phase') &&
-          typeof parsed.requestId === 'string'
-        ) {
-          return parsed as ActiveRun;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  })(),
+  activeRun: getInitialActiveRun(),
   sseReconnectNonce: 0,
   longTermExecution: null,
   practiceError: null,
   isPracticeRequestPending: false,
+  currentStage: null,
+  recentEvents: [],
+  isProcessPanelExpanded: true,
+  lastRunErrorSummary: null,
 
   setActiveRun: (run) => {
     set({ activeRun: run });
@@ -384,6 +412,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setError: (error) => set({ error, appState: error ? 'ERROR' : 'INITIAL' }),
 
+  setCurrentStage: (currentStage) => set({ currentStage }),
+  addRecentEvent: (event) => set((state) => ({
+    recentEvents: [...state.recentEvents, event]
+  })),
+  setProcessPanelExpanded: (isProcessPanelExpanded) => set({ isProcessPanelExpanded }),
+  setLastRunErrorSummary: (lastRunErrorSummary) => set({ lastRunErrorSummary }),
+
   reset: () => {
     taskStatusOverrides.clear();
     snapshotGate.invalidate();
@@ -411,6 +446,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       isPhaseRequestPending: false,
       activeRun: null,
       sseReconnectNonce: 0,
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: null,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -441,6 +480,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       appState: 'INITIAL',
       error: null,
       isRunStalled: false,
+      currentStage: null,
+      recentEvents: [],
+      reasoningLogs: [],
+      lastRunErrorSummary: null,
     });
 
     localStorage.setItem('easyplan_view', 'board');
@@ -487,12 +530,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (isUnauthorizedResponse(response)) {
           if (!isCurrent()) return;
           get().setToken(null, false);
-          set({
-            showAuthModal: true,
-            error: '登录已失效，请重新登录',
-            appState: 'ERROR',
-            lastDoneEvent: event
-          });
+          get().reset();
           return;
         }
         if (!response.ok) {
@@ -533,12 +571,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           if (isUnauthorizedResponse(retryResponse)) {
             if (!isCurrent()) return;
             get().setToken(null, false);
-            set({
-              showAuthModal: true,
-              error: '登录已失效，请重新登录',
-              appState: 'ERROR',
-              lastDoneEvent: event
-            });
+            get().reset();
             return;
           }
           if (!retryResponse.ok && retryResponse.status !== 409) {
@@ -658,7 +691,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (isUnauthorizedResponse(response)) {
         if (!isCurrent()) return;
         get().setToken(null, false);
-        set({ showAuthModal: true });
+        get().reset();
         throw new Error('请先登录以查看项目看板');
       }
 
@@ -713,8 +746,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -750,6 +783,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         threadId: snapshot.thread_id,
         intent: snapshot.intent_text,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_preview_mode');
@@ -816,6 +853,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         error: null,
         isRunStalled: false,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'board');
       localStorage.removeItem('easyplan_preview_mode');
@@ -836,6 +877,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         committedTaskTree: null,
         previewTaskTree: null,
         activeRun: null,
+        currentStage: null,
+        recentEvents: [],
+        reasoningLogs: [],
+        lastRunErrorSummary: null,
       });
       localStorage.setItem('easyplan_view', 'input');
       localStorage.removeItem('easyplan_thread_id');
@@ -862,7 +907,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -911,7 +956,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -945,7 +990,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         get().setToken(null, false);
-        set({ showAuthModal: true, practiceError: '登录已失效，请重新登录', isPracticeRequestPending: false });
+        get().reset();
         return;
       }
 
@@ -980,8 +1025,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1031,8 +1076,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (isUnauthorizedResponse(response)) {
         taskStatusOverrides.delete(taskId);
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         throw new Error('Authentication required');
       }
 
@@ -1084,8 +1129,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1140,8 +1185,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1188,8 +1233,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         set({ boardTasks: originalTasks });
         return;
       }
@@ -1224,8 +1269,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // P1 Fix: Global Auth Recovery
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1265,6 +1310,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       nodeStatuses: {},
       isRunStalled: false,
       activeRun: null,
+      currentStage: null,
+      recentEvents: [],
+      lastRunErrorSummary: null,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -1285,8 +1333,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1338,6 +1386,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       runType: 'next_phase',
       requestId: requestId,
     });
+    const prevError = get().error;
     set({
       isPhaseRequestPending: true,
       isRunStalled: false,
@@ -1348,7 +1397,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       basePhaseId: basePhaseId,
       previewMode: 'next_phase',
       appState: 'THINKING',
-      previewTaskTree: null
+      previewTaskTree: null,
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: prevError,
     });
     localStorage.setItem('easyplan_view', 'board');
     localStorage.setItem('easyplan_thread_id', selectedProjectId);
@@ -1372,18 +1425,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({
-          showAuthModal: true,
-          isPhaseRequestPending: false,
-          previewMode: null,
-          appState: 'INITIAL',
-          activeRun: null,
-        });
-        localStorage.removeItem('easyplan_preview_mode');
-        localStorage.removeItem('easyplan_phase_request_id');
-        localStorage.removeItem('easyplan_base_phase_id');
-        clearActiveRunStorage();
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1417,6 +1460,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     try {
+      const prevError = get().error;
       set({
         appState: 'THINKING',
         error: null,
@@ -1424,7 +1468,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         reasoningLogs: [],
         committedTaskTree: null,
         previewTaskTree: null,
-        nodeStatuses: {}
+        nodeStatuses: {},
+        currentStage: null,
+        recentEvents: [],
+        isProcessPanelExpanded: true,
+        lastRunErrorSummary: prevError,
       });
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -1443,8 +1491,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        localStorage.removeItem('auth_token');
-        set(buildAuthRecoveryState(intentText));
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1565,7 +1613,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         snapshot.status === 'running'
         && !!currentActiveRun
         && currentActiveRun.threadId === snapshot.thread_id
-        && currentActiveRun.runType === 'initial'
+        && (currentActiveRun.runType === 'initial' || currentActiveRun.runType === 'refine')
         && currentActiveRun.requestId.length > 0;
 
       let savedPreviewMode: PreviewMode = null;
@@ -1613,7 +1661,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           requestId: localPhaseRequestId || '',
         };
       } else if (preserveInitialRunning) {
-        savedPreviewMode = 'initial';
+        savedPreviewMode = currentActiveRun.runType === 'initial' ? 'initial' : get().previewMode;
         recoveredActiveRun = currentActiveRun;
       } else {
         localStorage.removeItem('easyplan_preview_mode');
@@ -1784,8 +1832,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, appState: 'PENDING', error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 
@@ -1817,7 +1865,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   collapsePlanningPanel: () => {
     set({
       previewMode: null,
-      appState: 'INITIAL'
+      appState: 'INITIAL',
+      currentStage: null,
+      recentEvents: [],
+      reasoningLogs: [],
+      lastRunErrorSummary: null,
     });
     localStorage.removeItem('easyplan_preview_mode');
   },
@@ -1826,6 +1878,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { threadId, token } = get();
     if (!threadId) return;
 
+    const prevError = get().error;
     set({
       appState: 'THINKING',
       error: null,
@@ -1833,7 +1886,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       reasoningLogs: [],
       committedTaskTree: null,
       previewTaskTree: null,
-      nodeStatuses: {}
+      nodeStatuses: {},
+      currentStage: null,
+      recentEvents: [],
+      isProcessPanelExpanded: true,
+      lastRunErrorSummary: prevError,
     });
 
     try {
@@ -1846,7 +1903,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const requestId = generateUUID();
       get().setActiveRun({
         threadId,
-        runType: 'initial',
+        runType: 'refine',
         requestId,
       });
       set({ syncRequestId: requestId });
@@ -1862,8 +1919,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       if (isUnauthorizedResponse(response)) {
-        get().setToken(null);
-        set({ showAuthModal: true, appState: 'PENDING', error: '登录已失效，请重新登录' });
+        get().setToken(null, false);
+        get().reset();
         return;
       }
 

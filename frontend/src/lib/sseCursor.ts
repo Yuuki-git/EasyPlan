@@ -1,8 +1,8 @@
 export interface SseCursorScope {
   previousThreadId: string | null;
   nextThreadId: string | null;
-  previousRunType: 'initial' | 'next_phase' | null;
-  nextRunType: 'initial' | 'next_phase' | null;
+  previousRunType: 'initial' | 'next_phase' | 'refine' | null;
+  nextRunType: 'initial' | 'next_phase' | 'refine' | null;
   previousRequestId: string | null;
   nextRequestId: string | null;
   currentLastEventId: string | null;

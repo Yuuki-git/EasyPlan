@@ -90,7 +90,7 @@ def test_sse_thread_events_accept_token_query_for_eventsource_clients():
     )
 
     assert response.status_code == 200
-    assert "event: reasoning" in response.text
+    assert "event: run_started" in response.text
     assert runtime.streamed[0]["request_id"] == request_id
 
 
