@@ -21,6 +21,11 @@ from app.services.phase_planning import (
     phase_planning_enabled,
     validate_next_phase_transition,
 )
+from app.services.strategy_context import (
+    StrategyContextValidationError,
+    strategy_context_enabled,
+    validate_strategy_context,
+)
 
 
 MAX_REPLAN_ATTEMPTS = 3
@@ -209,6 +214,57 @@ LONG_TERM_EXECUTION_PROMPT = """Long-Term Execution schema v2 契约：
 
 SCHEMA_V1_PHASE_PROMPT = """兼容 planning schema v1：
 planning_context.schema_version 必须是 1；assumptions 必须是 []；不得输出 practice_loops、outcome_checkpoints 或 phase_gate。"""
+
+DELIVERY_STRATEGY_CONTEXT_PROMPT = """v1.2.8 短期交付 strategy_context 契约：
+仅输出 delivery strategy_context，不得输出 decision strategy_context：
+{
+  "schema_version": 1,
+  "strategy_type": "delivery",
+  "deliverable": {"title": "...", "format": "...", "quality_bar": ["..."]},
+  "deadline": {"text": "...", "is_explicit": true},
+  "time_plan": {"available_minutes": 180, "planned_minutes": 150, "buffer_minutes": 30},
+  "scope": {"must_have": ["..."], "should_have": ["..."], "can_cut": ["..."]},
+  "workstreams": [{"workstream_id": "...", "title": "...", "output": "...", "task_client_node_ids": ["action_id"]}],
+  "critical_path_client_node_ids": ["action_id"]
+}
+1. planning_context 必须为 null；短期交付不是 Roadmap 或阶段计划。
+2. planned_minutes 必须等于所有 Action.estimated_minutes 之和。
+3. planned_minutes + buffer_minutes 不得超过 available_minutes；总投入 >=60 分钟时必须保留非零 buffer。
+4. workstream 和 critical path 只能引用本次 TaskTree 内真实存在的 Action client_node_id；引用不得重复。
+5. critical_path_client_node_ids 必须是 workstreams 已引用 Action 的子集。
+6. 原样保留用户明确给出的截止描述、可用分钟数和交付格式；时间不足时先砍 can_cut，再缩减 should_have，不得默认删除 must_have。
+7. 小型交付允许只有 1 个 workstream 和 1 个 Action，不要人为膨胀任务树。
+8. 如果用户只要求发送一封邮件、提交一个极小文件等单一小交付，必须只生成 1 个 Action；把撰写、检查和发送合并进该 Action 的 done_criteria，不得拆成独立任务。
+9. 当 available_minutes 明确且总投入 >=60 分钟时，先预留非零 buffer，再分配 Action 时间；不得让 Action 总和占满全部 available_minutes。
+
+正例：3 小时内交付 PPT 时，available_minutes=180，Action 总和=150，buffer=30；must_have 保留核心结论，视觉润色放 can_cut。
+正例：2 小时受限交付时，Action 总和最多 105 分钟，buffer=15 分钟；如果范围仍过大，缩短 can_cut/should_have 和 must_have 的交付深度，而不是把 planned_minutes 写成 120。
+正例：发送一封客户道歉邮件只生成 1 个 Action，done_criteria 同时要求邮件包含原因、补救方案并已发送。
+反例：把 available_minutes 改成 240、让 planned_minutes 与 Action 总和不一致、关键路径引用不存在的任务，或为短期交付生成 Roadmap。"""
+
+DECISION_STRATEGY_CONTEXT_PROMPT = """v1.2.8 探索决策 strategy_context 契约：
+仅输出 decision strategy_context，不得输出 delivery strategy_context：
+{
+  "schema_version": 1,
+  "strategy_type": "decision",
+  "question": "...",
+  "options": ["...", "..."],
+  "current_judgment": {"direction": "continue_exploring|pause_and_reassess|not_recommended_now", "statement": "...", "confidence": "low|medium|high"},
+  "basis": [{"statement": "...", "basis_type": "user_context|known_constraint|working_assumption"}],
+  "missing_information": ["..."],
+  "experiments": [{"experiment_id": "...", "title": "...", "hypothesis": "...", "success_signal": "...", "effort_level": "low|medium|high", "task_client_node_ids": ["action_id"]}],
+  "decision_gate": {"review_after": "...", "proceed_if": ["..."], "stop_if": ["..."]}
+}
+1. planning_context 必须继续使用 exploration_decision schema v1，不得升级为长期 schema v2。
+2. current_judgment.statement 必须先直接回答用户问题，并原样出现在 summary 开头；不能只说“需要更多信息”。
+3. 判断必须是阶段性建议，显示置信度与信息缺口，不能使用绝对正确、保证成功等措辞。
+4. working_assumption 必须明确写成“假设：...”，不得伪装成事实。
+5. 每个 experiment 必须引用本次 TaskTree 内真实存在的 Action client_node_id；引用不得重复。
+6. decision_gate 必须同时给出 proceed_if 和 stop_if。
+7. 不能直接生成辞职、报名、投递或长期执行计划；只生成澄清、信息收集、低成本实验和决策依据。
+
+正例：当前判断为“值得继续低成本探索，但暂不建议立即转行”，列出缺失信息，关联 1 个岗位体验实验，并给出继续/停止门槛。
+反例：只输出探索路线而没有当前判断；宣称“一定适合转行”；实验引用不存在的任务；直接制定 6 个月转行计划。"""
 
 INTENT_STRATEGY_PROMPTS = {
     "long_term_growth": """策略：这是长周期成长型目标。你需要使用「破冰法则 + 视野控制」。
@@ -515,6 +571,10 @@ def build_planner_prompt(
         planning_mode=planning_mode,
         committed_task_tree=committed_task_tree,
     )
+    strategy_context_contract = _strategy_context_contract_prompt(
+        intent_type=intent_type,
+        planning_mode=planning_mode,
+    )
     parts = [
         "你是 EasyPlan 的任务拆解 Agent。",
         RULE_PRIORITY_PROMPT,
@@ -522,6 +582,7 @@ def build_planner_prompt(
         ACTION_QUALITY_PROMPT,
         INTENT_STRATEGY_PROMPTS[intent_type],
         phase_contract,
+        strategy_context_contract,
         "输出必须是符合 TaskTree JSON Schema 的 JSON。",
         f"用户意图：{intent_text}",
     ]
@@ -549,7 +610,17 @@ def build_planner_prompt(
                 "不要重写整棵任务树，不得借验证修复机会改写既有 roadmap，不要重复输出同类错误："
             )
         parts.append(repair_instruction + "; ".join(validation_errors))
-    return "\n".join(parts)
+    return "\n".join(part for part in parts if part)
+
+
+def _strategy_context_contract_prompt(*, intent_type: str, planning_mode: str) -> str:
+    if not strategy_context_enabled() or planning_mode == "next_phase":
+        return ""
+    if intent_type == "short_term_delivery":
+        return DELIVERY_STRATEGY_CONTEXT_PROMPT
+    if intent_type == "exploration_decision":
+        return DECISION_STRATEGY_CONTEXT_PROMPT
+    return "strategy_context 必须为 null；不要改变当前 intent 的既有输出契约。"
 
 
 def _phase_contract_prompt(
@@ -1218,6 +1289,16 @@ def _validate_task_tree(
         committed_task_tree=committed_task_tree,
         errors=errors,
     )
+    if strategy_context_enabled() and planning_mode in {"initial", "refine"}:
+        errors.extend(
+            _format_strategy_context_feedback(error, intent_type=intent_type)
+            for error in validate_strategy_context(
+                parsed,
+                intent_type=intent_type,
+                intent_text=intent_text,
+                enabled=True,
+            )
+        )
     _collect_strategy_errors(parsed, intent_type, errors)
     _collect_action_quality_errors(parsed, intent_type, errors)
     return errors
@@ -1512,7 +1593,12 @@ def _collect_strategy_errors(task_tree: TaskTree, intent_type: str, errors: list
         return
 
     if intent_type == "exploration_decision":
-        if not _has_exploration_answer_first_summary(task_tree.summary):
+        has_structured_decision = (
+            strategy_context_enabled()
+            and task_tree.strategy_context is not None
+            and task_tree.strategy_context.strategy_type == "decision"
+        )
+        if not has_structured_decision and not _has_exploration_answer_first_summary(task_tree.summary):
             errors.append(
                 _format_validator_feedback(
                     error_code="EXPLORATION_ANSWER_MISSING",
@@ -1714,6 +1800,28 @@ def _format_validator_feedback(
             f"问题: {problem}",
             f"违规任务/组: {_node_summary(offender)}",
             f"修复要求: {fix_suggestion}",
+        ]
+    )
+
+
+def _format_strategy_context_feedback(
+    error: StrategyContextValidationError,
+    *,
+    intent_type: str,
+) -> str:
+    return "\n".join(
+        [
+            f"错误代码: {error.code}",
+            f"intent_type: {intent_type}",
+            f"failed_rule: {error.failed_rule}",
+            f"问题: {error.message}",
+            f"违规字段/引用: {error.offender}",
+            f"修复要求: {error.fix_suggestion}",
+            (
+                "修复约束: 只修复 strategy_context 中的违规字段及其直接关联任务；"
+                "保持 IntentProfile、long_term schema v2、已完成阶段和其余合法任务不变；"
+                "不得新增 roadmap/current_phase/next_action。"
+            ),
         ]
     )
 

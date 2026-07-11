@@ -1329,6 +1329,42 @@
         ],
         "title": "ConfirmationResponse"
       },
+      "CurrentJudgment": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "continue_exploring",
+              "pause_and_reassess",
+              "not_recommended_now"
+            ],
+            "title": "Direction"
+          },
+          "statement": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Statement"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "direction",
+          "statement",
+          "confidence"
+        ],
+        "title": "CurrentJudgment"
+      },
       "CurrentPhase": {
         "properties": {
           "phase_id": {
@@ -1380,6 +1416,445 @@
           "objective"
         ],
         "title": "CurrentPhase"
+      },
+      "DeadlineDefinition": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "is_explicit": {
+            "type": "boolean",
+            "title": "Is Explicit"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "is_explicit"
+        ],
+        "title": "DeadlineDefinition"
+      },
+      "DecisionBasis": {
+        "properties": {
+          "statement": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Statement"
+          },
+          "basis_type": {
+            "type": "string",
+            "enum": [
+              "user_context",
+              "known_constraint",
+              "working_assumption"
+            ],
+            "title": "Basis Type"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "statement",
+          "basis_type"
+        ],
+        "title": "DecisionBasis"
+      },
+      "DecisionExperiment": {
+        "properties": {
+          "experiment_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Experiment Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "hypothesis": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Hypothesis"
+          },
+          "success_signal": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Success Signal"
+          },
+          "effort_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Effort Level"
+          },
+          "task_client_node_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Task Client Node Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "experiment_id",
+          "title",
+          "hypothesis",
+          "success_signal",
+          "effort_level",
+          "task_client_node_ids"
+        ],
+        "title": "DecisionExperiment"
+      },
+      "DecisionGate": {
+        "properties": {
+          "review_after": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Review After"
+          },
+          "proceed_if": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Proceed If"
+          },
+          "stop_if": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Stop If"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "review_after",
+          "proceed_if",
+          "stop_if"
+        ],
+        "title": "DecisionGate"
+      },
+      "DecisionStrategyContext": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "strategy_type": {
+            "type": "string",
+            "const": "decision",
+            "title": "Strategy Type"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "options": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 2,
+            "title": "Options"
+          },
+          "current_judgment": {
+            "$ref": "#/components/schemas/CurrentJudgment"
+          },
+          "basis": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionBasis"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Basis"
+          },
+          "missing_information": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Missing Information"
+          },
+          "experiments": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionExperiment"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Experiments"
+          },
+          "decision_gate": {
+            "$ref": "#/components/schemas/DecisionGate"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "strategy_type",
+          "question",
+          "options",
+          "current_judgment",
+          "basis",
+          "missing_information",
+          "experiments",
+          "decision_gate"
+        ],
+        "title": "DecisionStrategyContext"
+      },
+      "DeliverableDefinition": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "format": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Format"
+          },
+          "quality_bar": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Quality Bar"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "format",
+          "quality_bar"
+        ],
+        "title": "DeliverableDefinition"
+      },
+      "DeliveryScope": {
+        "properties": {
+          "must_have": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Must Have"
+          },
+          "should_have": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Should Have"
+          },
+          "can_cut": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 5,
+            "title": "Can Cut"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "must_have"
+        ],
+        "title": "DeliveryScope"
+      },
+      "DeliveryStrategyContext": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "strategy_type": {
+            "type": "string",
+            "const": "delivery",
+            "title": "Strategy Type"
+          },
+          "deliverable": {
+            "$ref": "#/components/schemas/DeliverableDefinition"
+          },
+          "deadline": {
+            "$ref": "#/components/schemas/DeadlineDefinition"
+          },
+          "time_plan": {
+            "$ref": "#/components/schemas/DeliveryTimePlan"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DeliveryScope"
+          },
+          "workstreams": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveryWorkstream"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Workstreams"
+          },
+          "critical_path_client_node_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Critical Path Client Node Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "strategy_type",
+          "deliverable",
+          "deadline",
+          "time_plan",
+          "scope",
+          "workstreams",
+          "critical_path_client_node_ids"
+        ],
+        "title": "DeliveryStrategyContext"
+      },
+      "DeliveryTimePlan": {
+        "properties": {
+          "available_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 43200.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Minutes"
+          },
+          "planned_minutes": {
+            "type": "integer",
+            "maximum": 43200.0,
+            "minimum": 1.0,
+            "title": "Planned Minutes"
+          },
+          "buffer_minutes": {
+            "type": "integer",
+            "maximum": 43200.0,
+            "minimum": 0.0,
+            "title": "Buffer Minutes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "planned_minutes",
+          "buffer_minutes"
+        ],
+        "title": "DeliveryTimePlan"
+      },
+      "DeliveryWorkstream": {
+        "properties": {
+          "workstream_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Workstream Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "output": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Output"
+          },
+          "task_client_node_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 160,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Task Client Node Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workstream_id",
+          "title",
+          "output",
+          "task_client_node_ids"
+        ],
+        "title": "DeliveryWorkstream"
       },
       "HTTPValidationError": {
         "properties": {
@@ -2839,6 +3314,31 @@
                 "type": "null"
               }
             ]
+          },
+          "strategy_context": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DeliveryStrategyContext"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DecisionStrategyContext"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "strategy_type",
+                  "mapping": {
+                    "decision": "#/components/schemas/DecisionStrategyContext",
+                    "delivery": "#/components/schemas/DeliveryStrategyContext"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Context"
           }
         },
         "additionalProperties": false,
@@ -2875,6 +3375,31 @@
                 "type": "null"
               }
             ]
+          },
+          "strategy_context": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DeliveryStrategyContext"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DecisionStrategyContext"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "strategy_type",
+                  "mapping": {
+                    "decision": "#/components/schemas/DecisionStrategyContext",
+                    "delivery": "#/components/schemas/DeliveryStrategyContext"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Context"
           }
         },
         "additionalProperties": false,

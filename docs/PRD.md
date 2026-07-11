@@ -246,11 +246,15 @@ case 40 连续三次单独验证也全部通过。
 
 ## 12. 后续版本
 
-### v1.2.7-B/C - Planning Model Differentiation
+### v1.2.8 - Planning Model Differentiation
 
-- 短期目标使用 deliverables/workstreams。
-- 探索决策使用独立 decision route。
-- v1.2.7-A 长期执行循环保持已完成状态。
+- `TaskTree` 计划新增 optional `strategy_context`，与负责阶段视野的 `planning_context` 分离。
+- 短期目标使用 delivery context，结构化表达交付物、截止约束、时间预算与缓冲、范围取舍、workstreams 和关键路径；不增加 Roadmap。
+- 探索决策使用 decision context，结构化表达当前判断、置信度、依据、信息缺口、低成本实验和决策门槛。
+- 历史计划继续兼容，现有 summary 解析仅作为 legacy fallback。
+- v1.2.7-A 长期执行循环与 `context_checklist` 保持不变。
+- 设计规格：`docs/superpowers/specs/2026-07-10-v1.2.8-planning-model-differentiation-design.md`。
+- 执行计划：`docs/superpowers/plans/2026-07-10-v1.2.8-planning-model-differentiation.md`。
 
 ### v1.3.0 - Task Copilot
 

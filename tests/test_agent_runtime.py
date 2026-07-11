@@ -232,6 +232,56 @@ def test_agent_runtime_sse_envelope_uses_run_scoped_sequence_and_event_id():
     assert third["data"]["payload"]["code"] == "AGENT_RUN_FAILED"
 
 
+def test_plan_ready_sse_retains_strategy_context(monkeypatch):
+    runtime = AgentRuntime(graph_factory=lambda **_: AsyncStreamGraph())
+    strategy_context = {
+        "schema_version": 1,
+        "strategy_type": "delivery",
+        "deliverable": {"title": "Report"},
+    }
+
+    async def fake_persist_interrupt(**_):
+        return None
+
+    monkeypatch.setattr(runtime, "_persist_interrupt", fake_persist_interrupt)
+    appended = asyncio.run(
+        runtime._append_chunk(
+            user_id="11111111-1111-1111-1111-111111111111",
+            thread_id="thread-strategy",
+            chunk={
+                "__interrupt__": [
+                    SimpleNamespace(
+                        value={
+                            "type": "task_tree_review",
+                            "planning_mode": "initial",
+                            "task_tree": {
+                                "summary": "Delivery plan",
+                                "strategy_context": strategy_context,
+                            },
+                        }
+                    )
+                ]
+            },
+            run_type="initial",
+            request_id="request-strategy",
+        )
+    )
+
+    event = _parse_sse_event(
+        runtime._events[
+            EventRunKey(
+                thread_id="thread-strategy",
+                run_type="initial",
+                request_id="request-strategy",
+            )
+        ][0]
+    )
+
+    assert appended is True
+    assert event["event"] == "plan_ready"
+    assert event["data"]["payload"]["task_tree"]["strategy_context"] == strategy_context
+
+
 def test_initial_run_emits_stage_events_before_slow_planner_finishes(monkeypatch):
     async def collect_before_release():
         graph = SlowInitialGraph()

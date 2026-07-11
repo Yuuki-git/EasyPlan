@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 def _load_eval_runner():
     module_path = Path(__file__).parent / "run_evals.py"
@@ -19,7 +21,8 @@ def test_evaluate_plan_flags_valid_tree_top_level_limit_and_low_value_icebreaker
     case = runner.EvalCase(
         input="今天下午4点前必须把商业计划书写完",
         expected_intent_type="short_term_delivery",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
         must_have_icebreaker=False,
         max_nodes=1,
         description="短期交付不能有低智破冰动作",
@@ -131,7 +134,8 @@ def test_evaluate_plan_reports_invalid_task_tree_without_raising():
     case = runner.EvalCase(
         input="我想学日语",
         expected_intent_type="long_term_growth",
-        expected_horizon="72h",
+        expected_profile_horizon="months",
+        scope_horizon_rule="long_term_phase_1_72h",
         must_have_icebreaker=True,
         max_nodes=12,
         description="invalid output should be captured",
@@ -149,7 +153,7 @@ def test_load_cases_reads_planning_jsonl_fixture():
 
     cases = runner.load_cases(Path(__file__).parent / "evals" / "planning_cases.jsonl")
 
-    assert len(cases) == 42
+    assert len(cases) == 54
     intent_counts = {
         intent_type: sum(1 for case in cases if case.expected_intent_type == intent_type)
         for intent_type in {
@@ -160,11 +164,56 @@ def test_load_cases_reads_planning_jsonl_fixture():
         }
     }
     assert all(count >= 8 for count in intent_counts.values())
-    long_term_v2_cases = [case for case in cases if case.case_id is not None]
+    long_term_v2_cases = [
+        case
+        for case in cases
+        if case.case_id is not None and 33 <= int(case.case_id) <= 42
+    ]
     assert [case.case_id for case in long_term_v2_cases] == [
         str(index) for index in range(33, 43)
     ]
     assert all(case.require_outcome_checkpoints for case in long_term_v2_cases)
+    strategy_cases = [case for case in cases if case.case_id and int(case.case_id) >= 43]
+    assert [case.case_id for case in strategy_cases] == [str(index) for index in range(43, 55)]
+    assert sum(case.expected_intent_type == "short_term_delivery" for case in strategy_cases) == 6
+    assert sum(case.expected_intent_type == "exploration_decision" for case in strategy_cases) == 6
+
+
+def test_eval_case_rejects_legacy_horizon_field() -> None:
+    runner = _load_eval_runner()
+
+    with pytest.raises(TypeError):
+        runner.EvalCase(
+            input="legacy",
+            expected_intent_type="long_term_growth",
+            expected_horizon="72h",
+            must_have_icebreaker=True,
+            max_nodes=5,
+            description="legacy mixed contract",
+        )
+
+
+@pytest.mark.parametrize(
+    ("profile_horizon", "scope_rule"),
+    [
+        ("72h", "long_term_phase_1_72h"),
+        ("months", "unsupported_scope"),
+        ("months", "short_term_delivery_window"),
+    ],
+)
+def test_eval_case_rejects_invalid_profile_or_scope_enum(profile_horizon, scope_rule) -> None:
+    runner = _load_eval_runner()
+
+    with pytest.raises(ValueError):
+        runner.EvalCase(
+            input="invalid enum",
+            expected_intent_type="long_term_growth",
+            expected_profile_horizon=profile_horizon,
+            scope_horizon_rule=scope_rule,
+            must_have_icebreaker=True,
+            max_nodes=5,
+            description="strict enum",
+        )
 
 
 def test_long_term_eval_reports_loop_checkpoint_and_capacity_metrics():
@@ -172,7 +221,8 @@ def test_long_term_eval_reports_loop_checkpoint_and_capacity_metrics():
     case = runner.EvalCase(
         input="半年后跑半马，每周可训练 4 次",
         expected_intent_type="long_term_growth",
-        expected_horizon="months",
+        expected_profile_horizon="months",
+        scope_horizon_rule="long_term_phase_1_72h",
         must_have_icebreaker=True,
         max_nodes=5,
         description="loop contract",
@@ -296,7 +346,8 @@ def test_schema_v2_horizon_allows_loop_cadence_without_future_occurrences():
     case = runner.EvalCase(
         input="今年想把英语口语练到可以参加海外面试",
         expected_intent_type="long_term_growth",
-        expected_horizon="months",
+        expected_profile_horizon="months",
+        scope_horizon_rule="long_term_phase_1_72h",
         must_have_icebreaker=True,
         max_nodes=5,
         description="schema v2 cadence is not an expanded schedule",
@@ -438,7 +489,8 @@ def test_run_cases_profiles_intent_before_building_strategy_prompt():
     case = runner.EvalCase(
         input="今天下午4点前必须把商业计划书写完",
         expected_intent_type="short_term_delivery",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
         must_have_icebreaker=False,
         max_nodes=8,
         description="短期交付必须走时间盒策略",
@@ -505,7 +557,8 @@ def test_run_cases_replans_with_runtime_validator_feedback():
     case = runner.EvalCase(
         input="今天完成交付",
         expected_intent_type="short_term_delivery",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
         must_have_icebreaker=False,
         max_nodes=8,
         description="runtime validator feedback",
@@ -526,7 +579,7 @@ def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
     passed = runner.EvalResult(
         input="a",
         expected_intent_type="short_term_delivery",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
         actual_intent_type="short_term_delivery",
         actual_time_horizon="hours",
         intent_type_matches_expected=True,
@@ -545,7 +598,7 @@ def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
     failed_profile = runner.EvalResult(
         input="b",
         expected_intent_type="context_checklist",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
         actual_intent_type="short_term_delivery",
         actual_time_horizon="hours",
         intent_type_matches_expected=False,
@@ -565,7 +618,7 @@ def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
     failed_json = runner.EvalResult(
         input="c",
         expected_intent_type="long_term_growth",
-        expected_horizon="72h",
+        expected_profile_horizon="months",
         actual_intent_type="long_term_growth",
         actual_time_horizon="days",
         intent_type_matches_expected=True,
@@ -594,12 +647,46 @@ def test_summarize_reports_core_eval_metrics_and_threshold_readiness():
     assert "abstract_task_violation_rate" in summary
 
 
+@pytest.mark.parametrize(
+    "metric",
+    ["profile_horizon_accuracy", "scope_horizon_compliance_rate"],
+)
+def test_strict_gate_requires_profile_and_scope_horizon_to_each_be_perfect(metric):
+    runner = _load_eval_runner()
+    summary = {
+        "intent_classification_accuracy": 1.0,
+        "strategy_compliance_rate": 1.0,
+        "json_parse_success_rate": 1.0,
+        "horizon_accuracy": 1.0,
+        "profile_horizon_accuracy": 1.0,
+        "scope_horizon_compliance_rate": 1.0,
+        "pass_rate": 1.0,
+        "strategy_context_coverage": 1.0,
+        "delivery_contract_pass_rate": 1.0,
+        "decision_contract_pass_rate": 1.0,
+        "explicit_constraint_preservation_rate": 1.0,
+        "strategy_reference_integrity_rate": 1.0,
+    }
+    args = runner.argparse.Namespace(
+        min_intent_accuracy=0.875,
+        min_strategy_compliance=0.8,
+        min_json_parse_success=1.0,
+        min_horizon_accuracy=0.8,
+        min_pass_rate=0.7,
+    )
+
+    assert runner.core_strict_gate_failed(summary, args) is False
+    summary[metric] = 0.99
+    assert runner.core_strict_gate_failed(summary, args) is True
+
+
 def test_exploration_decision_does_not_require_five_minute_icebreaker():
     runner = _load_eval_runner()
     case = runner.EvalCase(
         input="我不确定要不要转行产品经理",
         expected_intent_type="exploration_decision",
-        expected_horizon="days",
+        expected_profile_horizon="days",
+        scope_horizon_rule="exploration_decision_window",
         must_have_icebreaker=True,
         max_nodes=6,
         description="探索决策不强制 <=5 分钟破冰",
@@ -665,7 +752,8 @@ def test_exploration_decision_eval_rejects_route_only_summary_without_answer_fir
     case = runner.EvalCase(
         input="我是否要考虑转行产品经理",
         expected_intent_type="exploration_decision",
-        expected_horizon="days",
+        expected_profile_horizon="days",
+        scope_horizon_rule="exploration_decision_window",
         must_have_icebreaker=False,
         max_nodes=6,
         description="探索决策必须先回答当前判断，再给依据和下一步探索",
@@ -715,7 +803,8 @@ def test_exploration_eval_accepts_negated_immediate_execution_judgment():
     case = runner.EvalCase(
         input="我是否应该辞职转行",
         expected_intent_type="exploration_decision",
-        expected_horizon="days",
+        expected_profile_horizon="days",
+        scope_horizon_rule="exploration_decision_window",
         must_have_icebreaker=False,
         max_nodes=6,
         description="否定立即执行是判断，不是提前执行",
@@ -789,9 +878,9 @@ def test_failure_diagnostics_include_actionable_eval_context():
     result = runner.EvalResult(
         input="我想明年考过日语 N3",
         expected_intent_type="long_term_growth",
-        expected_horizon="72h",
+        expected_profile_horizon="months",
         actual_intent_type="long_term_growth",
-        actual_time_horizon="months",
+        actual_time_horizon="days",
         intent_type_matches_expected=True,
         time_horizon_matches_expected=False,
         valid_task_tree=True,
@@ -833,7 +922,8 @@ def test_evaluate_plan_reports_action_quality_metrics_without_affecting_pass_sta
     case = runner.EvalCase(
         input="今天下午前写完项目复盘",
         expected_intent_type="short_term_delivery",
-        expected_horizon="hours",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
         must_have_icebreaker=False,
         max_nodes=8,
         description="Action quality metrics should be observational only",
@@ -900,6 +990,302 @@ def test_load_env_file_sets_missing_environment_values(tmp_path, monkeypatch):
     assert runner.os.environ["EASYPLAN_LLM_PROVIDER"] == "xiaomi"
     assert runner.os.environ["EASYPLAN_XIAOMI_MIMO_MODEL"] == "mimo-v2.5-pro"
     assert runner.os.environ["EXISTING_VALUE"] == "from_env"
+
+
+def test_eval_uses_shared_delivery_contract_and_reports_new_metrics(monkeypatch):
+    runner = _load_eval_runner()
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    case = runner.EvalCase(
+        input="我只有 2 小时，今天下午 5 点前交 PPT",
+        expected_intent_type="short_term_delivery",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
+        must_have_icebreaker=False,
+        max_nodes=4,
+        description="delivery contract",
+        case_id="contract-delivery",
+        require_explicit_constraint_preservation=True,
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "交付 PPT",
+            "description": None,
+            "verb": "交付",
+            "estimated_minutes": 100,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "draft",
+                    "title": "撰写 PPT 核心内容",
+                    "description": "形成可评审的核心页面。",
+                    "verb": "撰写",
+                    "estimated_minutes": 100,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存包含结论与证据的 PPT。",
+                    "start_hint": "先写结论页标题。",
+                    "fallback_action": "先完成结论页与一页证据。",
+                }
+            ],
+        },
+        "summary": "按时交付 PPT。",
+        "assumptions": [],
+        "planning_context": None,
+        "strategy_context": {
+            "schema_version": 1,
+            "strategy_type": "delivery",
+            "deliverable": {
+                "title": "PPT",
+                "format": "PPT",
+                "quality_bar": ["包含结论与证据"],
+            },
+            "deadline": {"text": "今天下午 5 点前", "is_explicit": True},
+            "time_plan": {
+                "available_minutes": 120,
+                "planned_minutes": 100,
+                "buffer_minutes": 20,
+            },
+            "scope": {
+                "must_have": ["核心结论"],
+                "should_have": [],
+                "can_cut": ["视觉润色"],
+            },
+            "workstreams": [
+                {
+                    "workstream_id": "drafting",
+                    "title": "内容撰写",
+                    "output": "可评审 PPT",
+                    "task_client_node_ids": ["draft"],
+                }
+            ],
+            "critical_path_client_node_ids": ["draft"],
+        },
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.95,
+        },
+    )
+    summary = runner.summarize([result])
+
+    assert result.strategy_context_error_codes == []
+    assert result.strategy_context_covered is True
+    assert result.delivery_contract_passed is True
+    assert result.explicit_constraints_preserved is True
+    assert result.strategy_reference_integrity is True
+    assert summary["strategy_context_coverage"] == 1.0
+    assert summary["delivery_contract_pass_rate"] == 1.0
+    assert summary["explicit_constraint_preservation_rate"] == 1.0
+    assert summary["strategy_reference_integrity_rate"] == 1.0
+
+
+def test_eval_prints_stable_strategy_reference_error_code(monkeypatch):
+    runner = _load_eval_runner()
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    case = runner.EvalCase(
+        input="今天完成报告",
+        expected_intent_type="short_term_delivery",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
+        must_have_icebreaker=False,
+        max_nodes=4,
+        description="invalid reference",
+        case_id="invalid-reference",
+    )
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "完成报告",
+            "description": None,
+            "verb": "完成",
+            "estimated_minutes": 30,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "draft",
+                    "title": "撰写报告",
+                    "description": "输出报告初稿。",
+                    "verb": "撰写",
+                    "estimated_minutes": 30,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存报告初稿。",
+                    "start_hint": "先写核心结论。",
+                    "fallback_action": "先写一条结论。",
+                }
+            ],
+        },
+        "summary": "完成报告。",
+        "assumptions": [],
+        "strategy_context": {
+            "schema_version": 1,
+            "strategy_type": "delivery",
+            "deliverable": {
+                "title": "报告",
+                "format": "文档",
+                "quality_bar": ["可评审"],
+            },
+            "deadline": {"text": "今天", "is_explicit": True},
+            "time_plan": {
+                "available_minutes": None,
+                "planned_minutes": 30,
+                "buffer_minutes": 0,
+            },
+            "scope": {"must_have": ["结论"], "should_have": [], "can_cut": []},
+            "workstreams": [
+                {
+                    "workstream_id": "drafting",
+                    "title": "撰写",
+                    "output": "报告",
+                    "task_client_node_ids": ["missing"],
+                }
+            ],
+            "critical_path_client_node_ids": ["missing"],
+        },
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.95,
+        },
+    )
+    diagnostics = runner.build_failure_diagnostics([result])
+
+    assert "DELIVERY_WORKSTREAM_REFERENCE_INVALID" in result.strategy_context_error_codes
+    assert result.strategy_reference_integrity is False
+    assert diagnostics[0]["case_id"] == "invalid-reference"
+    assert "DELIVERY_WORKSTREAM_REFERENCE_INVALID" in diagnostics[0]["strategy_context_error_codes"]
+
+
+def test_horizon_fails_when_profile_horizon_does_not_match_expected():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="今天完成报告",
+        expected_intent_type="short_term_delivery",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
+        must_have_icebreaker=False,
+        max_nodes=4,
+        description="profile horizon mismatch",
+    )
+
+    result = runner.evaluate_plan(
+        case,
+        _simple_horizon_plan(),
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "days",
+            "confidence_score": 0.95,
+        },
+    )
+
+    assert result.profile_horizon_matches_expected is False
+    assert result.scope_horizon_compliant is True
+    assert result.time_horizon_matches_expected is False
+
+
+def test_horizon_fails_when_scope_expands_despite_matching_profile():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="三个月通过考试",
+        expected_intent_type="long_term_growth",
+        expected_profile_horizon="months",
+        scope_horizon_rule="long_term_phase_1_72h",
+        must_have_icebreaker=True,
+        max_nodes=5,
+        description="scope horizon violation",
+    )
+    plan = _simple_horizon_plan(title="第1周完成全部基础训练", minutes=5)
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "months",
+            "confidence_score": 0.95,
+        },
+    )
+
+    assert result.profile_horizon_matches_expected is True
+    assert result.scope_horizon_compliant is False
+    assert result.time_horizon_matches_expected is False
+
+
+def test_horizon_passes_only_when_profile_and_scope_both_pass():
+    runner = _load_eval_runner()
+    case = runner.EvalCase(
+        input="今天完成报告",
+        expected_intent_type="short_term_delivery",
+        expected_profile_horizon="hours",
+        scope_horizon_rule="short_term_delivery_window",
+        must_have_icebreaker=False,
+        max_nodes=4,
+        description="profile and scope horizon pass",
+    )
+
+    result = runner.evaluate_plan(
+        case,
+        _simple_horizon_plan(),
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+            "confidence_score": 0.95,
+        },
+    )
+    summary = runner.summarize([result])
+
+    assert result.profile_horizon_matches_expected is True
+    assert result.scope_horizon_compliant is True
+    assert result.time_horizon_matches_expected is True
+    assert summary["profile_horizon_accuracy"] == 1.0
+    assert summary["scope_horizon_compliance_rate"] == 1.0
+    assert summary["horizon_accuracy"] == 1.0
+
+
+def _simple_horizon_plan(*, title: str = "撰写报告结论", minutes: int = 20) -> dict:
+    return {
+        "root": {
+            "client_node_id": "root",
+            "title": "执行计划",
+            "description": None,
+            "verb": "执行",
+            "estimated_minutes": minutes,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "action",
+                    "title": title,
+                    "description": "形成可检查结果。",
+                    "verb": "撰写",
+                    "estimated_minutes": minutes,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存一份可检查结果。",
+                    "start_hint": "先写第一条内容。",
+                    "fallback_action": "先写标题和一条要点。",
+                }
+            ],
+        },
+        "summary": "完成当前计划。",
+        "assumptions": [],
+    }
 
 
 def test_phase_metrics_detect_completed_phase_mutation():

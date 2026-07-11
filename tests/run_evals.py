@@ -9,7 +9,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +30,11 @@ from app.services.llm_service import (  # noqa: E402
     ListReasoningSink,
     ListUsageSink,
     create_planner_client,
+)
+from app.services.strategy_context import (  # noqa: E402
+    expected_strategy_type,
+    strategy_context_enabled,
+    validate_strategy_context,
 )
 
 
@@ -110,11 +115,36 @@ EXPLORATION_DISCOVERY_TERMS = (
 )
 
 
+ProfileHorizon = Literal["minutes", "hours", "days", "weeks", "months"]
+ScopeHorizonRule = Literal[
+    "long_term_phase_1_72h",
+    "short_term_delivery_window",
+    "context_checklist_window",
+    "exploration_decision_window",
+]
+PROFILE_HORIZONS = frozenset({"minutes", "hours", "days", "weeks", "months"})
+SCOPE_HORIZON_RULES = frozenset(
+    {
+        "long_term_phase_1_72h",
+        "short_term_delivery_window",
+        "context_checklist_window",
+        "exploration_decision_window",
+    }
+)
+INTENT_SCOPE_HORIZON_RULE = {
+    "long_term_growth": "long_term_phase_1_72h",
+    "short_term_delivery": "short_term_delivery_window",
+    "context_checklist": "context_checklist_window",
+    "exploration_decision": "exploration_decision_window",
+}
+
+
 @dataclass(frozen=True)
 class EvalCase:
     input: str
     expected_intent_type: str
-    expected_horizon: str
+    expected_profile_horizon: ProfileHorizon
+    scope_horizon_rule: ScopeHorizonRule
     must_have_icebreaker: bool
     max_nodes: int
     description: str
@@ -125,13 +155,31 @@ class EvalCase:
     require_outcome_checkpoints: bool = False
     require_capacity_assumption: bool = False
     forbid_future_occurrences: bool = False
+    require_explicit_constraint_preservation: bool = False
+    require_can_cut: bool = False
+    max_action_nodes: int | None = None
+    expected_decision_confidence: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.expected_profile_horizon not in PROFILE_HORIZONS:
+            raise ValueError(
+                f"invalid expected_profile_horizon: {self.expected_profile_horizon}"
+            )
+        if self.scope_horizon_rule not in SCOPE_HORIZON_RULES:
+            raise ValueError(f"invalid scope_horizon_rule: {self.scope_horizon_rule}")
+        expected_rule = INTENT_SCOPE_HORIZON_RULE.get(self.expected_intent_type)
+        if expected_rule != self.scope_horizon_rule:
+            raise ValueError(
+                "scope_horizon_rule does not match expected_intent_type: "
+                f"expected {expected_rule}, got {self.scope_horizon_rule}"
+            )
 
 
 @dataclass
 class EvalResult:
     input: str
     expected_intent_type: str
-    expected_horizon: str
+    expected_profile_horizon: ProfileHorizon
     actual_intent_type: str | None
     actual_time_horizon: str | None
     intent_type_matches_expected: bool | None
@@ -169,6 +217,16 @@ class EvalResult:
     weekly_target_matches: bool | None = None
     outcome_evidence_present: bool | None = None
     future_occurrence_violation: bool | None = None
+    case_id: str | None = None
+    strategy_context_covered: bool | None = None
+    delivery_contract_passed: bool | None = None
+    decision_contract_passed: bool | None = None
+    explicit_constraints_preserved: bool | None = None
+    strategy_reference_integrity: bool | None = None
+    strategy_context_error_codes: list[str] = field(default_factory=list)
+    profile_horizon_matches_expected: bool | None = None
+    scope_horizon_compliant: bool | None = None
+    scope_horizon_rule: ScopeHorizonRule | None = None
 
     @property
     def passed(self) -> bool:
@@ -250,7 +308,7 @@ def load_cases(path: Path) -> list[EvalCase]:
             raw_case = json.loads(stripped)
             try:
                 cases.append(EvalCase(**raw_case))
-            except TypeError as exc:
+            except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid eval case at {path}:{line_number}: {exc}") from exc
     return cases
 
@@ -318,7 +376,7 @@ async def run_cases(
             result = EvalResult(
                 input=case.input,
                 expected_intent_type=case.expected_intent_type,
-                expected_horizon=case.expected_horizon,
+                expected_profile_horizon=case.expected_profile_horizon,
                 actual_intent_type=None,
                 actual_time_horizon=None,
                 intent_type_matches_expected=None,
@@ -338,6 +396,7 @@ async def run_cases(
                 top_level_preview=[],
                 first_action_snapshot=None,
                 runtime_error=f"{type(exc).__name__}: {exc}",
+                scope_horizon_rule=case.scope_horizon_rule,
             )
         result.reasoning_event_count = len(reasoning_sink.events)
         result.usage_record_count = len(usage_sink.records)
@@ -548,7 +607,7 @@ def evaluate_plan(
         return EvalResult(
             input=case.input,
             expected_intent_type=case.expected_intent_type,
-            expected_horizon=case.expected_horizon,
+            expected_profile_horizon=case.expected_profile_horizon,
             actual_intent_type=actual_intent_type,
             actual_time_horizon=actual_time_horizon,
             intent_type_matches_expected=intent_type_matches_expected,
@@ -568,6 +627,7 @@ def evaluate_plan(
             top_level_preview=[],
             first_action_snapshot=None,
             validation_error=str(exc),
+            scope_horizon_rule=case.scope_horizon_rule,
         )
 
     top_level_node_count = len(task_tree.root.children)
@@ -578,13 +638,33 @@ def evaluate_plan(
         short_term_ok = not contains_low_value
     icebreaker_present = has_first_step_icebreaker(task_tree)
     horizon_errors = collect_horizon_errors(case, task_tree)
-    time_horizon_matches_expected = not horizon_errors
+    profile_horizon_matches_expected = (
+        actual_time_horizon == case.expected_profile_horizon
+    )
+    scope_horizon_compliant = not horizon_errors
+    time_horizon_matches_expected = (
+        profile_horizon_matches_expected and scope_horizon_compliant
+    )
     strategy_errors = collect_strategy_errors(
         case,
         task_tree,
         top_level_node_count=top_level_node_count,
         contains_low_value_icebreaker=contains_low_value,
         icebreaker_present=icebreaker_present,
+    )
+    contract_errors = (
+        validate_strategy_context(
+            task_tree,
+            intent_type=case.expected_intent_type,
+            intent_text=case.input,
+            enabled=True,
+        )
+        if strategy_context_enabled()
+        else []
+    )
+    contract_error_codes = [error.code for error in contract_errors]
+    strategy_errors.extend(
+        f"{error.code}: {error.message}" for error in contract_errors
     )
     top_level_preview = preview_top_level_tasks(task_tree)
     first_action_snapshot = snapshot_first_action(task_tree)
@@ -613,11 +693,40 @@ def evaluate_plan(
         if case.forbid_future_occurrences
         else None
     )
+    expected_context_type = expected_strategy_type(case.expected_intent_type)
+    strategy_context_covered = None
+    delivery_contract_passed = None
+    decision_contract_passed = None
+    explicit_constraints_preserved = None
+    strategy_reference_integrity = None
+    if strategy_context_enabled() and expected_context_type is not None:
+        strategy_context_covered = (
+            task_tree.strategy_context is not None
+            and task_tree.strategy_context.strategy_type == expected_context_type
+        )
+        if expected_context_type == "delivery":
+            delivery_contract_passed = not contract_errors
+        else:
+            decision_contract_passed = not contract_errors
+        strategy_reference_integrity = not any(
+            code
+            in {
+                "STRATEGY_TASK_ID_DUPLICATE",
+                "DELIVERY_WORKSTREAM_REFERENCE_INVALID",
+                "DELIVERY_CRITICAL_PATH_MISSING",
+                "DECISION_EXPERIMENT_REFERENCE_INVALID",
+            }
+            for code in contract_error_codes
+        )
+    if strategy_context_enabled() and case.require_explicit_constraint_preservation:
+        explicit_constraints_preserved = (
+            "DELIVERY_EXPLICIT_CONSTRAINT_DRIFT" not in contract_error_codes
+        )
 
     return EvalResult(
         input=case.input,
         expected_intent_type=case.expected_intent_type,
-        expected_horizon=case.expected_horizon,
+        expected_profile_horizon=case.expected_profile_horizon,
         actual_intent_type=actual_intent_type,
         actual_time_horizon=actual_time_horizon,
         intent_type_matches_expected=intent_type_matches_expected,
@@ -667,6 +776,16 @@ def evaluate_plan(
             else None
         ),
         future_occurrence_violation=future_occurrence_violation,
+        case_id=case.case_id,
+        strategy_context_covered=strategy_context_covered,
+        delivery_contract_passed=delivery_contract_passed,
+        decision_contract_passed=decision_contract_passed,
+        explicit_constraints_preserved=explicit_constraints_preserved,
+        strategy_reference_integrity=strategy_reference_integrity,
+        strategy_context_error_codes=contract_error_codes,
+        profile_horizon_matches_expected=profile_horizon_matches_expected,
+        scope_horizon_compliant=scope_horizon_compliant,
+        scope_horizon_rule=case.scope_horizon_rule,
     )
 
 
@@ -745,7 +864,7 @@ def snapshot_first_action(task_tree: TaskTree) -> dict[str, Any] | None:
 def collect_horizon_errors(case: EvalCase, task_tree: TaskTree) -> list[str]:
     text = task_tree_text(task_tree)
     errors: list[str] = []
-    if case.expected_intent_type == "long_term_growth":
+    if case.scope_horizon_rule == "long_term_phase_1_72h":
         context = task_tree.planning_context
         patterns = (
             LONG_TERM_V2_HORIZON_PATTERNS
@@ -760,7 +879,23 @@ def collect_horizon_errors(case: EvalCase, task_tree: TaskTree) -> list[str]:
             errors.append(
                 "long_term_growth top-level tasks look like a full curriculum roadmap instead of Phase 1 actions"
             )
-    elif case.expected_intent_type == "exploration_decision":
+    elif case.scope_horizon_rule == "short_term_delivery_window":
+        if task_tree.planning_context is not None:
+            errors.append(
+                "short_term_delivery scope must stay inside the delivery window without planning_context"
+            )
+        if any(pattern.search(text) for pattern in LONG_TERM_HORIZON_PATTERNS):
+            errors.append(
+                "short_term_delivery output expands into long-cycle scheduling"
+            )
+    elif case.scope_horizon_rule == "context_checklist_window":
+        if task_tree.planning_context is not None:
+            errors.append(
+                "context_checklist scope must stay inside the checklist window without planning_context"
+            )
+        if any(pattern.search(text) for pattern in LONG_TERM_HORIZON_PATTERNS):
+            errors.append("context_checklist output expands beyond its operational window")
+    elif case.scope_horizon_rule == "exploration_decision_window":
         if _contains_non_negated_pattern(text, EXPLORATION_EXECUTION_PATTERNS):
             errors.append(
                 "exploration_decision output assumes an execution decision instead of staying in the clarification phase"
@@ -783,6 +918,23 @@ def collect_strategy_errors(
         )
     if case.expected_intent_type == "short_term_delivery" and contains_low_value_icebreaker:
         errors.append("short_term_delivery contains a low-value icebreaker")
+    action_count = sum(
+        node.node_type == "action" for node in iter_task_nodes(task_tree.root)
+    )
+    if case.max_action_nodes is not None and action_count > case.max_action_nodes:
+        errors.append(
+            "DELIVERY_SMALL_TASK_OVERPLANNED: "
+            f"action count {action_count} exceeds {case.max_action_nodes}"
+        )
+    if case.require_can_cut:
+        context = task_tree.strategy_context
+        can_cut = (
+            context.scope.can_cut
+            if context is not None and context.strategy_type == "delivery"
+            else []
+        )
+        if not can_cut:
+            errors.append("DELIVERY_CAN_CUT_MISSING: constrained delivery requires can_cut")
     if (
         case.expected_intent_type == "long_term_growth"
         and case.must_have_icebreaker
@@ -802,6 +954,18 @@ def collect_strategy_errors(
         if not any(term in text for term in EXPLORATION_DISCOVERY_TERMS):
             errors.append("exploration_decision lacks clarification, information gathering, experiment, or decision nodes")
         errors.extend(exploration_summary_errors(task_tree.summary))
+        if case.expected_decision_confidence is not None:
+            context = task_tree.strategy_context
+            confidence = (
+                context.current_judgment.confidence
+                if context is not None and context.strategy_type == "decision"
+                else None
+            )
+            if confidence != case.expected_decision_confidence:
+                errors.append(
+                    "DECISION_CONFIDENCE_MISMATCH: "
+                    f"expected {case.expected_decision_confidence}, got {confidence}"
+                )
     if case.expected_intent_type == "long_term_growth":
         context = task_tree.planning_context
         loops = list(context.practice_loops) if context is not None else []
@@ -969,6 +1133,12 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
         if horizon_classified
         else 0.0
     )
+    profile_horizon_accuracy = _optional_bool_rate(
+        result.profile_horizon_matches_expected for result in results
+    )
+    scope_horizon_compliance_rate = _optional_bool_rate(
+        result.scope_horizon_compliant for result in results
+    )
     pass_rate = (
         sum(1 for result in results if result.passed) / len(results)
         if results
@@ -1002,6 +1172,8 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
         "json_parse_success_rate": json_parse_success_rate,
         "intent_accuracy": intent_accuracy,
         "horizon_accuracy": horizon_accuracy,
+        "profile_horizon_accuracy": profile_horizon_accuracy,
+        "scope_horizon_compliance_rate": scope_horizon_compliance_rate,
         "valid_task_tree": sum(1 for result in results if result.valid_task_tree),
         "top_level_within_max": sum(
             1 for result in results if result.top_level_exceeds_max is False
@@ -1047,6 +1219,21 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
                 for result in results
             ),
         ),
+        "strategy_context_coverage": _optional_bool_rate(
+            result.strategy_context_covered for result in results
+        ),
+        "delivery_contract_pass_rate": _optional_bool_rate(
+            result.delivery_contract_passed for result in results
+        ),
+        "decision_contract_pass_rate": _optional_bool_rate(
+            result.decision_contract_passed for result in results
+        ),
+        "explicit_constraint_preservation_rate": _optional_bool_rate(
+            result.explicit_constraints_preserved for result in results
+        ),
+        "strategy_reference_integrity_rate": _optional_bool_rate(
+            result.strategy_reference_integrity for result in results
+        ),
         "action_quality_targets": {
             "action_quality_pass_rate": 0.85,
             "average_actionability_score": 80,
@@ -1058,6 +1245,11 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
 
 def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+def _optional_bool_rate(values) -> float:
+    classified = [value for value in values if value is not None]
+    return _rate(sum(value is True for value in classified), len(classified))
 
 
 def print_report(results: list[EvalResult]) -> None:
@@ -1124,14 +1316,29 @@ def build_failure_diagnostics(results: list[EvalResult]) -> list[dict[str, Any]]
             failed_metrics.append("strategy_compliance")
         diagnostics.append(
             {
-                "case_id": index,
+                "case_id": result.case_id if result.case_id is not None else index,
                 "user_input": result.input,
                 "expected_intent_type": result.expected_intent_type,
                 "actual_intent_type": result.actual_intent_type,
+                "expected_profile_horizon": result.expected_profile_horizon,
+                "scope_horizon_rule": result.scope_horizon_rule,
                 "failed_metrics": failed_metrics,
                 "horizon_failure_reason": "; ".join(result.horizon_errors)
                 if result.horizon_errors
                 else _default_horizon_failure_reason(result),
+                "profile_horizon_match": result.profile_horizon_matches_expected,
+                "scope_horizon_compliance": result.scope_horizon_compliant,
+                "profile_horizon_failure_reason": (
+                    None
+                    if result.profile_horizon_matches_expected is not False
+                    else (
+                        f"expected_profile_horizon={result.expected_profile_horizon}, "
+                        f"actual_profile_time_horizon={result.actual_time_horizon}"
+                    )
+                ),
+                "scope_horizon_failure_reason": (
+                    "; ".join(result.horizon_errors) if result.horizon_errors else None
+                ),
                 "strategy_compliance_failure_reason": "; ".join(result.strategy_errors)
                 if result.strategy_errors
                 else None,
@@ -1143,6 +1350,7 @@ def build_failure_diagnostics(results: list[EvalResult]) -> list[dict[str, Any]]
                 "weekly_target_matches": result.weekly_target_matches,
                 "outcome_evidence_present": result.outcome_evidence_present,
                 "future_occurrence_violation": result.future_occurrence_violation,
+                "strategy_context_error_codes": result.strategy_context_error_codes,
             }
         )
     return diagnostics
@@ -1151,7 +1359,7 @@ def build_failure_diagnostics(results: list[EvalResult]) -> list[dict[str, Any]]
 def _default_horizon_failure_reason(result: EvalResult) -> str | None:
     if result.time_horizon_matches_expected is False:
         return (
-            f"expected_horizon={result.expected_horizon}, "
+            f"expected_profile_horizon={result.expected_profile_horizon}, "
             f"actual_profile_time_horizon={result.actual_time_horizon}"
         )
     return None
@@ -1219,7 +1427,7 @@ def parse_args() -> argparse.Namespace:
         "--min-horizon-accuracy",
         type=float,
         default=0.8,
-        help="Minimum acceptable scope horizon accuracy for strict mode.",
+        help="Minimum acceptable combined profile-and-scope horizon accuracy.",
     )
     parser.add_argument(
         "--min-pass-rate",
@@ -1230,8 +1438,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def core_strict_gate_failed(summary: dict[str, Any], args: argparse.Namespace) -> bool:
+    return (
+        summary["intent_classification_accuracy"] < args.min_intent_accuracy
+        or summary["strategy_compliance_rate"] < args.min_strategy_compliance
+        or summary["json_parse_success_rate"] < args.min_json_parse_success
+        or summary["horizon_accuracy"] < args.min_horizon_accuracy
+        or summary["profile_horizon_accuracy"] < 1.0
+        or summary["scope_horizon_compliance_rate"] < 1.0
+        or summary["pass_rate"] < args.min_pass_rate
+        or summary["strategy_context_coverage"] < 1.0
+        or summary["delivery_contract_pass_rate"] < 1.0
+        or summary["decision_contract_pass_rate"] < 1.0
+        or summary["explicit_constraint_preservation_rate"] < 1.0
+        or summary["strategy_reference_integrity_rate"] < 1.0
+    )
+
+
 async def amain() -> int:
     load_env_file()
+    os.environ["EASYPLAN_STRATEGY_CONTEXT_ENABLED"] = "true"
     args = parse_args()
     if args.phase_cases is not None:
         phase_cases = load_phase_cases(args.phase_cases)
@@ -1259,13 +1485,7 @@ async def amain() -> int:
     print_report(results)
     if args.strict_exit:
         summary = summarize(results)
-        if (
-            summary["intent_classification_accuracy"] < args.min_intent_accuracy
-            or summary["strategy_compliance_rate"] < args.min_strategy_compliance
-            or summary["json_parse_success_rate"] < args.min_json_parse_success
-            or summary["horizon_accuracy"] < args.min_horizon_accuracy
-            or summary["pass_rate"] < args.min_pass_rate
-        ):
+        if core_strict_gate_failed(summary, args):
             return 1
     return 0
 

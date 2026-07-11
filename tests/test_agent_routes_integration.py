@@ -621,6 +621,44 @@ def test_confirm_thread_checks_thread_ownership_and_resumes_langgraph():
     assert runtime.resumed[0]["request_id"] == "req_12345678"
 
 
+def test_confirm_edit_preserves_strategy_context_in_runtime_decision():
+    repository = FakeThreadRepository()
+    runtime = FakeRuntime()
+    client, user = _client_with_overrides(repository, runtime)
+    task_tree = _delivery_strategy_task_tree()
+    thread = FakeThread(
+        thread_id="thread-strategy",
+        user_id=str(user.id),
+        intent_text="今天完成报告",
+        status="awaiting_confirmation",
+        task_tree=task_tree,
+        interrupt_payload={
+            "type": "task_tree_review",
+            "status": "awaiting_confirmation",
+            "request_id": "req_strategy_123",
+            "task_tree": task_tree,
+        },
+    )
+    repository.threads[(str(user.id), thread.thread_id)] = thread
+
+    response = client.post(
+        f"/api/threads/{thread.thread_id}/confirm",
+        headers={"X-User-Timezone": "Asia/Shanghai"},
+        json={
+            "request_id": "req_strategy_123",
+            "action": "edit",
+            "task_tree": task_tree,
+        },
+    )
+
+    assert response.status_code == 202
+    resumed_tree = runtime.resumed[0]["decision"]["task_tree"]
+    assert (
+        TaskTree.model_validate(resumed_tree).strategy_context
+        == TaskTree.model_validate(task_tree).strategy_context
+    )
+
+
 def test_confirm_thread_requires_matching_next_phase_request_id():
     repository = FakeThreadRepository()
     runtime = FakeRuntime()
@@ -1198,6 +1236,63 @@ def _fake_route_task(
         ai_generated=ai_generated,
         metadata_=metadata,
     )
+
+
+def _delivery_strategy_task_tree() -> dict[str, Any]:
+    return {
+        "root": {
+            "client_node_id": "root",
+            "title": "完成报告",
+            "description": None,
+            "verb": "完成",
+            "estimated_minutes": 30,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "draft",
+                    "title": "撰写报告初稿",
+                    "description": "形成可评审内容。",
+                    "verb": "撰写",
+                    "estimated_minutes": 30,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存包含结论和证据的报告初稿。",
+                    "start_hint": "先写第一条核心结论。",
+                    "fallback_action": "先写结论标题和一条证据。",
+                }
+            ],
+        },
+        "summary": "完成可评审报告。",
+        "assumptions": [],
+        "planning_context": None,
+        "strategy_context": {
+            "schema_version": 1,
+            "strategy_type": "delivery",
+            "deliverable": {
+                "title": "报告初稿",
+                "format": "文档",
+                "quality_bar": ["包含结论和证据"],
+            },
+            "deadline": {"text": "今天", "is_explicit": True},
+            "time_plan": {
+                "available_minutes": None,
+                "planned_minutes": 30,
+                "buffer_minutes": 0,
+            },
+            "scope": {"must_have": ["结论"], "should_have": [], "can_cut": []},
+            "workstreams": [
+                {
+                    "workstream_id": "drafting",
+                    "title": "内容撰写",
+                    "output": "可评审报告",
+                    "task_client_node_ids": ["draft"],
+                }
+            ],
+            "critical_path_client_node_ids": ["draft"],
+        },
+    }
 
 
 def _phase_thread(*, user_id: UUID, thread_id: str) -> FakeThread:

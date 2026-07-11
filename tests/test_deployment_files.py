@@ -45,5 +45,6 @@ def test_env_examples_default_planner_to_deepseek():
 
     assert "EASYPLAN_LLM_PROVIDER=deepseek" in backend_env
     assert "EASYPLAN_PHASE_PLANNING_ENABLED=true" in backend_env
+    assert "EASYPLAN_STRATEGY_CONTEXT_ENABLED=false" in backend_env
     assert "VITE_PLANNER_PROVIDER=deepseek" in frontend_env
     assert 'os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek")' in main_source

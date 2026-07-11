@@ -1,6 +1,6 @@
 # EasyPlan Backend API
 
-版本：`v1.2.7.2`
+版本：`v1.2.8 backend contract (feature-flagged)`
 OpenAPI：[`docs/openapi.json`](./openapi.json)
 本地地址：`http://localhost:8000`
 
@@ -149,6 +149,23 @@ SSE 业务错误统一使用 `agent_error`，不使用浏览器保留的 `error`
 ```
 
 `interrupt_payload` 可能是 initial review、next-phase running/review，或 confirmed/cancelled/failed terminal envelope。
+
+### TaskTree `strategy_context`
+
+`TaskTree.strategy_context` 是可选判别联合，历史 TaskTree 可以不含该字段。新生成或
+refine 的目标意图在 `EASYPLAN_STRATEGY_CONTEXT_ENABLED=true` 时遵循：
+
+| intent_type | planning_context | strategy_context |
+| --- | --- | --- |
+| `long_term_growth` | schema v2 | `null` |
+| `short_term_delivery` | `null` | `strategy_type=delivery` |
+| `context_checklist` | `null` | `null` |
+| `exploration_decision` | schema v1 | `strategy_type=decision` |
+
+`delivery` 表达交付物、截止约束、时间预算与缓冲、范围取舍、workstreams 和关键路径。
+`decision` 表达阶段性判断、置信度、依据、信息缺口、低成本实验和继续/停止门槛。
+所有任务引用均使用现有 Action 的 `client_node_id`；后端确定性校验引用完整性和时间算术。
+该字段随 thread `task_tree` JSONB 原样持久化，不复制到单条 Task metadata，也不需要数据库迁移。
 
 ## 7. SSE
 

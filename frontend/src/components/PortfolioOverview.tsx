@@ -46,6 +46,8 @@ export const PortfolioOverview: React.FC<PortfolioOverviewProps> = ({ projects, 
         return { text: '长期成长', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
       case '探索决策':
         return { text: '探索决策', className: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
+      case '短期交付':
+        return { text: '短期交付', className: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
       case '手动计划':
         return { text: '手动计划', className: 'bg-purple-500/10 text-purple-400 border-purple-500/20' };
       default:

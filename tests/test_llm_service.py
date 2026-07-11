@@ -161,6 +161,22 @@ def test_openai_profiles_intent_with_structured_output_and_usage():
     assert usage_sink.records[0].total_tokens == 26
 
 
+def test_intent_profile_prompt_uses_current_decision_window_for_exploration():
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={"intent_type": "exploration_decision", "time_horizon": "days"},
+    )
+    from app.services.llm_service import _intent_profile_system_prompt
+
+    profile_prompt = _intent_profile_system_prompt("DeepSeek")
+
+    assert "current clarification and decision window" in profile_prompt
+    assert "default to days" in profile_prompt
+    assert "two-year cost" in profile_prompt
+    assert "weekly available hours" in profile_prompt
+    assert "探索决策" in prompt
+
+
 class FakeChatCompletions:
     def __init__(self, content: str | list[str]):
         self.contents = list(content) if isinstance(content, list) else [content]
@@ -218,6 +234,44 @@ def test_deepseek_planner_accepts_zero_estimate_for_group_container():
 
     assert result["root"]["estimated_minutes"] == 0
     assert result["root"]["children"][0]["estimated_minutes"] == 2
+
+
+def test_deepseek_planner_parses_discriminated_delivery_strategy_context():
+    task_tree = _valid_task_tree()
+    task_tree["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "delivery",
+        "deliverable": {
+            "title": "Launch note",
+            "format": "Document",
+            "quality_bar": ["Contains the launch decision"],
+        },
+        "deadline": {"text": "No explicit deadline", "is_explicit": False},
+        "time_plan": {
+            "available_minutes": None,
+            "planned_minutes": 2,
+            "buffer_minutes": 0,
+        },
+        "scope": {"must_have": ["Decision"], "should_have": [], "can_cut": []},
+        "workstreams": [
+            {
+                "workstream_id": "note",
+                "title": "Launch note",
+                "output": "Reviewable note",
+                "task_client_node_ids": ["task-1"],
+            }
+        ],
+        "critical_path_client_node_ids": ["task-1"],
+    }
+    fake_deepseek = FakeChatClient(json.dumps(task_tree))
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.create_plan("Create a launch plan"))
+
+    assert result["strategy_context"]["strategy_type"] == "delivery"
+    assert result["strategy_context"]["workstreams"][0]["task_client_node_ids"] == [
+        "task-1"
+    ]
 
 
 def test_json_cleanup_preserves_normal_json():
@@ -426,6 +480,70 @@ def test_deepseek_profiles_intent_with_json_mode():
     assert create_call["response_format"] == {"type": "json_object"}
     assert "IntentProfile" in create_call["messages"][0]["content"]
     assert result["intent_type"] == "exploration_decision"
+
+
+@pytest.mark.parametrize(
+    "intent_text",
+    [
+        "我想转行产品经理，但不知道现在是否适合做这个决定",
+        "我在犹豫要不要读研，担心两年时间和经济成本是否值得",
+        "我是否应该开始一个周末副业？目前每周只有 5 小时空闲",
+        "我是否应该搬去另一个城市发展？目前收入不稳定，也要照顾家人",
+    ],
+)
+def test_deepseek_normalizes_exploration_profile_to_current_decision_window(intent_text):
+    fake_deepseek = FakeChatClient(
+        json.dumps(
+            {
+                "intent_type": "exploration_decision",
+                "time_horizon": "months",
+                "confidence_score": 0.88,
+            }
+        )
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.profile_intent(intent_text))
+
+    assert result["time_horizon"] == "days"
+
+
+def test_deepseek_normalizes_same_trip_checklist_to_hours():
+    fake_deepseek = FakeChatClient(
+        json.dumps(
+            {
+                "intent_type": "context_checklist",
+                "time_horizon": "minutes",
+                "confidence_score": 0.9,
+            }
+        )
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(
+        planner.profile_intent("去公司前要带门禁卡、耳机、合同原件，还要记得寄快递")
+    )
+
+    assert result["intent_type"] == "context_checklist"
+    assert result["time_horizon"] == "hours"
+
+
+def test_deepseek_normalizes_month_long_delivery_project_to_long_term_growth():
+    fake_deepseek = FakeChatClient(
+        json.dumps(
+            {
+                "intent_type": "short_term_delivery",
+                "time_horizon": "weeks",
+                "confidence_score": 0.86,
+            }
+        )
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+
+    result = asyncio.run(planner.profile_intent("一个月整理并发布个人网站"))
+
+    assert result["intent_type"] == "long_term_growth"
+    assert result["time_horizon"] == "months"
 
 
 def test_xiaomi_mimo_planner_uses_json_mode_and_records_usage():

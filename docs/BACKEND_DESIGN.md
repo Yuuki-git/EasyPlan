@@ -50,6 +50,21 @@ Intent
 `IntentProfile` 是后续策略和时间视野的来源。`planning_context.time_horizon` 必须
 与 profile 一致，不允许 planner 在后续节点自行漂移。
 
+v1.2.8 将阶段导航与意图业务模型拆开：`planning_context` 只负责 Roadmap、当前阶段
+和 Next Action；optional `strategy_context` 使用 `strategy_type` discriminator，分别
+承载短期交付的 delivery contract 与探索决策的 decision contract。发布矩阵为：
+
+| intent_type | planning_context | strategy_context |
+| --- | --- | --- |
+| `long_term_growth` | schema v2 | `null` |
+| `short_term_delivery` | `null` | `delivery` |
+| `context_checklist` | `null` | `null` |
+| `exploration_decision` | schema v1 | `decision` |
+
+纯服务 `app/services/strategy_context.py` 负责 intent 映射、Action 引用、交付时间算术、
+预算缓冲、关键路径、决策实验和 gate 校验。它不依赖 LangGraph、数据库或 LLM；运行时
+Validator 和 Eval 复用同一实现，并以稳定错误码提供局部 replan 反馈。
+
 ## 4. 任务契约
 
 AI Action 除标题与时间外，还支持：
@@ -255,8 +270,31 @@ Validator-aware 42-case 实测为 `42/42`；Pass Rate、Intent、Strategy、JSON
 Horizon、Action Quality、Done Criteria Coverage 与 Long-Term Loop Contract
 均为 `100%`。case 40 连续三次单独验证全部通过。
 
-## 14. 非目标与后续
+2026-07-11 v1.2.8 P1 Horizon 契约修正后的后端测试为 `378 passed`。54 条 Eval
+已彻底移除语义混杂的 `expected_horizon`，改为两个严格字段：
+`expected_profile_horizon` 只表示目标总体跨度，合法值为
+`minutes/hours/days/weeks/months`；`scope_horizon_rule` 只表示本次计划的展开窗口，
+合法值为 `long_term_phase_1_72h`、`short_term_delivery_window`、
+`context_checklist_window`、`exploration_decision_window`。cases 1-8 的目标跨度为
+`months`，Scope Rule 为 `long_term_phase_1_72h`。
+
+DeepSeek 54-case 在新契约下重新实测为 `54/54`：Profile Horizon Accuracy、Scope
+Horizon Compliance 与合并 Horizon Accuracy 均为 `100%`；JSON、Intent、Strategy、
+Action Quality 和五项 Strategy Context 指标也均为 `100%`。合并 Horizon Accuracy
+仅在 Profile Match 和 Scope Compliance 同时通过时计为通过；`--strict-exit` 还独立
+要求这两项各自达到 `100%`，防止合并指标掩盖单侧回退。
+
+## 14. v1.2.8 持久化边界
+
+- `strategy_context` 随现有 `AgentThread.task_tree` JSONB 保存，无 migration 或新表；
+- initial/refine preview、confirm、snapshot 与 SSE `plan_ready` 保留完整字段；
+- Task 持久化只打散 `TaskNode`，不会把 strategy context 复制进每条 task metadata；
+- `EASYPLAN_STRATEGY_CONTEXT_ENABLED=false` 保持旧 Prompt/Validator 行为，开启后只约束
+  新 initial/refine 的 `short_term_delivery` 与 `exploration_decision`；
+- next-phase、长期 schema v2、context checklist 与 SSE envelope 不变。
+
+## 15. 非目标与后续
 
 - 不恢复 Todoist、Microsoft To Do、MCP 或 OAuth 外部同步主线。
-- v1.2.7-A 只完成长期执行循环；短期交付与探索规划模型留给 v1.2.7-B/C。
+- v1.2.8 后端已加入 feature-flagged optional `strategy_context`；前端展示与最终 release gate 仍按执行计划验收。
 - 更强的个性化规划继续放入后续版本。

@@ -7,6 +7,7 @@ import { TaskNode, TaskResponse } from '../types/api';
 import { PlanningOverview } from './PlanningOverview';
 import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
+import { StrategyOverview } from './StrategyOverview';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
   const { currentViewBucket, setCurrentViewBucket, boardTasks, selectedProjectId, setSelectedProjectId } = useAppStore();
@@ -610,6 +611,8 @@ export const TaskBoard: React.FC = () => {
     return buildPreviewTree(previewTaskTree.root, selectedProjectId);
   }, [currentViewBucket, previewMode, selectedProjectId, previewTaskTree]);
 
+  const activeTaskTree = previewMode === 'next_phase' && previewTaskTree ? previewTaskTree : committedTaskTree;
+
   const displayTree = useMemo(() => {
     if (!boardTasks) return null;
 
@@ -762,6 +765,10 @@ export const TaskBoard: React.FC = () => {
               <PortfolioOverview projects={projects} tasks={boardTasks ?? []} />
             ) : (
               <>
+                {currentViewBucket === 'planned' && selectedProjectId && activeTaskTree && (
+                  <StrategyOverview taskTree={activeTaskTree} />
+                )}
+
                 {currentViewBucket === 'planned' && selectedProjectId && (
                   <PlanningOverview />
                 )}

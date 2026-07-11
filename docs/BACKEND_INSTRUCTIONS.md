@@ -27,6 +27,10 @@ DeepSeek 是当前主验收 provider。
 - long-term 默认只展开当前 phase，不一次性生成完整执行路线。
 - short-term 不复制 long-term Roadmap。
 - exploration 应先给当前判断，再给探索与决策路径。
+- v1.2.8 开关开启时严格遵循 `planning_context / strategy_context` 矩阵：short-term
+  使用 delivery、exploration 使用 decision、long-term/checklist 必须为 null。
+- strategy context 的 Action 引用和时间算术必须走共享纯 Validator；不要在路由、
+  Runtime 或 Eval 中复制另一套规则。
 
 ### Action Quality
 
@@ -155,6 +159,15 @@ python -m pytest tests -q
 ```bash
 python tests/run_evals.py --provider deepseek
 ```
+
+Horizon Eval 必须使用双字段契约，不得恢复旧的混合字段：
+
+- `expected_profile_horizon` 只表示目标总体跨度，且必须是
+  `minutes/hours/days/weeks/months` 之一；
+- `scope_horizon_rule` 只表示本轮任务树展开窗口，且必须与 intent 类型匹配；
+- Profile Horizon Match 只比较 IntentProfile，Scope Horizon Compliance 只检查任务树；
+- 合并 Horizon Accuracy 要求两者同时通过，严格发布门槛还要求两项各自为 `100%`；
+- 禁止为旧 `expected_horizon` 保留兼容读取路径。
 
 涉及长期执行循环时增加或维护：
 

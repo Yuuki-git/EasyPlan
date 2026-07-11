@@ -12,7 +12,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { parseExplorationSummary } from '../lib/explorationHelper';
+import { StrategyOverview } from './StrategyOverview';
 
 interface TaskTreeVisualizerProps {
   node: TaskNode;
@@ -168,44 +168,12 @@ export const TaskTreeRoot: React.FC = () => {
     return null;
   }
 
-  const isExploration = previewTaskTree.planning_context?.intent_type === 'exploration_decision';
-  const explorationData = isExploration ? parseExplorationSummary(previewTaskTree.summary) : null;
+  const isExploration = previewTaskTree.planning_context?.intent_type === 'exploration_decision' ||
+                        previewTaskTree.strategy_context?.strategy_type === 'decision';
 
   return (
     <div className="w-full flex flex-col items-center mt-12 pb-40">
-      {isExploration && explorationData ? (
-        <div className="w-full max-w-xl px-2 mb-10 space-y-6">
-          <div className="p-5 rounded-2xl border border-amber-500/20 bg-amber-500/5 backdrop-blur-md">
-            <h3 className="text-xs font-semibold text-amber-500 tracking-wider uppercase mb-2">当前判断 / Judgment</h3>
-            <p className="text-lg font-medium text-foreground leading-snug">
-              {explorationData.judgment}
-            </p>
-          </div>
-
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-muted-foreground/50 tracking-wider uppercase">判断依据 / Basis</h3>
-            <p className="text-sm font-light text-muted-foreground leading-relaxed">
-              {explorationData.basis}
-            </p>
-          </div>
-
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-muted-foreground/50 tracking-wider uppercase">下一步探索 / Next Steps</h3>
-            <p className="text-sm font-light text-muted-foreground leading-relaxed">
-              {explorationData.exploration}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="w-full max-w-xl px-2 mb-8">
-          <h3 className="text-xs font-mono text-muted-foreground/40 tracking-widest mb-2">
-            建议行动计划
-          </h3>
-          <p className="text-lg font-light text-foreground/80 leading-snug">
-            {previewTaskTree.summary}
-          </p>
-        </div>
-      )}
+      <StrategyOverview taskTree={previewTaskTree} />
 
       <div className="w-full max-w-xl px-2">
         <h3 className="text-xs font-semibold text-muted-foreground/40 tracking-widest uppercase mb-4">

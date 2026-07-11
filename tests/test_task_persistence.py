@@ -196,6 +196,45 @@ def test_flatten_task_tree_persists_action_quality_fields_to_metadata():
     assert review.metadata_ == {"source": "ai"}
 
 
+def test_flatten_task_tree_does_not_duplicate_strategy_context_into_task_metadata():
+    tree = valid_tree_with_hierarchy_and_dependency()
+    tree["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "delivery",
+        "deliverable": {
+            "title": "Paper outline",
+            "format": "Document",
+            "quality_bar": ["Contains three reviewable sections"],
+        },
+        "deadline": {"text": "No explicit deadline", "is_explicit": False},
+        "time_plan": {
+            "available_minutes": None,
+            "planned_minutes": 5,
+            "buffer_minutes": 0,
+        },
+        "scope": {"must_have": ["Outline"], "should_have": [], "can_cut": []},
+        "workstreams": [
+            {
+                "workstream_id": "outline",
+                "title": "Outline",
+                "output": "Reviewable outline",
+                "task_client_node_ids": ["outline", "review"],
+            }
+        ],
+        "critical_path_client_node_ids": ["outline", "review"],
+    }
+
+    tasks, _ = flatten_task_tree_for_persistence(
+        tree,
+        user_id=USER_ID,
+        thread_id="thread-1",
+    )
+
+    assert all("strategy_context" not in task.metadata_ for task in tasks)
+    assert all("deliverable" not in task.metadata_ for task in tasks)
+    assert all("workstreams" not in task.metadata_ for task in tasks)
+
+
 def test_flatten_phase_tree_adds_phase_metadata_to_every_ai_node():
     tasks, _ = flatten_task_tree_for_persistence(
         phase_tree_with_hierarchy_and_dependency(),

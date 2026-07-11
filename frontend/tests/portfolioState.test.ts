@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { selectPortfolioCard, PortfolioProject } from '../src/store/portfolioState';
-import { ThreadSnapshot, TaskResponse } from '../src/types/api';
+import { ThreadSnapshot, TaskResponse, StrategyContext } from '../src/types/api';
 
 describe('selectPortfolioCard selector tests', () => {
   // 1. AI project with current phase, two completed actions out of five, and a Next Action.
@@ -246,5 +246,35 @@ describe('selectPortfolioCard selector tests', () => {
     expect(view.typeLabel).toBe('长期成长');
     expect(view.currentPhaseLabel).toBe('Phase 1');
     expect(view.progressLabel).toBe('练习 4 / 10');
+  });
+
+  // 7. AI project with malformed strategy_context (valid discriminator but missing fields)
+  test('AI project with malformed strategy_context does not crash and falls back', () => {
+    const project: PortfolioProject = {
+      id: 'proj-malformed',
+      title: 'Malformed project',
+      source: 'ai'
+    };
+
+    const snapshot: ThreadSnapshot = {
+      thread_id: 'proj-malformed',
+      status: 'succeeded',
+      state_version: 1,
+      last_event_id: null,
+      server_time: '2026-07-04T00:00:00Z',
+      intent_text: 'Malformed context',
+      task_tree: {
+        root: { client_node_id: 'root', title: 'Root', verb: 'do', estimated_minutes: 0, node_type: 'group' },
+        summary: 'Standard summary fallback',
+        strategy_context: {
+          strategy_type: 'delivery'
+        } as unknown as StrategyContext
+      }
+    };
+
+    const view = selectPortfolioCard(project, snapshot, []);
+    expect(view.typeLabel).toBe('直接计划'); // falls back to default
+    expect(view.currentPhaseLabel).toBe('尚未建立阶段');
+    expect(view.progressLabel).toBeNull();
   });
 });

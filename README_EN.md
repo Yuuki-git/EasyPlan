@@ -158,7 +158,7 @@ docker-compose logs -f backend
 
 ### Future Directions
 
-- v1.2.7-B/C: differentiated execution models for short-term delivery and exploration decisions.
+- v1.2.8: structured deliverables, time budgets, scope trade-offs, and critical paths for short-term delivery; structured judgments, unknowns, low-cost experiments, and decision gates for exploration decisions.
 - Task-level Action Coach capabilities such as “help me start,” “I am stuck,” and “break this down.”
 - Personalized planning based on preferred task size, work duration, and common sources of resistance.
 

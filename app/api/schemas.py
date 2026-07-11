@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -239,6 +239,135 @@ class PlanningContext(BaseModel):
         return self
 
 
+StrategyId = Annotated[str, Field(min_length=1, max_length=160)]
+StrategyTitle = Annotated[str, Field(min_length=1, max_length=160)]
+StrategyShortText = Annotated[str, Field(min_length=1, max_length=300)]
+StrategyLongText = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class DeliverableDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: StrategyTitle
+    format: StrategyShortText
+    quality_bar: list[StrategyShortText] = Field(..., min_length=1, max_length=5)
+
+
+class DeadlineDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: StrategyShortText
+    is_explicit: bool
+
+
+class DeliveryTimePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available_minutes: int | None = Field(default=None, ge=0, le=43200)
+    planned_minutes: int = Field(..., ge=1, le=43200)
+    buffer_minutes: int = Field(..., ge=0, le=43200)
+
+
+class DeliveryScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    must_have: list[StrategyShortText] = Field(..., min_length=1, max_length=6)
+    should_have: list[StrategyShortText] = Field(default_factory=list, max_length=5)
+    can_cut: list[StrategyShortText] = Field(default_factory=list, max_length=5)
+
+
+class DeliveryWorkstream(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workstream_id: StrategyId
+    title: StrategyTitle
+    output: StrategyShortText
+    task_client_node_ids: list[StrategyId] = Field(..., min_length=1, max_length=8)
+
+
+class DeliveryStrategyContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    strategy_type: Literal["delivery"]
+    deliverable: DeliverableDefinition
+    deadline: DeadlineDefinition
+    time_plan: DeliveryTimePlan
+    scope: DeliveryScope
+    workstreams: list[DeliveryWorkstream] = Field(..., min_length=1, max_length=5)
+    critical_path_client_node_ids: list[StrategyId] = Field(
+        ...,
+        min_length=1,
+        max_length=8,
+    )
+
+
+DecisionDirection = Literal[
+    "continue_exploring",
+    "pause_and_reassess",
+    "not_recommended_now",
+]
+DecisionConfidence = Literal["low", "medium", "high"]
+
+
+class CurrentJudgment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    direction: DecisionDirection
+    statement: StrategyLongText
+    confidence: DecisionConfidence
+
+
+class DecisionBasis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    statement: StrategyLongText
+    basis_type: Literal[
+        "user_context",
+        "known_constraint",
+        "working_assumption",
+    ]
+
+
+class DecisionExperiment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_id: StrategyId
+    title: StrategyTitle
+    hypothesis: StrategyLongText
+    success_signal: StrategyLongText
+    effort_level: Literal["low", "medium", "high"]
+    task_client_node_ids: list[StrategyId] = Field(..., min_length=1, max_length=6)
+
+
+class DecisionGate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_after: StrategyShortText
+    proceed_if: list[StrategyShortText] = Field(..., min_length=1, max_length=5)
+    stop_if: list[StrategyShortText] = Field(..., min_length=1, max_length=5)
+
+
+class DecisionStrategyContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    strategy_type: Literal["decision"]
+    question: StrategyLongText
+    options: list[StrategyShortText] = Field(..., min_length=2, max_length=5)
+    current_judgment: CurrentJudgment
+    basis: list[DecisionBasis] = Field(..., min_length=1, max_length=5)
+    missing_information: list[StrategyShortText] = Field(..., min_length=1, max_length=5)
+    experiments: list[DecisionExperiment] = Field(..., min_length=1, max_length=3)
+    decision_gate: DecisionGate
+
+
+StrategyContext = Annotated[
+    DeliveryStrategyContext | DecisionStrategyContext,
+    Field(discriminator="strategy_type"),
+]
+
+
 class TaskTree(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -246,6 +375,7 @@ class TaskTree(BaseModel):
     summary: str = Field(..., max_length=500)
     assumptions: list[str] = Field(default_factory=list)
     planning_context: PlanningContext | None = None
+    strategy_context: StrategyContext | None = None
 
     @model_validator(mode="after")
     def validate_tree_limits(self) -> "TaskTree":

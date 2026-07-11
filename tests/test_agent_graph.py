@@ -274,6 +274,88 @@ def valid_exploration_phase_plan(*, time_horizon: str = "days") -> dict[str, Any
     }
 
 
+def valid_delivery_strategy_plan() -> dict[str, Any]:
+    plan = valid_plan("Draft report")
+    plan["root"]["children"][0].update(
+        {
+            "estimated_minutes": 30,
+            "done_criteria": "Save a reviewable report draft.",
+            "start_hint": "Open the source notes and draft the first finding.",
+            "fallback_action": "Draft only the findings heading and first bullet.",
+        }
+    )
+    plan["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "delivery",
+        "deliverable": {
+            "title": "Report draft",
+            "format": "Reviewable document",
+            "quality_bar": ["Contains one finding and one recommendation"],
+        },
+        "deadline": {"text": "No explicit deadline", "is_explicit": False},
+        "time_plan": {
+            "available_minutes": None,
+            "planned_minutes": 30,
+            "buffer_minutes": 0,
+        },
+        "scope": {
+            "must_have": ["Finding", "Recommendation"],
+            "should_have": [],
+            "can_cut": [],
+        },
+        "workstreams": [
+            {
+                "workstream_id": "draft",
+                "title": "Draft",
+                "output": "Reviewable report draft",
+                "task_client_node_ids": ["task-1"],
+            }
+        ],
+        "critical_path_client_node_ids": ["task-1"],
+    }
+    return plan
+
+
+def valid_decision_strategy_plan() -> dict[str, Any]:
+    plan = valid_exploration_phase_plan()
+    judgment = "这个方向值得先做低成本探索，但暂不建议立刻执行转行。"
+    plan["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "decision",
+        "question": "现在是否值得考虑转行产品经理？",
+        "options": ["继续低成本探索", "暂时留在当前方向"],
+        "current_judgment": {
+            "direction": "continue_exploring",
+            "statement": judgment,
+            "confidence": "medium",
+        },
+        "basis": [
+            {
+                "statement": "用户表达了兴趣，但还没有直接岗位体验。",
+                "basis_type": "user_context",
+            }
+        ],
+        "missing_information": ["对产品经理日常工作的真实体验"],
+        "experiments": [
+            {
+                "experiment_id": "role_check",
+                "title": "核对岗位现实",
+                "hypothesis": "了解真实工作后仍愿意继续探索。",
+                "success_signal": "能说出喜欢和不喜欢的具体环节。",
+                "effort_level": "low",
+                "task_client_node_ids": ["task-1", "task-2", "task-3"],
+            }
+        ],
+        "decision_gate": {
+            "review_after": "完成岗位核对和成本收益比较后",
+            "proceed_if": ["仍对核心工作内容有兴趣"],
+            "stop_if": ["实际工作内容与期待明显不符"],
+        },
+    }
+    assert judgment in plan["summary"]
+    return plan
+
+
 def exploration_phase_plan_with_execution_bias(*, time_horizon: str = "weeks") -> dict[str, Any]:
     plan = valid_exploration_phase_plan(time_horizon=time_horizon)
     plan["root"]["title"] = "转行产品经理执行计划"
@@ -1584,3 +1666,197 @@ def test_validator_accepts_immediate_execution_risk_warning() -> None:
     )
 
     assert result["validation_status"] == "valid"
+
+
+def test_delivery_prompt_injects_only_delivery_strategy_contract(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+
+    prompt = build_planner_prompt(
+        "明天下午五点前完成一份 10 页以内的产品分析 PPT，我只有 3 小时",
+        intent_profile={
+            "intent_type": "short_term_delivery",
+            "time_horizon": "hours",
+        },
+    )
+
+    assert '"strategy_type": "delivery"' in prompt
+    assert "critical_path_client_node_ids" in prompt
+    assert "planned_minutes 必须等于所有 Action" in prompt
+    assert "原样保留用户明确给出的截止描述、可用分钟数和交付格式" in prompt
+    assert '"strategy_type": "decision"' not in prompt
+    assert "单一小交付，必须只生成 1 个 Action" in prompt
+    assert "不得让 Action 总和占满全部 available_minutes" in prompt
+
+
+def test_decision_prompt_injects_only_decision_strategy_contract(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+
+    prompt = build_planner_prompt(
+        "我是否要考虑转行产品经理",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+    )
+
+    assert '"strategy_type": "decision"' in prompt
+    assert "current_judgment" in prompt
+    assert "decision_gate" in prompt
+    assert "不能直接生成辞职、报名、投递或长期执行计划" in prompt
+    assert '"strategy_type": "delivery"' not in prompt
+
+
+def test_strategy_context_prompt_flag_preserves_legacy_prompt(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "false")
+
+    prompt = build_planner_prompt(
+        "今天完成报告",
+        intent_profile={"intent_type": "short_term_delivery", "time_horizon": "hours"},
+    )
+
+    assert "strategy_context" not in prompt
+
+
+def test_runtime_validator_requires_delivery_context_for_initial_and_refine(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    plan = valid_delivery_strategy_plan()
+    plan.pop("strategy_context")
+
+    for planning_mode in ("initial", "refine"):
+        errors = _validate_task_tree(
+            plan,
+            intent_profile={
+                "intent_type": "short_term_delivery",
+                "time_horizon": "hours",
+            },
+            planning_mode=planning_mode,
+        )
+        assert any("错误代码: DELIVERY_CONTEXT_MISSING" in error for error in errors)
+        assert any("修复要求:" in error for error in errors)
+
+
+def test_runtime_validator_accepts_valid_delivery_strategy_context(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+
+    errors = _validate_task_tree(
+        valid_delivery_strategy_plan(),
+        intent_profile={"intent_type": "short_term_delivery", "time_horizon": "hours"},
+        planning_mode="initial",
+    )
+
+    assert not any("DELIVERY_" in error or "STRATEGY_CONTEXT_" in error for error in errors)
+
+
+def test_runtime_validator_returns_scoped_decision_reference_feedback(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    plan = valid_decision_strategy_plan()
+    plan["strategy_context"]["experiments"][0]["task_client_node_ids"] = ["missing"]
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+        planning_mode="refine",
+    )
+    feedback = "\n".join(errors)
+
+    assert "错误代码: DECISION_EXPERIMENT_REFERENCE_INVALID" in feedback
+    assert "违规字段/引用: experiments.role_check.task_client_node_ids" in feedback
+    assert "只修复 strategy_context" in feedback
+    assert "保持 IntentProfile" in feedback
+
+
+def test_new_decision_context_is_primary_over_legacy_summary_headings(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    plan = valid_decision_strategy_plan()
+    statement = plan["strategy_context"]["current_judgment"]["statement"]
+    plan["summary"] = f"{statement} 依据来自岗位样本，下一步完成低成本验证。"
+
+    errors = _validate_task_tree(
+        plan,
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+        planning_mode="initial",
+    )
+
+    assert not any("EXPLORATION_ANSWER_MISSING" in error for error in errors)
+
+
+def test_target_strategy_context_survives_initial_preview_and_refine(monkeypatch) -> None:
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    scenarios = [
+        (
+            "short_term_delivery",
+            "hours",
+            valid_delivery_strategy_plan(),
+            valid_delivery_strategy_plan(),
+        ),
+        (
+            "exploration_decision",
+            "days",
+            valid_decision_strategy_plan(),
+            valid_decision_strategy_plan(),
+        ),
+    ]
+
+    for index, (intent_type, horizon, initial, refined) in enumerate(scenarios):
+        if intent_type == "short_term_delivery":
+            refined["strategy_context"]["deliverable"]["title"] = "Refined report draft"
+        else:
+            statement = "当前更适合继续低成本验证，暂不做最终转行决定。"
+            refined["strategy_context"]["current_judgment"]["statement"] = statement
+            refined["summary"] = f"{statement} 依据来自岗位样本，下一步完成低成本验证。"
+
+        planner = CapturingPlanner([initial, refined])
+        profiler = CapturingIntentProfiler(
+            {
+                "intent_type": intent_type,
+                "time_horizon": horizon,
+                "confidence_score": 0.95,
+            }
+        )
+        graph = build_task_graph(
+            planner=planner,
+            intent_profiler=profiler,
+            checkpointer=TenantAwareMemorySaver(),
+        )
+        config = create_graph_config(
+            user_id="user_1",
+            thread_id=f"strategy_roundtrip_{index}",
+        )
+
+        initial_chunks = asyncio.run(
+            _collect_astream(
+                graph.astream(
+                    {
+                        "user_id": "user_1",
+                        "thread_id": f"strategy_roundtrip_{index}",
+                        "intent_text": "Generate a strategy plan",
+                    },
+                    config,
+                )
+            )
+        )
+        initial_context = initial_chunks[-1]["__interrupt__"][0].value["task_tree"][
+            "strategy_context"
+        ]
+
+        refined_chunks = asyncio.run(
+            _collect_astream(
+                graph.astream(
+                    Command(resume={"action": "refine", "feedback": "Refine the strategy"}),
+                    config,
+                )
+            )
+        )
+        refined_context = refined_chunks[-1]["__interrupt__"][0].value["task_tree"][
+            "strategy_context"
+        ]
+
+        assert initial_context["strategy_type"] == initial["strategy_context"]["strategy_type"]
+        assert refined_context == refined["strategy_context"]
+        assert refined_context != initial_context

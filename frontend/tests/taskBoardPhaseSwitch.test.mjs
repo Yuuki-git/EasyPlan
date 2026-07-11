@@ -198,6 +198,12 @@ function loadTaskBoard(useAppStoreInstance) {
       if (specifier.includes('PortfolioOverview')) {
         return { PortfolioOverview: () => mockReact.createElement('div', {}, 'PortfolioOverviewComponent') };
       }
+      if (specifier.includes('StrategyOverview')) {
+        return {
+          StrategyOverview: () => null,
+          default: () => null
+        };
+      }
       if (specifier.includes('planningState')) {
         return {
           selectPlanningView: (taskTree, tasks, selectedProjectId) => {

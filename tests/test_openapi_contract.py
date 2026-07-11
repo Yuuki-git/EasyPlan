@@ -151,6 +151,33 @@ def test_openapi_contract_exposes_phase_planning_contract():
     assert request_id_parameter["schema"]["maxLength"] == 128
 
 
+def test_openapi_contract_exposes_discriminated_strategy_context_union():
+    schema = create_app(enable_static=False).openapi()
+    components = schema["components"]["schemas"]
+
+    for tree_schema_name in ("TaskTree-Input", "TaskTree-Output"):
+        strategy_context = components[tree_schema_name]["properties"]["strategy_context"]
+        union = next(item for item in strategy_context["anyOf"] if "oneOf" in item)
+        assert union["discriminator"] == {
+            "propertyName": "strategy_type",
+            "mapping": {
+                "decision": "#/components/schemas/DecisionStrategyContext",
+                "delivery": "#/components/schemas/DeliveryStrategyContext",
+            },
+        }
+        assert {item["$ref"] for item in union["oneOf"]} == {
+            "#/components/schemas/DeliveryStrategyContext",
+            "#/components/schemas/DecisionStrategyContext",
+        }
+
+    delivery = components["DeliveryStrategyContext"]
+    decision = components["DecisionStrategyContext"]
+    assert delivery["properties"]["strategy_type"]["const"] == "delivery"
+    assert decision["properties"]["strategy_type"]["const"] == "decision"
+    assert delivery["additionalProperties"] is False
+    assert decision["additionalProperties"] is False
+
+
 def test_openapi_contract_exposes_long_term_execution_snapshot_and_requests():
     schema = create_app().openapi()
 

@@ -213,10 +213,31 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **P1**：heartbeat、retry 日志清理、run-scoped replay、重连去重、前端过程面板降噪。
 *   **P2**：更细阶段文案、详细日志折叠区、run lifecycle 可观测性指标。
 
-#### 📍 v1.2.7-B/C: 短期交付与探索规划模型
-*   `short_term_delivery` 后续采用 deliverables / workstreams / execution lanes。
-*   `exploration_decision` 继续演进独立的判断与验证路线。
-*   本阶段不改变 v1.2.7-A 已完成的长期执行数据契约。
+#### 📍 v1.2.8: 规划模型差异化 (Planning Model Differentiation) (Backend Complete / Release Gate Pending)
+**版本目标**：让短期交付和探索决策不再只是“不同 Prompt 下的普通任务树”，而是拥有可校验、可展示的独立业务结构。
+
+**设计与执行文档**：
+*   设计规格：`docs/superpowers/specs/2026-07-10-v1.2.8-planning-model-differentiation-design.md`
+*   前后端执行计划：`docs/superpowers/plans/2026-07-10-v1.2.8-planning-model-differentiation.md`
+
+**规划范围**：
+*   `short_term_delivery`：新增 delivery strategy context，表达交付物、截止约束、时间预算与缓冲、Must Have / Can Cut、workstreams 和关键路径；仍然不显示 Roadmap。
+*   `exploration_decision`：新增 decision strategy context，结构化表达当前判断、判断置信度、依据、信息缺口、低成本实验和决策门槛；继续保留 schema v1 探索路线。
+*   `TaskTree` 新增 optional `strategy_context`，继续通过现有 thread JSONB 持久化，不新增数据库 schema。
+*   历史计划不迁移；旧 exploration summary 保留前端 fallback。
+*   DeepSeek Eval 计划从 42 cases 扩展到 54 cases，并增加 Delivery / Decision Contract 指标。
+
+**后端验收（2026-07-11）**：
+*   optional discriminated `strategy_context`、纯确定性 Validator、intent-specific Prompt、JSONB/API/SSE 往返与 OpenAPI 已完成。
+*   Backend：`378 passed`；静态 OpenAPI 与运行时 schema 一致，`git diff --check` 通过。
+*   P1 Horizon 契约已拆分：`expected_profile_horizon` 只比较目标总体跨度，`scope_horizon_rule` 独立校验本轮计划展开窗口；旧 `expected_horizon` 字段及兼容路径已移除。
+*   cases 1-8 使用 `expected_profile_horizon=months` 与 `scope_horizon_rule=long_term_phase_1_72h`，不再混用 72 小时 Scope 表达 Profile。
+*   DeepSeek 54-case 重新实测为 `54/54`：Profile Horizon Accuracy、Scope Horizon Compliance、合并 Horizon Accuracy 以及其余核心指标和五项 v1.2.8 新指标均为 `100%`。
+*   strict gate 独立要求 Profile Horizon Accuracy 与 Scope Horizon Compliance 各为 `100%`；本条仍不代表版本整体 Completed，前端实现、Reviewer contract review 与手工产品验收仍是 release gate。
+
+**非目标**：
+*   不改变 v1.2.7-A 的长期 schema v2、practice loop、outcome checkpoint 或 phase gate。
+*   不修改 `context_checklist`，不引入 Task Copilot、自动重排、个性化或探索到长期计划的自动转换。
 
 #### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
 *   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。

@@ -220,6 +220,7 @@ class OpenAIPlannerClient:
             intent_profile = parsed if isinstance(parsed, IntentProfile) else IntentProfile.model_validate(parsed)
         except ValidationError as exc:
             raise LLMStructuredOutputError(str(exc)) from exc
+        intent_profile = _normalize_intent_profile_for_input(intent_profile, intent_text)
 
         await (usage_sink or self.usage_sink).record(
             _usage_record(
@@ -341,6 +342,7 @@ class DeepSeekPlannerClient:
             max_tokens=int(os.getenv("EASYPLAN_DEEPSEEK_PROFILE_MAX_TOKENS", "512")),
         )
         intent_profile = _parse_intent_profile_response(response, "DeepSeek")
+        intent_profile = _normalize_intent_profile_for_input(intent_profile, intent_text)
         await (usage_sink or self.usage_sink).record(
             _usage_record(
                 provider="deepseek",
@@ -464,6 +466,7 @@ class XiaomiMiMoPlannerClient:
             max_tokens=int(os.getenv("EASYPLAN_XIAOMI_MIMO_PROFILE_MAX_TOKENS", "512")),
         )
         intent_profile = _parse_intent_profile_response(response, "Xiaomi MiMo")
+        intent_profile = _normalize_intent_profile_for_input(intent_profile, intent_text)
         await (usage_sink or self.usage_sink).record(
             _usage_record(
                 provider="xiaomi",
@@ -828,10 +831,79 @@ def _intent_profile_system_prompt(provider_name: str) -> str:
         "delivery sprint requiring 连续坐在电脑前 or 书桌前, with deep cognitive output work, "
         "such as 写代码, 做 PPT, 赶报告. Keep this boundary strict when choosing between "
         "context_checklist and short_term_delivery. "
+        "A deliverable whose explicit target duration is several weeks or one or more months is "
+        "long_term_growth even when the final artifact is a website, portfolio, report, or other "
+        "project deliverable; short_term_delivery is limited to a near deadline sprint. "
+        "For context_checklist, time_horizon describes the operational outing: same-trip errands "
+        "such as 去公司前, 下班路上, or 明天上学前 normally use hours; 周末, 搬家, or 月底 "
+        "multi-day checklists use days. "
+        "For exploration_decision, time_horizon describes the current clarification and decision window, "
+        "not the duration, cost, or long-term consequence of the option being considered. Unless the user "
+        "explicitly schedules the exploration itself over another period, default to days. Mentions such as "
+        "two-year cost, weekly available hours, career duration, or long-term relocation consequences do not "
+        "make the current decision window weeks or months. "
         "Do not include markdown, commentary, hidden reasoning, or extra keys. "
         f"IntentProfile JSON Schema: {schema} "
         f"{LANGUAGE_MATCH_INSTRUCTION}"
     )
+
+
+EXPLICIT_EXPLORATION_WINDOW_PATTERN = re.compile(
+    r"(?:(?:未来|接下来|用|花)\s*(?:\d+|一|两|二|三|四|五|六|七|八|九|十)\s*"
+    r"(?:天|周|个月)[^，。；]{0,16}(?:探索|调研|比较|验证|考虑|评估|决定)|"
+    r"(?:探索|调研|比较|验证|考虑|评估|决定)[^，。；]{0,16}"
+    r"(?:\d+|一|两|二|三|四|五|六|七|八|九|十)\s*(?:天|周|个月))"
+)
+EXPLICIT_MONTH_DURATION_PATTERN = re.compile(
+    r"(?:\d+|一|两|二|三|四|五|六|七|八|九|十)\s*个?月|半年|一年|年底"
+)
+EXPLICIT_WEEK_DURATION_PATTERN = re.compile(
+    r"(?:\d+|一|两|二|三|四|五|六|七|八|九|十)\s*周"
+)
+CHECKLIST_DAY_HORIZON_PATTERN = re.compile(r"周末|月底|搬家(?:前|时)?|这几天|未来几天")
+CHECKLIST_MINUTE_HORIZON_PATTERN = re.compile(
+    r"(?:\d+|一|两|二|三|四|五|六|七|八|九|十)\s*分钟(?:内|后|前)"
+)
+
+
+def _normalize_intent_profile_for_input(
+    profile: IntentProfile,
+    intent_text: str,
+) -> IntentProfile:
+    if profile.intent_type == "exploration_decision":
+        if EXPLICIT_EXPLORATION_WINDOW_PATTERN.search(intent_text):
+            return profile
+        return profile.model_copy(update={"time_horizon": "days"})
+
+    explicit_long_horizon = _explicit_long_duration_horizon(intent_text)
+    if explicit_long_horizon is not None and profile.intent_type in {
+        "long_term_growth",
+        "short_term_delivery",
+    }:
+        return profile.model_copy(
+            update={
+                "intent_type": "long_term_growth",
+                "time_horizon": explicit_long_horizon,
+            }
+        )
+
+    if profile.intent_type == "context_checklist":
+        if CHECKLIST_MINUTE_HORIZON_PATTERN.search(intent_text):
+            horizon = "minutes"
+        elif CHECKLIST_DAY_HORIZON_PATTERN.search(intent_text):
+            horizon = "days"
+        else:
+            horizon = "hours"
+        return profile.model_copy(update={"time_horizon": horizon})
+    return profile
+
+
+def _explicit_long_duration_horizon(intent_text: str) -> str | None:
+    if EXPLICIT_MONTH_DURATION_PATTERN.search(intent_text):
+        return "months"
+    if EXPLICIT_WEEK_DURATION_PATTERN.search(intent_text):
+        return "weeks"
+    return None
 
 
 def _json_mode_system_prompt(provider_name: str) -> str:

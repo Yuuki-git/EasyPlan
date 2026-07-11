@@ -162,6 +162,7 @@ export interface TaskTree {
   summary: string;
   assumptions?: string[];
   planning_context?: PlanningContext | null;
+  strategy_context?: StrategyContext | null;
 }
 
 export interface PracticeLoopProgress {
@@ -348,3 +349,87 @@ export interface SSEEventEnvelope {
     [key: string]: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   };
 }
+
+export interface DeliverableDefinition {
+  title: string;
+  format: string;
+  quality_bar: string[];
+}
+
+export interface DeadlineDefinition {
+  text: string;
+  is_explicit: boolean;
+}
+
+export interface DeliveryTimePlan {
+  available_minutes?: number | null;
+  planned_minutes: number;
+  buffer_minutes: number;
+}
+
+export interface DeliveryScope {
+  must_have: string[];
+  should_have: string[];
+  can_cut: string[];
+}
+
+export interface DeliveryWorkstream {
+  workstream_id: string;
+  title: string;
+  output: string;
+  task_client_node_ids: string[];
+}
+
+export interface DeliveryStrategyContext {
+  schema_version: 1;
+  strategy_type: 'delivery';
+  deliverable: DeliverableDefinition;
+  deadline: DeadlineDefinition;
+  time_plan: DeliveryTimePlan;
+  scope: DeliveryScope;
+  workstreams: DeliveryWorkstream[];
+  critical_path_client_node_ids: string[];
+}
+
+export type DecisionDirection = 'continue_exploring' | 'pause_and_reassess' | 'not_recommended_now';
+export type DecisionConfidence = 'low' | 'medium' | 'high';
+
+export interface CurrentJudgment {
+  direction: DecisionDirection;
+  statement: string;
+  confidence: DecisionConfidence;
+}
+
+export interface DecisionBasis {
+  statement: string;
+  basis_type: 'user_context' | 'known_constraint' | 'working_assumption';
+}
+
+export interface DecisionExperiment {
+  experiment_id: string;
+  title: string;
+  hypothesis: string;
+  success_signal: string;
+  effort_level: 'low' | 'medium' | 'high';
+  task_client_node_ids: string[];
+}
+
+export interface DecisionGate {
+  review_after: string;
+  proceed_if: string[];
+  stop_if: string[];
+}
+
+export interface DecisionStrategyContext {
+  schema_version: 1;
+  strategy_type: 'decision';
+  question: string;
+  options: string[];
+  current_judgment: CurrentJudgment;
+  basis: DecisionBasis[];
+  missing_information: string[];
+  experiments: DecisionExperiment[];
+  decision_gate: DecisionGate;
+}
+
+export type StrategyContext = DeliveryStrategyContext | DecisionStrategyContext;

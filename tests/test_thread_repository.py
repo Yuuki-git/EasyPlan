@@ -644,6 +644,39 @@ def test_thread_snapshot_payload_reports_stalled_generation_when_lease_expires()
     assert payload["status"] == "stalled"
 
 
+def test_thread_snapshot_payload_retains_strategy_context_without_migration() -> None:
+    thread = _phase_thread(user_id=uuid4(), thread_id="thread-strategy")
+    thread.task_tree["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "delivery",
+        "deliverable": {
+            "title": "Report",
+            "format": "Document",
+            "quality_bar": ["Reviewable"],
+        },
+        "deadline": {"text": "No explicit deadline", "is_explicit": False},
+        "time_plan": {
+            "available_minutes": None,
+            "planned_minutes": 30,
+            "buffer_minutes": 0,
+        },
+        "scope": {"must_have": ["Finding"], "should_have": [], "can_cut": []},
+        "workstreams": [
+            {
+                "workstream_id": "report",
+                "title": "Report",
+                "output": "Reviewable report",
+                "task_client_node_ids": ["phase_01_root"],
+            }
+        ],
+        "critical_path_client_node_ids": ["phase_01_root"],
+    }
+
+    payload = thread_to_snapshot_payload(thread)
+
+    assert payload["task_tree"]["strategy_context"] == thread.task_tree["strategy_context"]
+
+
 class FakeThreadSession:
     def __init__(self, scalar_results: list) -> None:
         self.scalar_results = list(scalar_results)

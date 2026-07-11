@@ -181,6 +181,12 @@ function loadComponentModule(filePath, useAppStoreInstance) {
           }
         };
       }
+      if (specifier.includes('StrategyOverview')) {
+        return {
+          StrategyOverview: () => null,
+          default: () => null
+        };
+      }
       if (specifier.includes('planningState')) {
         return {
           selectPlanningView: (taskTree, tasks, selectedProjectId) => {
