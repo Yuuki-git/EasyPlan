@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import AuthUser, get_current_user
 from app.api.schemas import TaskCreateRequest, TaskResponse, TaskUpdateRequest, TaskViewBucket
 from app.db.session import get_db
-from app.services.task_repository import TaskRepository
+from app.services.task_repository import (
+    TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+    TaskRepository,
+    TaskRollupConflictError,
+)
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -55,18 +59,45 @@ async def create_task(
     return task
 
 
-@router.patch("/{task_id}", response_model=TaskResponse)
+@router.patch(
+    "/{task_id}",
+    response_model=TaskResponse,
+    responses={
+        409: {
+            "description": "Task state or virtual-view constraint conflict.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "error_code": TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+                            "message": (
+                                "Assisted subtasks inherit My Day visibility from "
+                                "their parent and cannot be added independently."
+                            ),
+                        }
+                    }
+                }
+            },
+        }
+    },
+)
 async def update_task(
     task_id: Annotated[UUID, Path()],
     payload: TaskUpdateRequest,
     current_user: Annotated[AuthUser, Depends(get_current_user)],
     repository: Annotated[TaskRepository, Depends(get_task_repository)],
 ) -> TaskResponse:
-    task = await repository.update_task_for_user(
-        user_id=current_user.id,
-        task_id=task_id,
-        changes=payload.model_dump(exclude_unset=True),
-    )
+    try:
+        task = await repository.update_task_for_user(
+            user_id=current_user.id,
+            task_id=task_id,
+            changes=payload.model_dump(exclude_unset=True),
+        )
+    except TaskRollupConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": exc.code, "message": exc.message},
+        ) from exc
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task

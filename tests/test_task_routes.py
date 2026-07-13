@@ -12,6 +12,10 @@ from app.main import create_app
 from app.models.task import Task
 from app.models.thread import AgentThread
 from app.models.user import User
+from app.services.task_repository import (
+    TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+    TaskRollupConflictError,
+)
 
 
 @dataclass
@@ -42,14 +46,33 @@ class FakeTaskRepository:
 
     async def list_tasks_for_user(self, *, user_id, view_bucket=None):
         self.list_calls.append({"user_id": user_id, "view_bucket": view_bucket})
+        if view_bucket == "my_day":
+            parent_ids = {
+                task.id
+                for task in self.tasks.values()
+                if task.user_id == user_id
+                and task.is_in_my_day
+                and task.metadata_.get("source") != "task_assist"
+            }
+            return [
+                task
+                for task in self.tasks.values()
+                if task.user_id == user_id
+                and (
+                    task.id in parent_ids
+                    or (
+                        task.parent_task_id in parent_ids
+                        and task.metadata_.get("source") == "task_assist"
+                    )
+                )
+            ]
         return [
             task
             for task in self.tasks.values()
             if task.user_id == user_id
             and (
                 view_bucket is None
-                or (view_bucket == "my_day" and task.is_in_my_day)
-                or (view_bucket != "my_day" and task.view_bucket == view_bucket)
+                or task.view_bucket == view_bucket
             )
         ]
 
@@ -58,6 +81,17 @@ class FakeTaskRepository:
         task = self.tasks.get(task_id)
         if task is None or task.user_id != user_id:
             return None
+        if task.metadata_.get("source") == "task_assist" and (
+            changes.get("is_in_my_day") is True
+            or changes.get("view_bucket") == "my_day"
+        ):
+            raise TaskRollupConflictError(
+                code=TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+                message=(
+                    "Assisted subtasks inherit My Day visibility from their parent "
+                    "and cannot be added independently."
+                ),
+            )
         for key, value in changes.items():
             setattr(task, key, value)
         return task
@@ -152,6 +186,84 @@ def test_get_my_day_tasks_uses_virtual_mapping_in_response():
     assert response.json()[0]["view_bucket"] == "planned"
     assert response.json()[0]["is_in_my_day"] is True
     assert repository.list_calls == [{"user_id": user.id, "view_bucket": "my_day"}]
+
+
+def test_my_day_includes_only_direct_assist_children_while_parent_is_mapped():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    parent = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Today parent",
+        is_in_my_day=True,
+    )
+    assist_child = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Implicit assist child",
+        parent_task_id=parent.id,
+        metadata_={"source": "task_assist"},
+    )
+    manual_child = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Manual child",
+        parent_task_id=parent.id,
+        metadata_={"source": "manual"},
+    )
+    nested_assist_child = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Nested assist child",
+        parent_task_id=assist_child.id,
+        metadata_={"source": "task_assist"},
+    )
+    for task in (parent, assist_child, manual_child, nested_assist_child):
+        repository.tasks[task.id] = task
+
+    response = client.get("/api/tasks?view_bucket=my_day")
+
+    assert response.status_code == 200
+    assert {task["title"] for task in response.json()} == {
+        "Today parent",
+        "Implicit assist child",
+    }
+    assert assist_child.is_in_my_day is False
+    assert nested_assist_child.is_in_my_day is False
+
+    remove_response = client.patch(
+        f"/api/tasks/{parent.id}",
+        json={"is_in_my_day": False},
+    )
+    refreshed = client.get("/api/tasks?view_bucket=my_day")
+
+    assert remove_response.status_code == 200
+    assert refreshed.status_code == 200
+    assert refreshed.json() == []
+    assert assist_child.is_in_my_day is False
+
+
+def test_patch_assist_child_rejects_independent_my_day_mapping_with_error_code():
+    repository = FakeTaskRepository()
+    client, user = _client_with_task_repository(repository)
+    child = _fake_task(
+        user_id=user.id,
+        view_bucket="planned",
+        title="Assisted child",
+        metadata_={"source": "task_assist"},
+    )
+    repository.tasks[child.id] = child
+
+    response = client.patch(
+        f"/api/tasks/{child.id}",
+        json={"is_in_my_day": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == (
+        TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN
+    )
+    assert child.is_in_my_day is False
 
 
 def test_get_tasks_returns_action_quality_fields_from_metadata_without_mutating_metadata():

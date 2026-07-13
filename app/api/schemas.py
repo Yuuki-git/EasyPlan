@@ -23,7 +23,7 @@ IntentType = Literal[
 ]
 TimeHorizon = Literal["minutes", "hours", "days", "weeks", "months"]
 RoadmapStatus = Literal["planned", "current", "completed"]
-SseRunType = Literal["initial", "next_phase", "refine"]
+SseRunType = Literal["initial", "next_phase", "refine", "task_assist"]
 SseEventType = Literal[
     "run_started",
     "intent_profile_started",
@@ -40,6 +40,10 @@ SseEventType = Literal[
     "done",
     "agent_error",
     "snapshot_required",
+    "task_context_ready",
+    "assist_generation_started",
+    "assist_validation_started",
+    "assist_ready",
 ]
 
 
@@ -556,7 +560,156 @@ class LongTermExecutionSnapshot(BaseModel):
 
 TaskViewBucket = Literal["planned", "my_day", "backlog"]
 TaskStatus = Literal["draft", "active", "today", "completed", "archived"]
+TaskAssistMode = Literal["start", "unstick", "decompose"]
+TaskAssistRunStatus = Literal[
+    "running",
+    "ready",
+    "applied",
+    "cancelled",
+    "failed",
+    "expired",
+]
+TaskAssistStage = Literal[
+    "queued",
+    "context_ready",
+    "generating",
+    "validating",
+    "ready",
+    "applied",
+    "cancelled",
+    "failed",
+    "expired",
+]
 TASK_UPDATE_NON_NULL_FIELDS = ("title", "status", "view_bucket", "is_in_my_day", "sort_order")
+
+
+class AssistTaskDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    draft_id: str = Field(..., min_length=1, max_length=128)
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    estimated_minutes: int = Field(..., ge=1, le=43200)
+    done_criteria: str = Field(..., min_length=1, max_length=1000)
+    start_hint: str | None = Field(default=None, max_length=1000)
+    fallback_action: str | None = Field(default=None, max_length=1000)
+
+
+class StartAssistProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    proposal_type: Literal["start"]
+    summary: str = Field(..., min_length=1, max_length=500)
+    starter_step: AssistTaskDraft
+
+    @model_validator(mode="after")
+    def validate_starter_duration(self) -> "StartAssistProposal":
+        if not 2 <= self.starter_step.estimated_minutes <= 10:
+            raise ValueError("starter_step estimated_minutes must be between 2 and 10")
+        return self
+
+
+class RescueOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    option_id: str = Field(..., min_length=1, max_length=128)
+    title: str = Field(..., min_length=1, max_length=160)
+    action: str = Field(..., min_length=1, max_length=1000)
+    estimated_minutes: int = Field(..., ge=2, le=20)
+    tradeoff: str = Field(..., min_length=1, max_length=500)
+
+
+class UnstickAssistProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    proposal_type: Literal["unstick"]
+    obstacle_summary: str = Field(..., min_length=1, max_length=500)
+    recommended_option_id: str = Field(..., min_length=1, max_length=128)
+    options: list[RescueOption] = Field(..., min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_option_references(self) -> "UnstickAssistProposal":
+        option_ids = [option.option_id for option in self.options]
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("option_id values must be unique")
+        if self.recommended_option_id not in option_ids:
+            raise ValueError("recommended_option_id must reference an option")
+        return self
+
+
+class AssistDraftDependency(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_draft_id: str = Field(..., min_length=1, max_length=128)
+    depends_on_draft_id: str = Field(..., min_length=1, max_length=128)
+
+
+class DecomposeAssistProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    proposal_type: Literal["decompose"]
+    summary: str = Field(..., min_length=1, max_length=500)
+    completion_rule: Literal["all_subtasks_completed"]
+    subtasks: list[AssistTaskDraft] = Field(..., min_length=2, max_length=5)
+    dependencies: list[AssistDraftDependency] = Field(default_factory=list, max_length=20)
+
+
+TaskAssistProposal = Annotated[
+    StartAssistProposal | UnstickAssistProposal | DecomposeAssistProposal,
+    Field(discriminator="proposal_type"),
+]
+
+
+class TaskAssistRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    mode: TaskAssistMode
+    user_context: str | None = Field(default=None, max_length=1000)
+
+
+class TaskAssistStartResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: UUID
+    thread_id: str = Field(..., min_length=1, max_length=128)
+    request_id: UUID
+    mode: TaskAssistMode
+    status: TaskAssistRunStatus
+    events_url: str = Field(..., min_length=1, max_length=500)
+
+
+class TaskAssistRunSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: UUID
+    thread_id: str = Field(..., min_length=1, max_length=128)
+    request_id: UUID
+    mode: TaskAssistMode
+    status: TaskAssistRunStatus
+    stage: TaskAssistStage | None = None
+    proposal: TaskAssistProposal | None = None
+    error_code: str | None = Field(default=None, max_length=128)
+    error_message: str | None = Field(default=None, max_length=500)
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+
+
+class TaskAssistApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_option_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class TaskAssistErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_code: str = Field(..., min_length=1, max_length=128)
+    message: str = Field(..., min_length=1, max_length=500)
 
 
 class TaskCreateRequest(BaseModel):
@@ -593,6 +746,8 @@ class TaskResponse(BaseModel):
     phase_id: str | None = None
     phase_order: int | None = None
     practice_loop_id: UUID | None = None
+    assist_rollup: bool = False
+    assist_request_id: UUID | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -621,7 +776,31 @@ class TaskResponse(BaseModel):
                 payload["practice_loop_id"] = _metadata_uuid_or_none(
                     metadata.get("practice_loop_id")
                 )
+            if payload.get("assist_rollup") is None:
+                payload["assist_rollup"] = metadata.get("assist_rollup") is True
+            if payload.get("assist_request_id") is None:
+                payload["assist_request_id"] = _metadata_uuid_or_none(
+                    metadata.get("assist_request_id")
+                )
         return payload
+
+
+class TaskAssistApplyReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    proposal_type: TaskAssistMode
+    applied_at: datetime
+    affected_task_ids: list[UUID] = Field(..., min_length=1, max_length=6)
+
+
+class TaskAssistApplyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["applied"]
+    task: TaskResponse
+    tasks: list[TaskResponse] = Field(default_factory=list, max_length=6)
+    apply_receipt: TaskAssistApplyReceipt
 
 
 class NextPhaseCommitReceipt(BaseModel):

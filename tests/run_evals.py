@@ -79,6 +79,12 @@ LONG_TERM_STAGE_TERMS = (
     "课程",
     "长期",
 )
+LONG_TERM_CURRICULUM_SPAN_PATTERN = re.compile(
+    r"(?:第[一二三四五六七八九十\d]+(?:阶段|周|月)|"
+    r"阶段[一二三四五六七八九十\d]+|"
+    r"(?:完整|全部|全程|长期).{0,8}(?:课程|路线|体系|周期)|"
+    r"(?:基础|训练|强化|模拟|复盘|冲刺)(?:阶段|模块|课程))"
+)
 EXPLORATION_EXECUTION_PATTERNS = [
     re.compile(pattern)
     for pattern in (
@@ -1095,12 +1101,37 @@ def exploration_summary_errors(summary: str) -> list[str]:
 
 
 def top_level_looks_like_long_term_curriculum(task_tree: TaskTree) -> bool:
+    top_level_nodes = task_tree.root.children
     stage_like_nodes = [
         node
-        for node in task_tree.root.children
+        for node in top_level_nodes
         if any(term in f"{node.title} {node.description or ''}" for term in LONG_TERM_STAGE_TERMS)
     ]
-    return len(stage_like_nodes) >= 3
+    if len(stage_like_nodes) < 3:
+        return False
+
+    node_texts = [f"{node.title} {node.description or ''}" for node in stage_like_nodes]
+    span_marker_count = sum(
+        bool(LONG_TERM_CURRICULUM_SPAN_PATTERN.search(text)) for text in node_texts
+    )
+    group_like_count = sum(
+        node.node_type == "group" or bool(node.children) for node in stage_like_nodes
+    )
+    concrete_action_count = sum(
+        node.node_type == "action"
+        and node.estimated_minutes <= 120
+        and bool(node.done_criteria and node.done_criteria.strip())
+        for node in stage_like_nodes
+    )
+    total_top_level_minutes = sum(node.estimated_minutes for node in stage_like_nodes)
+    return (
+        span_marker_count >= 2
+        or group_like_count >= 2
+        or (
+            total_top_level_minutes > 360
+            and concrete_action_count < len(stage_like_nodes)
+        )
+    )
 
 
 def _task_tree_depth(node: TaskNode) -> int:
@@ -1200,7 +1231,7 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
             sum(result.action_quality_abstract_violation_count for result in results),
             sum(result.action_quality_action_count for result in results),
         ),
-        "long_term_loop_contract_pass_rate": _rate(
+        "long_term_loop_contract_pass_rate": _optional_rate(
             sum(
                 1
                 for result in results
@@ -1212,7 +1243,7 @@ def summarize(results: list[EvalResult]) -> dict[str, Any]:
             ),
             sum(result.loop_count is not None for result in results),
         ),
-        "outcome_checkpoint_coverage": _rate(
+        "outcome_checkpoint_coverage": _optional_rate(
             sum(result.outcome_evidence_present is True for result in results),
             sum(
                 result.outcome_evidence_present is not None
@@ -1247,9 +1278,13 @@ def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _optional_bool_rate(values) -> float:
+def _optional_rate(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def _optional_bool_rate(values) -> float | None:
     classified = [value for value in values if value is not None]
-    return _rate(sum(value is True for value in classified), len(classified))
+    return _optional_rate(sum(value is True for value in classified), len(classified))
 
 
 def print_report(results: list[EvalResult]) -> None:
@@ -1397,24 +1432,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-exit",
         action="store_true",
-        help="Exit with code 1 when accuracy or pass rate is below --min-accuracy.",
+        help="Apply the release gate; defaults require 100% on every release metric.",
     )
     parser.add_argument(
         "--min-accuracy",
         type=float,
-        default=0.85,
-        help="Legacy fallback threshold for intent accuracy and pass rate.",
+        default=1.0,
+        help="Legacy compatibility threshold. Defaults to the 100% release gate.",
     )
     parser.add_argument(
         "--min-intent-accuracy",
         type=float,
-        default=0.875,
+        default=1.0,
         help="Minimum acceptable intent classification accuracy for strict mode.",
     )
     parser.add_argument(
         "--min-strategy-compliance",
         type=float,
-        default=0.8,
+        default=1.0,
         help="Minimum acceptable strategy compliance rate for strict mode.",
     )
     parser.add_argument(
@@ -1426,19 +1461,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-horizon-accuracy",
         type=float,
-        default=0.8,
+        default=1.0,
         help="Minimum acceptable combined profile-and-scope horizon accuracy.",
     )
     parser.add_argument(
         "--min-pass-rate",
         type=float,
-        default=0.7,
+        default=1.0,
         help="Minimum acceptable overall pass rate for strict mode.",
+    )
+    parser.add_argument(
+        "--case-number",
+        type=int,
+        action="append",
+        default=None,
+        help="Run only the specified one-based case number; may be repeated.",
     )
     return parser.parse_args()
 
 
-def core_strict_gate_failed(summary: dict[str, Any], args: argparse.Namespace) -> bool:
+def core_strict_gate_failed(
+    summary: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    allow_not_applicable: bool = False,
+) -> bool:
+    def below(metric: str, threshold: float) -> bool:
+        value = summary[metric]
+        if value is None:
+            return not allow_not_applicable
+        return value < threshold
+
     return (
         summary["intent_classification_accuracy"] < args.min_intent_accuracy
         or summary["strategy_compliance_rate"] < args.min_strategy_compliance
@@ -1447,11 +1500,17 @@ def core_strict_gate_failed(summary: dict[str, Any], args: argparse.Namespace) -
         or summary["profile_horizon_accuracy"] < 1.0
         or summary["scope_horizon_compliance_rate"] < 1.0
         or summary["pass_rate"] < args.min_pass_rate
-        or summary["strategy_context_coverage"] < 1.0
-        or summary["delivery_contract_pass_rate"] < 1.0
-        or summary["decision_contract_pass_rate"] < 1.0
-        or summary["explicit_constraint_preservation_rate"] < 1.0
-        or summary["strategy_reference_integrity_rate"] < 1.0
+        or summary["action_quality_pass_rate"] < 1.0
+        or summary["average_actionability_score"] < 100.0
+        or summary["done_criteria_coverage"] < 1.0
+        or summary["abstract_task_violation_rate"] > 0.0
+        or below("long_term_loop_contract_pass_rate", 1.0)
+        or below("outcome_checkpoint_coverage", 1.0)
+        or below("strategy_context_coverage", 1.0)
+        or below("delivery_contract_pass_rate", 1.0)
+        or below("decision_contract_pass_rate", 1.0)
+        or below("explicit_constraint_preservation_rate", 1.0)
+        or below("strategy_reference_integrity_rate", 1.0)
     )
 
 
@@ -1481,11 +1540,20 @@ async def amain() -> int:
         return 0
 
     cases = load_cases(args.cases)
+    if args.case_number:
+        invalid = [number for number in args.case_number if not 1 <= number <= len(cases)]
+        if invalid:
+            raise ValueError(f"case number out of range: {invalid}")
+        cases = [cases[number - 1] for number in args.case_number]
     results = await run_cases(cases, provider=args.provider, model=args.model)
     print_report(results)
     if args.strict_exit:
         summary = summarize(results)
-        if core_strict_gate_failed(summary, args):
+        if core_strict_gate_failed(
+            summary,
+            args,
+            allow_not_applicable=bool(args.case_number),
+        ):
             return 1
     return 0
 

@@ -213,7 +213,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   **P1**：heartbeat、retry 日志清理、run-scoped replay、重连去重、前端过程面板降噪。
 *   **P2**：更细阶段文案、详细日志折叠区、run lifecycle 可观测性指标。
 
-#### 📍 v1.2.8: 规划模型差异化 (Planning Model Differentiation) (Backend Complete / Release Gate Pending)
+#### ✅ v1.2.8: 规划模型差异化 (Planning Model Differentiation) (Completed)
 **版本目标**：让短期交付和探索决策不再只是“不同 Prompt 下的普通任务树”，而是拥有可校验、可展示的独立业务结构。
 
 **设计与执行文档**：
@@ -233,14 +233,41 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   P1 Horizon 契约已拆分：`expected_profile_horizon` 只比较目标总体跨度，`scope_horizon_rule` 独立校验本轮计划展开窗口；旧 `expected_horizon` 字段及兼容路径已移除。
 *   cases 1-8 使用 `expected_profile_horizon=months` 与 `scope_horizon_rule=long_term_phase_1_72h`，不再混用 72 小时 Scope 表达 Profile。
 *   DeepSeek 54-case 重新实测为 `54/54`：Profile Horizon Accuracy、Scope Horizon Compliance、合并 Horizon Accuracy 以及其余核心指标和五项 v1.2.8 新指标均为 `100%`。
-*   strict gate 独立要求 Profile Horizon Accuracy 与 Scope Horizon Compliance 各为 `100%`；本条仍不代表版本整体 Completed，前端实现、Reviewer contract review 与手工产品验收仍是 release gate。
+*   strict gate 独立要求 Profile Horizon Accuracy 与 Scope Horizon Compliance 各为 `100%`。
+*   前端 Delivery Summary、Decision Card、legacy fallback、项目/Portfolio 接入已完成；Reviewer 确认无 P0/P1，剩余 strategy lifecycle 自动化覆盖缺口作为 P2 测试债务进入 v1.3.0。
 
 **非目标**：
 *   不改变 v1.2.7-A 的长期 schema v2、practice loop、outcome checkpoint 或 phase gate。
 *   不修改 `context_checklist`，不引入 Task Copilot、自动重排、个性化或探索到长期计划的自动转换。
 
-#### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach)
-*   围绕单个任务提供微观 AI 辅助：解释这一步、帮我开始、我卡住了、拆得更细、降低难度、给我模板。
+#### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach) (Implementation Complete / Final Review Pending)
+**版本目标**：在不重写整份计划的前提下，帮助用户解决单个任务的启动阻力、执行卡点和粒度过大问题。
+
+**设计与执行文档**：
+*   设计规格：`docs/superpowers/specs/2026-07-12-v1.3.0-task-copilot-action-coach-design.md`
+*   前后端执行计划：`docs/superpowers/plans/2026-07-12-v1.3.0-task-copilot-action-coach.md`
+
+**MVP 范围**：
+*   `start`：生成 2–10 分钟的立即启动动作，确认后保存为 `start_hint`。
+*   `unstick`：生成 2–3 个恢复选项，确认后把所选动作保存为 `fallback_action`。
+*   `decompose`：预览并确认 2–5 个子任务；父任务进入 roll-up，由子任务完成状态确定性驱动。
+*   使用独立 `task_assist` run、SSE 生命周期和持久化 proposal，不复用 plan-level `activeRun`。
+*   Apply 前不修改任务；Apply 具备所有权、幂等、过期、stale-task 和事务回滚防线。
+
+**实现与自动化验收（2026-07-13）**：
+*   Pydantic/OpenAPI、`task_assist_runs`、DeepSeek 结构化 proposal、独立 SSE Runtime、取消/恢复、事务 Apply 和 roll-up 已实现。
+*   Backend：`452 passed`；Task Assist DeepSeek Eval `18/18`，六项指标全部 `100%`。
+*   原 Planning DeepSeek Eval 保持 `54/54`，Profile/Scope Horizon、Strategy Context、Action Quality 等 strict 指标全部 `100%`。
+*   前端 Action Coach、独立 task-assist SSE、刷新恢复、stale 重试、Apply 和父任务 roll-up 已接入；Task Assist 专项 `24 passed`，build 与 lint 通过。
+*   运行中取消成功后关闭并清理 panel，失败时保留面板并显示错误，不再留下空面板。
+*   My Day 以父任务为承诺锚点：Assist children 只嵌套展示，不能独立加入，也不会因父节点缺失而成为顶层任务。
+*   Planning Eval case 41 的“完整课程”误判已收窄并加入评分器回归测试；strict release gate 保持全指标 `100%`。
+*   `EASYPLAN_TASK_ASSIST_ENABLED=false` 默认关闭；代码实现已完成，待 Reviewer 最终复验和手工产品验收后标记 Completed。
+*   7 个 legacy `.test.mjs` VM harness 已全部完成适配并映射 `../lib/taskAssist` 导入；专项 Vitest、legacy tests、build、lint 和业务代码全量通过，满足 release gate 门禁。
+
+**非目标**：
+*   不做开放式聊天、整份计划重排、Refine Diff、个性化、日历集成或探索到长期计划的自动转换。
+*   “解释这一步”“给我模板”“降低难度”“缩短到 10 分钟”保留给后续扩展，不进入首版 MVP。
 
 #### 📍 v1.3.1: 智能执行中枢与差分微调 (Execution Engine & Refine Diff)
 *   **动态调整**：支持根据执行状态动态调整计划，包括 Refine Diff、Resume Prompt。

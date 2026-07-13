@@ -162,7 +162,7 @@ export const useSSE = () => {
         try {
           envelope = JSON.parse(e.data);
         } catch {
-          console.error("Failed to parse SSE event data", e.data);
+          console.error("Failed to parse SSE event data");
           return null;
         }
 

@@ -16,11 +16,13 @@ from app.agents.graph import (
 from app.agents.nodes import (
     IntentProfilerClient,
     PlannerClient,
+    _top_level_looks_like_long_term_curriculum,
     _validate_task_tree,
     build_planner_prompt,
     planner_node_factory,
     task_tree_validator_node,
 )
+from app.api.schemas import TaskTree
 from app.services.checkpoint_service import TenantAwareMemorySaver
 
 
@@ -670,13 +672,20 @@ def test_long_term_prompt_requests_loops_only_for_repeated_practice():
 
     assert "schema_version = 2" in prompt
     assert "practice_loops" in prompt
+    assert "practice_loop.duration_weeks 必须小于或等于 current_phase.estimated_duration_weeks" in prompt
+    assert "绝不能让循环持续时间超过当前阶段" in prompt
     assert "每周能训练三次" in prompt
     assert "不要预生成未来 occurrence" in prompt
     assert "合计最多 5 个核心承诺" in prompt
-    assert "numeric/self_assessment 的 target_value 必须是非 null 数值" in prompt
+    assert "numeric 的 target_value 必须是非 null 数值" in prompt
+    assert "self_assessment 的 target_value 必须是 1 到 5 之间的数值" in prompt
+    assert "禁止使用 0-1 小数（例如 0.8）" in prompt
     assert "artifact 必须使用 operator=exists" in prompt
     assert "有限数量的交付目标" in prompt
     assert "3 个一次性 Action + 1 个 practice loop 时只能有 1 个 outcome checkpoint" in prompt
+    assert "commitment_count = 所有 TaskTree Action 数量" in prompt
+    assert "3 + 1 + 2 = 6" in prompt
+    assert "3 + 1 + 1 = 5" in prompt
     assert "assumptions 必须明确记录 target_per_week" in prompt
     assert "不得创建未来数周时间表或周一/周二排程" in prompt
     assert "输入包含明确总数或单一交付物时，practice_loops 必须为 []" in prompt
@@ -684,6 +693,97 @@ def test_long_term_prompt_requests_loops_only_for_repeated_practice():
     assert "TaskTree 中禁止出现“第一周”“第1周”" in prompt
     assert "有限交付目标默认 0 个 practice loop" in prompt
     assert "“每周练习 5 次”必须输出 target_per_week=5" in prompt
+
+
+def test_curriculum_heuristic_does_not_reject_concrete_foundation_training_actions():
+    task_tree = TaskTree.model_validate(
+        {
+            "root": {
+                "client_node_id": "root",
+                "title": "启动基础体能恢复",
+                "description": None,
+                "verb": "启动",
+                "estimated_minutes": 40,
+                "node_type": "group",
+                "depends_on": [],
+                "children": [
+                    {
+                        "client_node_id": "save-test",
+                        "title": "保存基础体能测试说明",
+                        "description": None,
+                        "verb": "保存",
+                        "estimated_minutes": 5,
+                        "node_type": "action",
+                        "depends_on": [],
+                        "children": [],
+                        "done_criteria": "保存一份可打开的测试说明",
+                    },
+                    {
+                        "client_node_id": "run-test",
+                        "title": "完成基础体能自测",
+                        "description": None,
+                        "verb": "完成",
+                        "estimated_minutes": 20,
+                        "node_type": "action",
+                        "depends_on": ["save-test"],
+                        "children": [],
+                        "done_criteria": "记录三项测试结果",
+                    },
+                    {
+                        "client_node_id": "choose-training",
+                        "title": "选择三项训练动作",
+                        "description": None,
+                        "verb": "选择",
+                        "estimated_minutes": 15,
+                        "node_type": "action",
+                        "depends_on": ["run-test"],
+                        "children": [],
+                        "done_criteria": "写下三项动作及次数",
+                    },
+                ],
+            },
+            "summary": "Phase 1 启动计划",
+            "assumptions": [],
+        }
+    )
+
+    assert _top_level_looks_like_long_term_curriculum(task_tree) is False
+
+
+def test_curriculum_heuristic_still_rejects_multi_stage_group_roadmap():
+    task_tree = TaskTree.model_validate(
+        {
+            "root": {
+                "client_node_id": "root",
+                "title": "完整课程",
+                "description": None,
+                "verb": "完成",
+                "estimated_minutes": 0,
+                "node_type": "group",
+                "depends_on": [],
+                "children": [
+                    {
+                        "client_node_id": f"stage-{index}",
+                        "title": title,
+                        "description": "长期课程阶段",
+                        "verb": "推进",
+                        "estimated_minutes": 0,
+                        "node_type": "group",
+                        "depends_on": [],
+                        "children": [],
+                    }
+                    for index, title in enumerate(
+                        ("基础阶段", "训练阶段", "模拟冲刺阶段"),
+                        start=1,
+                    )
+                ],
+            },
+            "summary": "完整长期课程路线",
+            "assumptions": [],
+        }
+    )
+
+    assert _top_level_looks_like_long_term_curriculum(task_tree) is True
 
 
 def test_exploration_prompt_remains_schema_v1():
@@ -1077,7 +1177,11 @@ def test_validator_rejects_more_than_five_v2_core_commitments():
         planning_mode="initial",
     )
 
-    assert any("at most 5 core commitments" in error for error in errors)
+    matching_error = next(
+        error for error in errors if "at most 5 core commitments" in error
+    )
+    assert "current count is 2 Action + 2 practice loop + 2 outcome checkpoint = 6" in matching_error
+    assert "Remove only the excess commitments" in matching_error
 
 
 def test_validator_replans_finite_deliverable_that_contains_practice_loop(monkeypatch):
@@ -1703,6 +1807,8 @@ def test_decision_prompt_injects_only_decision_strategy_contract(monkeypatch) ->
     assert "current_judgment" in prompt
     assert "decision_gate" in prompt
     assert "不能直接生成辞职、报名、投递或长期执行计划" in prompt
+    assert "current_judgment.confidence 必须为 low" in prompt
+    assert "statement 必须以“假设：”两个字和冒号开头" in prompt
     assert '"strategy_type": "delivery"' not in prompt
 
 

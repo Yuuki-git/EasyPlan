@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { loadTsModule } from './testHelpers/loadTsModule.mjs';
+
+const taskAssistModule = loadTsModule('../../src/lib/taskAssist.ts');
 
 function createStore(initializer) {
   let state;
@@ -88,6 +91,9 @@ function loadAppStoreModule(fetchImpl) {
             };
           }
         };
+      }
+      if (specifier === '../lib/taskAssist') {
+        return taskAssistModule;
       }
       throw new Error(`Unexpected require: ${specifier}`);
     },

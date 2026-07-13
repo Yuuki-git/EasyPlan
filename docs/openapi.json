@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.2.7.2"
+    "version": "1.3.0"
   },
   "paths": {
     "/health": {
@@ -1176,6 +1176,19 @@
               }
             }
           },
+          "409": {
+            "description": "Task state or virtual-view constraint conflict.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": {
+                    "error_code": "TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN",
+                    "message": "Assisted subtasks inherit My Day visibility from their parent and cannot be added independently."
+                  }
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1238,10 +1251,509 @@
           }
         }
       }
+    },
+    "/api/tasks/{task_id}/assist": {
+      "post": {
+        "tags": [
+          "task-assist"
+        ],
+        "summary": "Start Task Assist",
+        "operationId": "start_task_assist_api_tasks__task_id__assist_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAssistRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAssistStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/assist/{request_id}": {
+      "get": {
+        "tags": [
+          "task-assist"
+        ],
+        "summary": "Get Task Assist Snapshot",
+        "operationId": "get_task_assist_snapshot_api_tasks__task_id__assist__request_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAssistRunSnapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "task-assist"
+        ],
+        "summary": "Cancel Task Assist",
+        "operationId": "cancel_task_assist_api_tasks__task_id__assist__request_id__delete",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAssistRunSnapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/assist/{request_id}/events": {
+      "get": {
+        "tags": [
+          "task-assist"
+        ],
+        "summary": "Stream Task Assist Events",
+        "description": "Task-assist-only SSE stream. The run_type is task_assist and allowed events are run_started, task_context_ready, assist_generation_started, assist_validation_started, still_running, assist_ready, done, and agent_error.",
+        "operationId": "stream_task_assist_events_api_tasks__task_id__assist__request_id__events_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "last_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last Event Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task-assist SSE envelopes (one model per emitted event).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SseEventEnvelope"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/assist/{request_id}/apply": {
+      "post": {
+        "tags": [
+          "task-assist"
+        ],
+        "summary": "Apply Task Assist",
+        "operationId": "apply_task_assist_api_tasks__task_id__assist__request_id__apply_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAssistApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAssistApplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AssistDraftDependency": {
+        "properties": {
+          "task_draft_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Draft Id"
+          },
+          "depends_on_draft_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Depends On Draft Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_draft_id",
+          "depends_on_draft_id"
+        ],
+        "title": "AssistDraftDependency"
+      },
+      "AssistTaskDraft": {
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Draft Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimated_minutes": {
+            "type": "integer",
+            "maximum": 43200.0,
+            "minimum": 1.0,
+            "title": "Estimated Minutes"
+          },
+          "done_criteria": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Done Criteria"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "draft_id",
+          "title",
+          "estimated_minutes",
+          "done_criteria"
+        ],
+        "title": "AssistTaskDraft"
+      },
       "ConfirmationAction": {
         "type": "string",
         "enum": [
@@ -1642,6 +2154,58 @@
           "decision_gate"
         ],
         "title": "DecisionStrategyContext"
+      },
+      "DecomposeAssistProposal": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "proposal_type": {
+            "type": "string",
+            "const": "decompose",
+            "title": "Proposal Type"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "completion_rule": {
+            "type": "string",
+            "const": "all_subtasks_completed",
+            "title": "Completion Rule"
+          },
+          "subtasks": {
+            "items": {
+              "$ref": "#/components/schemas/AssistTaskDraft"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 2,
+            "title": "Subtasks"
+          },
+          "dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/AssistDraftDependency"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Dependencies"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "proposal_type",
+          "summary",
+          "completion_rule",
+          "subtasks"
+        ],
+        "title": "DecomposeAssistProposal"
       },
       "DeliverableDefinition": {
         "properties": {
@@ -2780,6 +3344,50 @@
         ],
         "title": "RegisterRequest"
       },
+      "RescueOption": {
+        "properties": {
+          "option_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Option Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Action"
+          },
+          "estimated_minutes": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 2.0,
+            "title": "Estimated Minutes"
+          },
+          "tradeoff": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Tradeoff"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "option_id",
+          "title",
+          "action",
+          "estimated_minutes",
+          "tradeoff"
+        ],
+        "title": "RescueOption"
+      },
       "RoadmapPhase": {
         "properties": {
           "phase_id": {
@@ -2826,6 +3434,451 @@
           "status"
         ],
         "title": "RoadmapPhase"
+      },
+      "SseEventEnvelope": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Event Id"
+          },
+          "thread_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "run_type": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "next_phase",
+              "refine",
+              "task_assist"
+            ],
+            "title": "Run Type"
+          },
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "run_started",
+              "intent_profile_started",
+              "intent_profile_completed",
+              "strategy_selected",
+              "planning_started",
+              "validation_started",
+              "repair_started",
+              "persistence_started",
+              "still_running",
+              "plan_ready",
+              "sync_status",
+              "sync_complete",
+              "done",
+              "agent_error",
+              "snapshot_required",
+              "task_context_ready",
+              "assist_generation_started",
+              "assist_validation_started",
+              "assist_ready"
+            ],
+            "title": "Event Type"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Seq"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "thread_id",
+          "request_id",
+          "run_type",
+          "event_type",
+          "seq",
+          "created_at"
+        ],
+        "title": "SseEventEnvelope"
+      },
+      "StartAssistProposal": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "proposal_type": {
+            "type": "string",
+            "const": "start",
+            "title": "Proposal Type"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "starter_step": {
+            "$ref": "#/components/schemas/AssistTaskDraft"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "proposal_type",
+          "summary",
+          "starter_step"
+        ],
+        "title": "StartAssistProposal"
+      },
+      "TaskAssistApplyReceipt": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "proposal_type": {
+            "type": "string",
+            "enum": [
+              "start",
+              "unstick",
+              "decompose"
+            ],
+            "title": "Proposal Type"
+          },
+          "applied_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Applied At"
+          },
+          "affected_task_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Affected Task Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "proposal_type",
+          "applied_at",
+          "affected_task_ids"
+        ],
+        "title": "TaskAssistApplyReceipt"
+      },
+      "TaskAssistApplyRequest": {
+        "properties": {
+          "selected_option_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Option Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TaskAssistApplyRequest"
+      },
+      "TaskAssistApplyResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "applied",
+            "title": "Status"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskResponse"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Tasks"
+          },
+          "apply_receipt": {
+            "$ref": "#/components/schemas/TaskAssistApplyReceipt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "task",
+          "apply_receipt"
+        ],
+        "title": "TaskAssistApplyResponse"
+      },
+      "TaskAssistRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "start",
+              "unstick",
+              "decompose"
+            ],
+            "title": "Mode"
+          },
+          "user_context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Context"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "mode"
+        ],
+        "title": "TaskAssistRequest"
+      },
+      "TaskAssistRunSnapshot": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Task Id"
+          },
+          "thread_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "start",
+              "unstick",
+              "decompose"
+            ],
+            "title": "Mode"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "ready",
+              "applied",
+              "cancelled",
+              "failed",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "context_ready",
+                  "generating",
+                  "validating",
+                  "ready",
+                  "applied",
+                  "cancelled",
+                  "failed",
+                  "expired"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/StartAssistProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UnstickAssistProposal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DecomposeAssistProposal"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "proposal_type",
+                  "mapping": {
+                    "decompose": "#/components/schemas/DecomposeAssistProposal",
+                    "start": "#/components/schemas/StartAssistProposal",
+                    "unstick": "#/components/schemas/UnstickAssistProposal"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_id",
+          "thread_id",
+          "request_id",
+          "mode",
+          "status",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ],
+        "title": "TaskAssistRunSnapshot"
+      },
+      "TaskAssistStartResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Task Id"
+          },
+          "thread_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Thread Id"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "start",
+              "unstick",
+              "decompose"
+            ],
+            "title": "Mode"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "ready",
+              "applied",
+              "cancelled",
+              "failed",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "events_url": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Events Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_id",
+          "thread_id",
+          "request_id",
+          "mode",
+          "status",
+          "events_url"
+        ],
+        "title": "TaskAssistStartResponse"
       },
       "TaskCreateRequest": {
         "properties": {
@@ -3268,6 +4321,23 @@
               }
             ],
             "title": "Practice Loop Id"
+          },
+          "assist_rollup": {
+            "type": "boolean",
+            "title": "Assist Rollup",
+            "default": false
+          },
+          "assist_request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assist Request Id"
           }
         },
         "type": "object",
@@ -3632,6 +4702,51 @@
           "expires_at"
         ],
         "title": "TokenResponse"
+      },
+      "UnstickAssistProposal": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "proposal_type": {
+            "type": "string",
+            "const": "unstick",
+            "title": "Proposal Type"
+          },
+          "obstacle_summary": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Obstacle Summary"
+          },
+          "recommended_option_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Recommended Option Id"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/RescueOption"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Options"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "proposal_type",
+          "obstacle_summary",
+          "recommended_option_id",
+          "options"
+        ],
+        "title": "UnstickAssistProposal"
       },
       "ValidationError": {
         "properties": {

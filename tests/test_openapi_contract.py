@@ -123,6 +123,14 @@ def test_openapi_contract_exposes_native_task_board_schemas():
     assert "is_in_my_day" in task_update["properties"]
 
 
+def test_task_patch_openapi_documents_assist_child_my_day_conflict():
+    schema = create_app().openapi()
+    conflict = schema["paths"]["/api/tasks/{task_id}"]["patch"]["responses"]["409"]
+    example = conflict["content"]["application/json"]["example"]
+
+    assert example["detail"]["error_code"] == "TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN"
+
+
 def test_openapi_contract_exposes_phase_planning_contract():
     schema = create_app().openapi()
 
@@ -289,3 +297,55 @@ def test_openapi_contract_intent_supports_model_provider_selection():
     assert any(variant.get("type") == "null" for variant in variants)
     assert planner_provider_schema.get("default") is None
     assert "planner_model" in properties
+
+
+def test_openapi_contract_exposes_task_assist_routes_and_discriminated_proposals():
+    schema = create_app(enable_static=False).openapi()
+    paths = schema["paths"]
+    assert "post" in paths["/api/tasks/{task_id}/assist"]
+    assert {"get", "delete"}.issubset(
+        paths["/api/tasks/{task_id}/assist/{request_id}"]
+    )
+    assert "get" in paths["/api/tasks/{task_id}/assist/{request_id}/events"]
+    assert "post" in paths["/api/tasks/{task_id}/assist/{request_id}/apply"]
+
+    schemas = schema["components"]["schemas"]
+    proposal = schemas["TaskAssistRunSnapshot"]["properties"]["proposal"]["anyOf"][0]
+    assert proposal["discriminator"]["propertyName"] == "proposal_type"
+    assert set(proposal["discriminator"]["mapping"]) == {
+        "start",
+        "unstick",
+        "decompose",
+    }
+    assert schemas["TaskAssistRequest"]["properties"]["user_context"]["anyOf"][0][
+        "maxLength"
+    ] == 1000
+    assert schemas["UnstickAssistProposal"]["properties"]["options"]["minItems"] == 2
+    assert schemas["UnstickAssistProposal"]["properties"]["options"]["maxItems"] == 3
+    assert schemas["DecomposeAssistProposal"]["properties"]["subtasks"]["minItems"] == 2
+    assert schemas["DecomposeAssistProposal"]["properties"]["subtasks"]["maxItems"] == 5
+
+
+def test_openapi_contract_keeps_planning_stream_run_types_isolated_from_task_assist():
+    schema = create_app(enable_static=False).openapi()
+    planning_params = schema["paths"]["/api/threads/{thread_id}/events"]["get"]["parameters"]
+    run_type = next(item for item in planning_params if item["name"] == "run_type")
+    assert run_type["schema"]["enum"] == ["initial", "next_phase", "refine"]
+
+    envelope_run_type = schema["components"]["schemas"]["SseEventEnvelope"]["properties"][
+        "run_type"
+    ]["enum"]
+    assert envelope_run_type == ["initial", "next_phase", "refine", "task_assist"]
+
+
+def test_static_openapi_contains_task_assist_contract():
+    import json
+    from pathlib import Path
+
+    static_schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "docs" / "openapi.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "/api/tasks/{task_id}/assist" in static_schema["paths"]
+    assert "TaskAssistRunSnapshot" in static_schema["components"]["schemas"]

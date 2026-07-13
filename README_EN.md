@@ -29,6 +29,7 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 - **Phase Progression**: Generate, preview, and append the next phase inside the same project.
 - **Long-Term Execution Loops**: Track weekly practice quotas, outcome evidence, and a user-controlled phase review before progressing.
 - **Exploration Answer Layer**: Give a current judgment, supporting evidence, and next exploration steps before breaking uncertainty into low-cost validation actions.
+- **Task-Level Action Coach**: Use “help me start,” “I am stuck,” and “break this down” to preview structured advice and apply only a confirmed local change.
 - **Natural Language Refinement**: Adjust a plan conversationally without rebuilding the task tree by hand.
 - **Native Task Views**: All Plans summarizes phase, progress, and next action by project; projects hold individual plans; My Day collects today's actions.
 - **Resilient Generation**: Request-scoped SSE supports refresh recovery, reconnecting the current run, duplicate-event filtering, cancellation, and retry.
@@ -36,9 +37,9 @@ Our design is rooted in the **BJ Fogg Behavior Model (Behavior = Motivation × A
 
 ## 📊 Planning Eval
 
-EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The validator-aware 42-case release run recorded on 2026-07-06 produced:
+EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the primary acceptance provider. The current strict Planning Eval release baseline is:
 
-- **Cases Passed**: 42/42
+- **Cases Passed**: 54/54
 - **Pass Rate**: 100.00%
 - **Intent Classification Accuracy**: 100.00%
 - **JSON Parse Success Rate**: 100.00%
@@ -47,6 +48,8 @@ EasyPlan follows an **Eval-Driven** approach to model tuning. DeepSeek is the pr
 - **Action Quality Pass Rate**: 100.00%
 - **Done Criteria Coverage**: 100.00%
 - **Long-Term Loop Contract Pass Rate**: 100.00%
+
+The independent Task Assist Eval passes **18/18** cases, with all six JSON, mode-match, actionability, scope, reference-integrity, and explicit-constraint metrics at **100%**.
 
 ## 🛠️ Architecture
 
@@ -156,10 +159,21 @@ docker-compose logs -f backend
 - Combine process adherence with outcome evidence, then let the user finalize the phase review.
 - Preserve schema-v1 behavior for legacy and non-long-term plans.
 
+### v1.2.8 - Planning Model Differentiation
+
+- Model short-term delivery through deliverables, time budgets, scope trade-offs, and critical paths.
+- Model exploration decisions through structured judgments, unknowns, low-cost experiments, and decision gates.
+- Preserve legacy plan compatibility; the strict DeepSeek Planning Eval passes 54/54 cases.
+
+### v1.3.0 - Task Copilot / Action Coach
+
+- Provide structured “help me start,” “I am stuck,” and “break this down” assistance for a single task.
+- Do not mutate tasks before confirmation; Apply changes only local hints or creates traceable child tasks.
+- Preserve parent-child hierarchy across project and My Day views, with deterministic parent roll-up.
+
 ### Future Directions
 
-- v1.2.8: structured deliverables, time budgets, scope trade-offs, and critical paths for short-term delivery; structured judgments, unknowns, low-cost experiments, and decision gates for exploration decisions.
-- Task-level Action Coach capabilities such as “help me start,” “I am stuck,” and “break this down.”
+- Local rescheduling, Refine Diff, and Resume Prompt based on actual execution state.
 - Personalized planning based on preferred task size, work duration, and common sources of resistance.
 
 ---

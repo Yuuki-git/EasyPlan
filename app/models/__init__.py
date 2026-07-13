@@ -8,6 +8,7 @@ from app.models.practice import (
     PracticeLoopRevision,
 )
 from app.models.task import Task, TaskDependency
+from app.models.task_assist import TaskAssistRun
 from app.models.thread import AgentThread
 from app.models.user import User
 
@@ -24,5 +25,6 @@ __all__ = [
     "PracticeLoopRevision",
     "Task",
     "TaskDependency",
+    "TaskAssistRun",
     "User",
 ]

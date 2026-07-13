@@ -291,10 +291,12 @@ export interface TaskResponse {
   done_criteria?: string | null;
   start_hint?: string | null;
   fallback_action?: string | null;
-  source?: 'ai' | 'manual' | 'practice_loop';
+  source?: 'ai' | 'manual' | 'practice_loop' | 'task_assist';
   phase_id?: string | null;
   phase_order?: number | null;
   practice_loop_id?: string | null;
+  assist_rollup?: boolean;
+  assist_request_id?: string | null;
 }
 
 export interface TaskUpdateRequest {
@@ -338,7 +340,7 @@ export interface SSEEventEnvelope {
   event_id: string;
   thread_id: string;
   request_id: string;
-  run_type: AgentRunType;
+  run_type: AgentRunType | 'task_assist';
   event_type: string;
   seq: number;
   created_at: string;
@@ -433,3 +435,129 @@ export interface DecisionStrategyContext {
 }
 
 export type StrategyContext = DeliveryStrategyContext | DecisionStrategyContext;
+
+export type TaskAssistMode = 'start' | 'unstick' | 'decompose';
+
+export type TaskAssistRunStatus =
+  | 'running'
+  | 'ready'
+  | 'applied'
+  | 'cancelled'
+  | 'failed'
+  | 'expired';
+
+export type TaskAssistStage =
+  | 'queued'
+  | 'context_ready'
+  | 'generating'
+  | 'validating'
+  | 'ready'
+  | 'applied'
+  | 'cancelled'
+  | 'failed'
+  | 'expired';
+
+export interface AssistTaskDraft {
+  draft_id: string;
+  title: string;
+  description: string | null;
+  estimated_minutes: number;
+  done_criteria: string;
+  start_hint: string | null;
+  fallback_action: string | null;
+}
+
+export interface StartAssistProposal {
+  schema_version: 1;
+  proposal_type: 'start';
+  summary: string;
+  starter_step: AssistTaskDraft;
+}
+
+export interface RescueOption {
+  option_id: string;
+  title: string;
+  action: string;
+  estimated_minutes: number;
+  tradeoff: string;
+}
+
+export interface UnstickAssistProposal {
+  schema_version: 1;
+  proposal_type: 'unstick';
+  obstacle_summary: string;
+  recommended_option_id: string;
+  options: RescueOption[];
+}
+
+export interface AssistDraftDependency {
+  task_draft_id: string;
+  depends_on_draft_id: string;
+}
+
+export interface DecomposeAssistProposal {
+  schema_version: 1;
+  proposal_type: 'decompose';
+  summary: string;
+  completion_rule: 'all_subtasks_completed';
+  subtasks: AssistTaskDraft[];
+  dependencies: AssistDraftDependency[];
+}
+
+export type TaskAssistProposal =
+  | StartAssistProposal
+  | UnstickAssistProposal
+  | DecomposeAssistProposal;
+
+export interface TaskAssistRequest {
+  request_id: string;
+  mode: TaskAssistMode;
+  user_context?: string | null;
+}
+
+export interface TaskAssistStartResponse {
+  task_id: string;
+  thread_id: string;
+  request_id: string;
+  mode: TaskAssistMode;
+  status: TaskAssistRunStatus;
+  events_url: string;
+}
+
+export interface TaskAssistRunSnapshot {
+  task_id: string;
+  thread_id: string;
+  request_id: string;
+  mode: TaskAssistMode;
+  status: TaskAssistRunStatus;
+  stage: TaskAssistStage | null;
+  proposal: TaskAssistProposal | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+}
+
+export interface TaskAssistApplyRequest {
+  selected_option_id?: string | null;
+}
+
+export interface TaskAssistErrorResponse {
+  error_code: string;
+  message: string;
+}
+
+export interface TaskAssistApplyReceipt {
+  request_id: string;
+  proposal_type: TaskAssistMode;
+  applied_at: string;
+  affected_task_ids: string[];
+}
+
+export interface TaskAssistApplyResponse {
+  status: 'applied';
+  task: TaskResponse;
+  tasks: TaskResponse[];
+  apply_receipt: TaskAssistApplyReceipt;
+}

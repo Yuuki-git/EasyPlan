@@ -1,13 +1,14 @@
 import React, { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '../store/useAppStore';
-import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown } from 'lucide-react';
+import { Sun, Calendar, Menu, Plus, CheckCircle2, Circle, Pencil, Trash2, Folder, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TaskNode, TaskResponse } from '../types/api';
 import { PlanningOverview } from './PlanningOverview';
 import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
 import { StrategyOverview } from './StrategyOverview';
+import { TaskCoachPanel } from './TaskCoachPanel';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
   const { currentViewBucket, setCurrentViewBucket, boardTasks, selectedProjectId, setSelectedProjectId } = useAppStore();
@@ -130,17 +131,28 @@ function buildPreviewTree(node: TaskNode, threadId: string, sortOrder = 0, paren
   };
 }
 
-const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: boolean }> = ({
+export const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: boolean }> = ({
   node,
   depth = 0,
   interactive = true,
 }) => {
-  const { updateTaskStatus, toggleTaskInMyDay, updateTaskDetails, deleteTask } = useAppStore();
+  const {
+    updateTaskStatus,
+    toggleTaskInMyDay,
+    updateTaskDetails,
+    deleteTask,
+    setTaskAssistPanelOpen,
+    setTaskAssistActiveTaskId
+  } = useAppStore();
   const isGroup = node.node_type === 'group';
   const hasChildren = node.children && node.children.length > 0;
+  const completedChildrenCount = node.children ? node.children.filter(c => c.status === 'completed').length : 0;
+  const totalChildrenCount = node.children ? node.children.length : 0;
+  const hasIncompleteChildren = totalChildrenCount > completedChildrenCount;
 
   const [localCompleted, setLocalCompleted] = React.useState(node.status === 'completed');
   const [isToggling, setIsToggling] = React.useState(false);
+  const [isExpanded, setIsExpanded] = React.useState(true);
 
   // Inline editing state
   const [isEditing, setIsEditing] = React.useState(false);
@@ -168,7 +180,7 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: bo
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!interactive || isGroup || isEditing) return;
+    if (!interactive || isGroup || isEditing || hasIncompleteChildren) return;
     if (node.practice_loop_id && localCompleted) return; // Completed practice loop occurrences are read-only
     if (isToggling) return;
 
@@ -290,170 +302,226 @@ const BoardTaskNode: React.FC<{ node: TreeNode; depth?: number; interactive?: bo
     );
   }
 
+
   // Action Node
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
-      className={clsx(
-        "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
-        !interactive && "cursor-default",
-        localCompleted
-          ? "bg-muted/10 border-transparent"
-          : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
-        isEditing && "cursor-default",
-        isToggling && "cursor-wait",
-        depth > 0 && "ml-4"
-      )}
-      onClick={interactive ? handleToggle : undefined}
-      onDoubleClick={interactive ? handleDoubleClick : undefined}
-    >
-      <div className="mt-0.5 shrink-0">
-        {localCompleted ? (
-          <motion.div
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          >
-            <CheckCircle2 size={18} className="text-green-500" />
-          </motion.div>
-        ) : (
-          <Circle size={18} className={clsx(
-            "text-muted-foreground/30 transition-colors",
-            !isEditing && "group-hover:text-foreground/50"
-          )} />
-        )}
-      </div>
-      <div className="flex-1 pr-24">
-        {isEditing ? (
-          <div
-            ref={editContainerRef}
-            onBlur={handleEditBlur}
-            className="flex flex-col gap-1 pointer-events-auto mt-[-2px]"
-          >
-            <input
-              ref={editTitleRef}
-              type="text"
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              onKeyDown={handleEditKeyDown}
-              className="text-base font-medium bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full text-foreground/90 placeholder:text-muted-foreground/30"
-              placeholder="任务标题..."
-            />
-            <textarea
-              value={editDescription}
-              onChange={(e) => setEditDescription(e.target.value)}
-              onKeyDown={handleEditKeyDown}
-              rows={2}
-              className="text-xs bg-muted/10 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/20 rounded-md px-2 py-1 w-full resize-none placeholder:text-muted-foreground/30"
-              placeholder="任务描述..."
-            />
-            <div className="flex items-center gap-1 mt-1">
-              <input
-                type="number"
-                value={editMinutes}
-                onChange={(e) => setEditMinutes(e.target.value)}
-                onKeyDown={handleEditKeyDown}
-                placeholder="耗时"
-                className="text-[10px] font-mono bg-muted/20 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/40 rounded-full px-2 py-0.5 w-16"
-              />
-              <span className="text-[10px] text-muted-foreground/50">min</span>
-            </div>
-          </div>
-        ) : (
-          <>
-            <h4 className={clsx(
-              "text-base transition-colors",
-              localCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
-            )}>
-              {node.title}
-            </h4>
-            {node.description && (
-              <p className={clsx(
-                "text-xs mt-1 transition-colors",
-                localCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
-              )}>
-                {node.description}
-              </p>
-            )}
-            {!localCompleted && node.estimated_minutes != null && (
-              <div className="flex items-center gap-2 mt-2">
-                <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/20 px-2 py-0.5 rounded-full">
-                  {node.estimated_minutes} min
-                </span>
-              </div>
-            )}
-            {node.done_criteria && (
-              <div className={clsx(
-                "text-xs mt-2 transition-colors font-medium break-words",
-                localCompleted ? "text-muted-foreground/30 line-through" : "text-foreground/70"
-              )}>
-                完成标准：{node.done_criteria}
-              </div>
-            )}
-            {(node.start_hint || node.fallback_action) && (
-              <details
-                className="mt-3 text-xs group/details outline-none"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <summary className={clsx(
-                  "cursor-pointer select-none transition-colors outline-none",
-                  localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/70 hover:text-foreground/90"
-                )}>
-                  执行提示
-                </summary>
-                <div className={clsx(
-                  "mt-2 pl-3 border-l border-muted/30 space-y-1.5 break-words",
-                  localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/80"
-                )}>
-                  {node.start_hint && <div><span className="font-medium text-foreground/70">如何开始：</span>{node.start_hint}</div>}
-                  {node.fallback_action && <div><span className="font-medium text-foreground/70">做不动时：</span>{node.fallback_action}</div>}
-                </div>
-              </details>
-            )}
-          </>
-        )}
-      </div>
-
-      {interactive && (
-        <button
-        onClick={handleToggleMyDay}
+    <div className={clsx("flex flex-col w-full", depth > 0 && "ml-4")}>
+      <motion.div
+        layout
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
         className={clsx(
-          "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
-          node.is_in_my_day
-            ? "text-amber-500 bg-amber-500/10 opacity-100"
-            : "text-muted-foreground/40 opacity-0 group-hover:opacity-100 hover:text-amber-500 hover:bg-amber-500/10"
+          "group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer relative",
+          !interactive && "cursor-default",
+          localCompleted
+            ? "bg-muted/10 border-transparent"
+            : "bg-background border-muted/50 hover:border-muted hover:shadow-sm",
+          isEditing && "cursor-default",
+          isToggling && "cursor-wait",
+          hasIncompleteChildren && "cursor-default"
         )}
-        title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
+        onClick={interactive ? handleToggle : undefined}
+        onDoubleClick={interactive ? handleDoubleClick : undefined}
       >
-        <Sun size={16} />
-        </button>
-      )}
-
-      {interactive && !localCompleted && !isEditing && (
-        <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-          <button
-            onClick={(e) => {
+        <div
+          className={clsx("mt-0.5 shrink-0", hasIncompleteChildren && "cursor-not-allowed")}
+          title={hasIncompleteChildren ? "有未完成的子任务，请先完成子任务以自动归纳/完成父任务" : undefined}
+          onClick={(e) => {
+            if (hasIncompleteChildren) {
               e.stopPropagation();
-              setIsEditing(true);
-            }}
-            className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md pointer-events-auto transition-colors"
-            title="编辑"
-          >
-            <Pencil size={16} />
-          </button>
+            }
+          }}
+        >
+          {localCompleted ? (
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+            >
+              <CheckCircle2 size={18} className="text-green-500" />
+            </motion.div>
+          ) : (
+            <Circle size={18} className={clsx(
+              "text-muted-foreground/30 transition-colors",
+              !isEditing && !hasIncompleteChildren && "group-hover:text-foreground/50",
+              hasIncompleteChildren && "text-muted-foreground/20"
+            )} />
+          )}
+        </div>
+        <div className="flex-1 pr-24">
+          {isEditing ? (
+            <div
+              ref={editContainerRef}
+              onBlur={handleEditBlur}
+              className="flex flex-col gap-1 pointer-events-auto mt-[-2px]"
+            >
+              <input
+                ref={editTitleRef}
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                className="text-base font-medium bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full text-foreground/90 placeholder:text-muted-foreground/30"
+                placeholder="任务标题..."
+              />
+              <textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                rows={2}
+                className="text-xs bg-muted/10 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/20 rounded-md px-2 py-1 w-full resize-none placeholder:text-muted-foreground/30"
+                placeholder="任务描述..."
+              />
+              <div className="flex items-center gap-1 mt-1">
+                <input
+                  type="number"
+                  value={editMinutes}
+                  onChange={(e) => setEditMinutes(e.target.value)}
+                  onKeyDown={handleEditKeyDown}
+                  placeholder="耗时"
+                  className="text-[10px] font-mono bg-muted/20 text-muted-foreground/80 border-none focus:outline-none focus:ring-1 focus:ring-foreground/20 focus:bg-muted/40 rounded-full px-2 py-0.5 w-16"
+                />
+                <span className="text-[10px] text-muted-foreground/50">min</span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h4 className={clsx(
+                "text-base transition-colors",
+                localCompleted ? "text-muted-foreground/50 line-through decoration-muted-foreground/30" : "text-foreground/90 font-medium"
+              )}>
+                {node.title}
+              </h4>
+              {node.description && (
+                <p className={clsx(
+                  "text-xs mt-1 transition-colors",
+                  localCompleted ? "text-muted-foreground/30 line-through" : "text-muted-foreground/60"
+                )}>
+                  {node.description}
+                </p>
+              )}
+              {!localCompleted && node.estimated_minutes != null && (
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/20 px-2 py-0.5 rounded-full">
+                    {node.estimated_minutes} min
+                  </span>
+                </div>
+              )}
+              {node.done_criteria && (
+                <div className={clsx(
+                  "text-xs mt-2 transition-colors font-medium break-words",
+                  localCompleted ? "text-muted-foreground/30 line-through" : "text-foreground/70"
+                )}>
+                  完成标准：{node.done_criteria}
+                </div>
+              )}
+              {(node.start_hint || node.fallback_action) && (
+                <details
+                  className="mt-3 text-xs group/details outline-none"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <summary className={clsx(
+                    "cursor-pointer select-none transition-colors outline-none",
+                    localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/70 hover:text-foreground/90"
+                  )}>
+                    执行提示
+                  </summary>
+                  <div className={clsx(
+                    "mt-2 pl-3 border-l border-muted/30 space-y-1.5 break-words",
+                    localCompleted ? "text-muted-foreground/30" : "text-muted-foreground/80"
+                  )}>
+                    {node.start_hint && <div><span className="font-medium text-foreground/70">如何开始：</span>{node.start_hint}</div>}
+                    {node.fallback_action && <div><span className="font-medium text-foreground/70">做不动时：</span>{node.fallback_action}</div>}
+                  </div>
+              </details>
+              )}
+
+              {hasChildren && (
+                <div
+                  className="flex items-center gap-2 mt-3 text-[11px] text-muted-foreground select-none pointer-events-auto"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(!isExpanded);
+                  }}
+                >
+                  <span className="font-mono font-medium bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-full border border-blue-500/20">
+                    子任务 {completedChildrenCount}/{totalChildrenCount}
+                  </span>
+                  <span className="hover:text-foreground transition-colors flex items-center gap-0.5 cursor-pointer">
+                    <span>{isExpanded ? '收起子任务' : '展开子任务'}</span>
+                    {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {interactive && !(node.source === 'task_assist' && node.parent_task_id) && (
           <button
-            onClick={handleDelete}
-            className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
-            title="删除任务"
+            onClick={handleToggleMyDay}
+            className={clsx(
+              "absolute right-3 top-3 p-1.5 rounded-md pointer-events-auto transition-colors",
+              node.is_in_my_day
+                ? "text-amber-500 bg-amber-500/10 opacity-100"
+                : "text-muted-foreground/40 opacity-0 group-hover:opacity-100 hover:text-amber-500 hover:bg-amber-500/10"
+            )}
+            title={node.is_in_my_day ? "移出我的一天" : "加入我的一天"}
           >
-            <Trash2 size={16} />
+            <Sun size={16} />
           </button>
+        )}
+
+        {interactive && !localCompleted && !isEditing && (
+          <div className="absolute right-12 top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+            {import.meta.env.VITE_TASK_ASSIST_ENABLED === 'true' && !node.practice_loop_id && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTaskAssistActiveTaskId(node.id);
+                  setTaskAssistPanelOpen(true);
+                }}
+                className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md pointer-events-auto transition-colors"
+                title="行动教练 (AI 辅助)"
+              >
+                <Sparkles size={16} />
+              </button>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsEditing(true);
+              }}
+              className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md pointer-events-auto transition-colors"
+              title="编辑"
+            >
+              <Pencil size={16} />
+            </button>
+            <button
+              onClick={handleDelete}
+              className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md pointer-events-auto transition-colors"
+              title="删除任务"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
+      </motion.div>
+
+      {hasChildren && isExpanded && (
+        <div className="pl-6 pr-2 py-2 mt-1.5 border-l border-muted/30 space-y-2.5">
+          {node.children!.map(child => (
+            <BoardTaskNode
+              key={child.id}
+              node={child}
+              depth={0}
+              interactive={interactive}
+            />
+          ))}
         </div>
       )}
-    </motion.div>
+    </div>
   );
 };
 
@@ -576,6 +644,37 @@ export const TaskBoard: React.FC = () => {
       bootstrap();
     }
   }, [boardTasks, selectedProjectId, fetchTasks, loadProjectSnapshot]);
+
+  useEffect(() => {
+    const taskId = localStorage.getItem('easyplan_task_assist_task_id');
+    const requestId = localStorage.getItem('easyplan_task_assist_request_id');
+    if (taskId && requestId) {
+      const recover = async () => {
+        try {
+          const snapshot = await useAppStore.getState().fetchTaskAssistSnapshot(taskId, requestId);
+          const terminalStatuses = new Set(['applied', 'cancelled', 'expired']);
+          if (snapshot && !terminalStatuses.has(snapshot.status)) {
+            useAppStore.setState({
+              isTaskAssistPanelOpen: true,
+              taskAssistActiveTaskId: taskId,
+              taskAssistActiveRequestId: requestId,
+              taskAssistStatus: snapshot.status,
+              taskAssistStage: snapshot.stage,
+              taskAssistProposal: snapshot.proposal,
+              taskAssistErrorCode: snapshot.error_code || null,
+              taskAssistErrorMessage: snapshot.error_message || null,
+            });
+          } else {
+            useAppStore.getState().resetTaskAssist();
+          }
+        } catch (err) {
+          console.error("Failed to recover task assist snapshot", err);
+          useAppStore.getState().resetTaskAssist();
+        }
+      };
+      recover();
+    }
+  }, []);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
 
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -621,7 +720,43 @@ export const TaskBoard: React.FC = () => {
     }
 
     if (currentViewBucket === 'my_day') {
-      // Flat list
+      const myDayTasksSet = new Set(
+        boardTasks.filter((task) => task.is_in_my_day).map((t) => t.id)
+      );
+
+      let myDayTasksAdded = true;
+      while (myDayTasksAdded) {
+        myDayTasksAdded = false;
+        for (const task of boardTasks) {
+          if (task.parent_task_id && myDayTasksSet.has(task.parent_task_id) && !myDayTasksSet.has(task.id)) {
+            myDayTasksSet.add(task.id);
+            myDayTasksAdded = true;
+          }
+        }
+      }
+
+      const tasksToRender = boardTasks.filter((task) => myDayTasksSet.has(task.id));
+
+      const taskMap = new Map<string, TreeNode>();
+      tasksToRender.forEach(t => {
+        taskMap.set(t.id, { ...t, children: [] });
+      });
+
+      const rootChildren: TreeNode[] = [];
+
+      [...tasksToRender].sort((a, b) => a.sort_order - b.sort_order).forEach(t => {
+        const node = taskMap.get(t.id)!;
+        if (t.parent_task_id && taskMap.has(t.parent_task_id)) {
+          taskMap.get(t.parent_task_id)!.children!.push(node);
+        } else {
+          if (t.source === 'task_assist' && t.parent_task_id) {
+            // Orphan assist child - omit from top-level list
+            return;
+          }
+          rootChildren.push(node);
+        }
+      });
+
       const root: TreeNode = {
         id: 'root',
         title: 'root_dummy',
@@ -636,7 +771,7 @@ export const TaskBoard: React.FC = () => {
         estimated_minutes: null,
         sort_order: 0,
         is_in_my_day: false,
-        children: [...boardTasks].sort((a, b) => a.sort_order - b.sort_order).map(t => ({ ...t }))
+        children: rootChildren
       };
       return root;
     } else {
@@ -659,6 +794,10 @@ export const TaskBoard: React.FC = () => {
         if (t.parent_task_id && taskMap.has(t.parent_task_id)) {
           taskMap.get(t.parent_task_id)!.children!.push(node);
         } else {
+          if (t.source === 'task_assist' && t.parent_task_id) {
+            // Orphan assist child - omit from top-level list
+            return;
+          }
           if (!selectedProjectId || node.thread_id === selectedProjectId) {
             rootChildren.push(node);
           }
@@ -825,6 +964,9 @@ export const TaskBoard: React.FC = () => {
           </div>
         </main>
       </div>
+
+      {/* Task Coach Assist Panel */}
+      <TaskCoachPanel />
     </motion.div>
   );
 };

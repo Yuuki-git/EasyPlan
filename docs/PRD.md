@@ -244,11 +244,11 @@ Classification、Strategy Compliance、JSON Parse、Horizon Accuracy、Action
 Quality、Done Criteria Coverage 和 Long-Term Loop Contract 均为 `100%`。
 case 40 连续三次单独验证也全部通过。
 
-## 12. 后续版本
+## 12. 已完成与后续版本
 
-### v1.2.8 - Planning Model Differentiation
+### v1.2.8 - Planning Model Differentiation (Completed)
 
-- `TaskTree` 计划新增 optional `strategy_context`，与负责阶段视野的 `planning_context` 分离。
+- `TaskTree` 已新增 optional `strategy_context`，与负责阶段视野的 `planning_context` 分离。
 - 短期目标使用 delivery context，结构化表达交付物、截止约束、时间预算与缓冲、范围取舍、workstreams 和关键路径；不增加 Roadmap。
 - 探索决策使用 decision context，结构化表达当前判断、置信度、依据、信息缺口、低成本实验和决策门槛。
 - 历史计划继续兼容，现有 summary 解析仅作为 legacy fallback。
@@ -256,7 +256,16 @@ case 40 连续三次单独验证也全部通过。
 - 设计规格：`docs/superpowers/specs/2026-07-10-v1.2.8-planning-model-differentiation-design.md`。
 - 执行计划：`docs/superpowers/plans/2026-07-10-v1.2.8-planning-model-differentiation.md`。
 
-### v1.3.0 - Task Copilot
+### v1.3.0 - Task Copilot (Implementation Complete / Release Review Pending)
 
-- 解释这一步、帮我开始、我卡住了。
-- 拆得更细、降低难度、给模板。
+- 首版只包含三个任务级入口：`帮我开始`、`我卡住了`、`拆得更细`。
+- 每次辅助是单轮、结构化 proposal，不建立开放式聊天历史。
+- `帮我开始`确认后只更新 `start_hint`；`我卡住了`确认后只更新所选 `fallback_action`。
+- `拆得更细`确认后创建 2–5 个 assist children，父任务使用确定性 roll-up，不重复计入阶段进度。
+- 生成和 Apply 留在当前项目或“我的一天”，不跳回全局生成页面。
+- 用户确认前不修改任务；Apply 需要所有权、幂等、过期和 stale-task 校验。
+- 运行中取消成功后关闭 Action Coach 并清理本地 run；取消失败时保留面板并显示可恢复错误，不留下空面板。
+- 父任务是 My Day 的承诺锚点。Assist children 仅随已加入 My Day 的父任务嵌套显示，不能独立加入 My Day，也不能降级为顶层任务。
+- My Day 不修改 child 自身的 `is_in_my_day`；父任务移出后，其隐式 Assist children 同步消失。
+- 设计规格：`docs/superpowers/specs/2026-07-12-v1.3.0-task-copilot-action-coach-design.md`。
+- 执行计划：`docs/superpowers/plans/2026-07-12-v1.3.0-task-copilot-action-coach.md`。

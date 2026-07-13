@@ -7,7 +7,11 @@ from sqlalchemy.sql.dml import Delete
 
 from app.models.task import Task, TaskDependency
 from app.models.thread import AgentThread
-from app.services.task_repository import TaskRepository
+from app.services.task_repository import (
+    TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+    TaskRepository,
+    TaskRollupConflictError,
+)
 from app.services.practice_repository import PracticeLoopConflictError
 
 
@@ -146,7 +150,30 @@ def test_list_tasks_for_user_maps_my_day_to_virtual_flag():
 
     sql = str(session.select_statements[-1])
     assert "tasks.is_in_my_day IS true" in sql
+    assert "tasks.parent_task_id IN" in sql
+    assert "tasks.metadata" in sql
+    assert "task_assist" in session.select_statements[-1].compile().params.values()
     assert "tasks.view_bucket =" not in sql
+
+
+def test_my_day_query_excludes_independently_mapped_assist_children():
+    session = FakeTaskSession()
+    repository = TaskRepository(session)
+
+    asyncio.run(
+        repository.list_tasks_for_user(
+            user_id=uuid4(),
+            view_bucket="my_day",
+        )
+    )
+
+    statement = session.select_statements[-1]
+    sql = str(statement)
+    params = list(statement.compile().params.values())
+    assert "tasks.is_in_my_day IS true" in sql
+    assert "tasks.metadata" in sql
+    assert "IS NULL" in sql
+    assert params.count("task_assist") >= 2
 
 
 def test_list_tasks_for_user_keeps_planned_as_physical_bucket():
@@ -163,6 +190,9 @@ def test_list_tasks_for_user_keeps_planned_as_physical_bucket():
 
     sql = str(session.select_statements[-1])
     assert "tasks.view_bucket" in sql
+    where_clause = str(session.select_statements[-1].whereclause)
+    assert "phase_id" not in where_clause
+    assert "parent_task_id" not in where_clause
     assert "planned" in session.select_statements[-1].compile().params.values()
 
 
@@ -442,6 +472,123 @@ def test_delete_phase_action_recalculates_next_action_before_commit():
     assert session.commit_count == 1
 
 
+def test_rollup_parent_cannot_complete_while_assist_child_is_incomplete():
+    user_id = uuid4()
+    parent = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-rollup")
+    parent.metadata_ = {"source": "ai", "assist_rollup": True}
+    child = _assist_child(user_id=user_id, parent=parent, status="active")
+    session = FakeTaskSession(scalar_results=[parent, [child]])
+
+    with pytest.raises(TaskRollupConflictError) as exc_info:
+        asyncio.run(
+            TaskRepository(session).update_task_for_user(
+                user_id=user_id,
+                task_id=parent.id,
+                changes={"status": "completed"},
+            )
+        )
+
+    assert exc_info.value.code == "TASK_ASSIST_CHILDREN_INCOMPLETE"
+    assert parent.status == "active"
+    assert session.rollback_count == 1
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"is_in_my_day": True},
+        {"view_bucket": "my_day"},
+    ],
+)
+def test_assist_child_cannot_be_mapped_to_my_day_independently(changes):
+    user_id = uuid4()
+    child = _task(
+        user_id=user_id,
+        task_id=uuid4(),
+        thread_id="thread-assist",
+    )
+    child.metadata_ = {"source": "task_assist"}
+    session = FakeTaskSession(scalar_results=[child])
+
+    with pytest.raises(TaskRollupConflictError) as exc_info:
+        asyncio.run(
+            TaskRepository(session).update_task_for_user(
+                user_id=user_id,
+                task_id=child.id,
+                changes=changes,
+            )
+        )
+
+    assert exc_info.value.code == TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN
+    assert child.is_in_my_day is False
+    assert child.view_bucket == "planned"
+    assert session.commit_count == 0
+    assert session.rollback_count == 1
+
+
+def test_completing_all_assist_children_auto_completes_parent():
+    user_id = uuid4()
+    parent = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-rollup")
+    parent.metadata_ = {"source": "manual", "assist_rollup": True}
+    child = _assist_child(user_id=user_id, parent=parent, status="active")
+    sibling = _assist_child(user_id=user_id, parent=parent, status="completed")
+    session = FakeTaskSession(scalar_results=[child, parent, [child, sibling], None])
+
+    updated = asyncio.run(
+        TaskRepository(session).update_task_for_user(
+            user_id=user_id,
+            task_id=child.id,
+            changes={"status": "completed"},
+        )
+    )
+
+    assert updated.status == "completed"
+    assert parent.status == "completed"
+    assert session.commit_count == 1
+
+
+def test_reopening_assist_child_reopens_rollup_parent():
+    user_id = uuid4()
+    parent = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-rollup")
+    parent.status = "completed"
+    parent.metadata_ = {"source": "manual", "assist_rollup": True}
+    child = _assist_child(user_id=user_id, parent=parent, status="completed")
+    session = FakeTaskSession(scalar_results=[child, parent, [child], None])
+
+    asyncio.run(
+        TaskRepository(session).update_task_for_user(
+            user_id=user_id,
+            task_id=child.id,
+            changes={"status": "active"},
+        )
+    )
+
+    assert parent.status == "active"
+
+
+def test_deleting_last_assist_child_exits_rollup_and_reopens_parent():
+    user_id = uuid4()
+    parent = _task(user_id=user_id, task_id=uuid4(), thread_id="thread-rollup")
+    parent.status = "completed"
+    parent.metadata_ = {"source": "manual", "assist_rollup": True, "keep": "value"}
+    child = _assist_child(user_id=user_id, parent=parent, status="completed")
+    session = FakeTaskSession(
+        delete_rowcount=1,
+        scalar_results=[child, parent, [], None],
+    )
+
+    deleted = asyncio.run(
+        TaskRepository(session).delete_task_for_user(
+            user_id=user_id,
+            task_id=child.id,
+        )
+    )
+
+    assert deleted is True
+    assert parent.status == "active"
+    assert parent.metadata_ == {"source": "manual", "keep": "value"}
+
+
 def _agent_thread(*, user_id, thread_id: str) -> AgentThread:
     return AgentThread(
         user_id=user_id,
@@ -480,6 +627,14 @@ def _task(*, user_id, task_id, thread_id: str) -> Task:
         user_edited=True,
         metadata_={},
     )
+
+
+def _assist_child(*, user_id, parent: Task, status: str) -> Task:
+    child = _task(user_id=user_id, task_id=uuid4(), thread_id=parent.thread_id)
+    child.parent_task_id = parent.id
+    child.status = status
+    child.metadata_ = {"source": "task_assist", "assist_parent_rollup": True}
+    return child
 
 
 def _phase_task(
@@ -626,6 +781,9 @@ class FakeTaskSession:
 
     async def commit(self):
         self.commit_count += 1
+
+    async def flush(self):
+        return None
 
     async def rollback(self):
         self.rollback_count += 1

@@ -13,6 +13,7 @@ from app.api.exceptions import register_exception_handlers
 from app.api.routes_intents import router as intents_router
 from app.api.routes_practice import router as practice_router
 from app.api.routes_tasks import router as tasks_router
+from app.api.routes_task_assist import router as task_assist_router
 from app.api.routes_threads import router as threads_router
 
 
@@ -42,7 +43,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
-        version="1.2.7.2",
+        version="1.3.0",
         description=(
             "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, "
             "and Async Queue SSE event streams."
@@ -63,6 +64,7 @@ def create_app(
     app.include_router(threads_router)
     app.include_router(practice_router)
     app.include_router(tasks_router)
+    app.include_router(task_assist_router)
 
     if enable_static:
         resolved_static_dir = Path(static_dir) if static_dir is not None else DEFAULT_STATIC_DIR

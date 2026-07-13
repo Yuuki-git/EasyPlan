@@ -46,5 +46,10 @@ def test_env_examples_default_planner_to_deepseek():
     assert "EASYPLAN_LLM_PROVIDER=deepseek" in backend_env
     assert "EASYPLAN_PHASE_PLANNING_ENABLED=true" in backend_env
     assert "EASYPLAN_STRATEGY_CONTEXT_ENABLED=false" in backend_env
+    assert "EASYPLAN_TASK_ASSIST_ENABLED=false" in backend_env
+    assert backend_env.count("EASYPLAN_TASK_ASSIST_ENABLED=") == 1
+    assert "EASYPLAN_TASK_ASSIST_MAX_ACTIVE_PER_USER=2" in backend_env
+    assert "EASYPLAN_TASK_ASSIST_LEASE_SECONDS=30" in backend_env
     assert "VITE_PLANNER_PROVIDER=deepseek" in frontend_env
+    assert "VITE_TASK_ASSIST_ENABLED=false" in frontend_env
     assert 'os.getenv("EASYPLAN_LLM_PROVIDER", "deepseek")' in main_source

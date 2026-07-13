@@ -35,9 +35,24 @@ export function selectPlanningView(
 
   const phaseId = context.current_phase?.phase_id ?? null;
   
-  const currentTasks = sortedTasks.filter(
-    (task) => (phaseId !== null && task.phase_id === phaseId) || task.source === 'manual',
+  const currentTasksSet = new Set(
+    sortedTasks
+      .filter((task) => (phaseId !== null && task.phase_id === phaseId) || task.source === 'manual')
+      .map((t) => t.id)
   );
+
+  let currentTasksAdded = true;
+  while (currentTasksAdded) {
+    currentTasksAdded = false;
+    for (const task of sortedTasks) {
+      if (task.parent_task_id && currentTasksSet.has(task.parent_task_id) && !currentTasksSet.has(task.id)) {
+        currentTasksSet.add(task.id);
+        currentTasksAdded = true;
+      }
+    }
+  }
+
+  const currentTasks = sortedTasks.filter((task) => currentTasksSet.has(task.id));
   
   const aiActions = currentTasks.filter(
     (task) => task.source === 'ai' && task.phase_id === phaseId && task.node_type === 'action',
@@ -65,10 +80,25 @@ export function selectPlanningView(
   return {
     context,
     currentTasks,
-    historicalPhases: completedPhases.map((phase) => ({
-      phase,
-      tasks: sortedTasks.filter((task) => task.phase_id === phase.phase_id),
-    })),
+    historicalPhases: completedPhases.map((phase) => {
+      const phaseTasksSet = new Set(
+        sortedTasks.filter((task) => task.phase_id === phase.phase_id).map((t) => t.id)
+      );
+      let phaseTasksAdded = true;
+      while (phaseTasksAdded) {
+        phaseTasksAdded = false;
+        for (const task of sortedTasks) {
+          if (task.parent_task_id && phaseTasksSet.has(task.parent_task_id) && !phaseTasksSet.has(task.id)) {
+            phaseTasksSet.add(task.id);
+            phaseTasksAdded = true;
+          }
+        }
+      }
+      return {
+        phase,
+        tasks: sortedTasks.filter((task) => phaseTasksSet.has(task.id)),
+      };
+    }),
     nextAction,
     totalAiActions: aiActions.length,
     completedAiActions,

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import TaskTree
@@ -20,6 +20,16 @@ from app.services.practice_repository import (
 )
 
 
+class TaskRollupConflictError(ValueError):
+    def __init__(self, *, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN = "TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN"
+
+
 class TaskRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -32,7 +42,24 @@ class TaskRepository:
     ) -> list[Task]:
         query = select(Task).where(Task.user_id == user_id)
         if view_bucket == "my_day":
-            query = query.where(Task.is_in_my_day.is_(True))
+            source = Task.metadata_["source"].astext
+            explicit_my_day_task = and_(
+                Task.is_in_my_day.is_(True),
+                or_(source.is_(None), source != "task_assist"),
+            )
+            my_day_parent_ids = select(Task.id).where(
+                Task.user_id == user_id,
+                explicit_my_day_task,
+            )
+            query = query.where(
+                or_(
+                    explicit_my_day_task,
+                    and_(
+                        Task.parent_task_id.in_(my_day_parent_ids),
+                        source == "task_assist",
+                    ),
+                )
+            )
         elif view_bucket is not None:
             query = query.where(Task.view_bucket == view_bucket)
         query = query.order_by(Task.sort_order.asc(), Task.created_at.asc())
@@ -155,6 +182,30 @@ class TaskRepository:
                 return None
 
             previous_status = task.status
+            if _metadata(task).get("source") == "task_assist" and (
+                changes.get("is_in_my_day") is True
+                or changes.get("view_bucket") == "my_day"
+            ):
+                raise TaskRollupConflictError(
+                    code=TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN,
+                    message=(
+                        "Assisted subtasks inherit My Day visibility from their parent "
+                        "and cannot be added independently."
+                    ),
+                )
+            if (
+                changes.get("status") == "completed"
+                and _metadata(task).get("assist_rollup") is True
+            ):
+                assist_children = await self._load_assist_children(
+                    user_id=user_id,
+                    parent_task_id=task.id,
+                )
+                if any(child.status != "completed" for child in assist_children):
+                    raise TaskRollupConflictError(
+                        code="TASK_ASSIST_CHILDREN_INCOMPLETE",
+                        message="Complete all assisted subtasks before completing the parent task",
+                    )
             practice_loop_id = _practice_loop_id(task)
             if (
                 practice_loop_id is not None
@@ -168,6 +219,18 @@ class TaskRepository:
                 )
             for field, value in changes.items():
                 setattr(task, field, value)
+
+            rollup_parent_changed = False
+            if (
+                "status" in changes
+                and task.status != previous_status
+                and _metadata(task).get("source") == "task_assist"
+                and task.parent_task_id is not None
+            ):
+                rollup_parent_changed = await self._recalculate_assist_parent(
+                    user_id=user_id,
+                    parent_task_id=task.parent_task_id,
+                )
 
             if (
                 practice_loop_id is not None
@@ -187,6 +250,11 @@ class TaskRepository:
                 and "status" in changes
                 and task.status != previous_status
             ):
+                await self._recalculate_thread_phase_state(
+                    user_id=user_id,
+                    thread_id=task.thread_id,
+                )
+            elif rollup_parent_changed:
                 await self._recalculate_thread_phase_state(
                     user_id=user_id,
                     thread_id=task.thread_id,
@@ -228,6 +296,11 @@ class TaskRepository:
                     task_id=task.id,
                 )
             phase_id = _phase_id_for_ai_action(task)
+            assist_parent_id = (
+                task.parent_task_id
+                if _metadata(task).get("source") == "task_assist"
+                else None
+            )
             result = await self.session.execute(
                 delete(Task).where(
                     Task.user_id == user_id,
@@ -236,7 +309,14 @@ class TaskRepository:
             )
             if result.rowcount <= 0:
                 return False
-            if phase_id is not None:
+            rollup_parent_changed = False
+            if assist_parent_id is not None:
+                await self.session.flush()
+                rollup_parent_changed = await self._recalculate_assist_parent(
+                    user_id=user_id,
+                    parent_task_id=assist_parent_id,
+                )
+            if phase_id is not None or rollup_parent_changed:
                 await self._recalculate_thread_phase_state(
                     user_id=user_id,
                     thread_id=task.thread_id,
@@ -246,6 +326,59 @@ class TaskRepository:
             await self.session.rollback()
             raise
         return True
+
+    async def _load_assist_children(
+        self,
+        *,
+        user_id: UUID,
+        parent_task_id: UUID,
+    ) -> list[Task]:
+        result = await self.session.execute(
+            select(Task).where(
+                Task.user_id == user_id,
+                Task.parent_task_id == parent_task_id,
+            )
+        )
+        return [
+            child
+            for child in result.scalars().all()
+            if _metadata(child).get("source") == "task_assist"
+        ]
+
+    async def _recalculate_assist_parent(
+        self,
+        *,
+        user_id: UUID,
+        parent_task_id: UUID,
+    ) -> bool:
+        parent_result = await self.session.execute(
+            select(Task)
+            .where(Task.user_id == user_id, Task.id == parent_task_id)
+            .with_for_update()
+        )
+        parent = parent_result.scalar_one_or_none()
+        if parent is None:
+            return False
+        metadata = dict(_metadata(parent))
+        if metadata.get("assist_rollup") is not True:
+            return False
+        children = await self._load_assist_children(
+            user_id=user_id,
+            parent_task_id=parent_task_id,
+        )
+        previous_status = parent.status
+        if not children:
+            metadata.pop("assist_rollup", None)
+            parent.metadata_ = metadata
+            if parent.status == "completed":
+                parent.status = "active"
+        else:
+            parent.status = (
+                "completed"
+                if all(child.status == "completed" for child in children)
+                else "active"
+            )
+        return parent.status != previous_status
 
     async def _recalculate_thread_phase_state(
         self,
@@ -345,8 +478,12 @@ def _normalize_create_bucket(*, view_bucket: str, is_in_my_day: bool) -> tuple[s
     return view_bucket, is_in_my_day
 
 
+def _metadata(task: Task) -> dict[str, Any]:
+    return task.metadata_ if isinstance(task.metadata_, dict) else {}
+
+
 def _phase_id_for_ai_action(task: Task) -> str | None:
-    metadata = task.metadata_ if isinstance(task.metadata_, dict) else {}
+    metadata = _metadata(task)
     phase_id = metadata.get("phase_id")
     if not isinstance(phase_id, str):
         return None
@@ -354,7 +491,7 @@ def _phase_id_for_ai_action(task: Task) -> str | None:
 
 
 def _practice_loop_id(task: Task) -> UUID | None:
-    metadata = task.metadata_ if isinstance(task.metadata_, dict) else {}
+    metadata = _metadata(task)
     value = metadata.get("practice_loop_id")
     if not isinstance(value, str):
         return None

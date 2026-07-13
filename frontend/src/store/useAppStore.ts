@@ -8,11 +8,19 @@ import {
   ActiveRun,
   LongTermExecutionSnapshot,
   PhaseReviewUpdateRequest,
-  PhaseReviewDecisionRequest
+  PhaseReviewDecisionRequest,
+  TaskAssistMode,
+  TaskAssistRunStatus,
+  TaskAssistStage,
+  TaskAssistProposal,
+  TaskAssistRunSnapshot,
+  TaskAssistStartResponse,
+  TaskAssistApplyResponse
 } from '../types/api';
 import { isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
 import { createLatestRequestGate } from './snapshotRequestGate';
+import { mergeApplyReceipt } from '../lib/taskAssist';
 
 const snapshotGate = createLatestRequestGate();
 
@@ -141,6 +149,17 @@ interface AppStore {
   isProcessPanelExpanded: boolean;
   lastRunErrorSummary: string | null;
 
+  // Task Assist Slice
+  taskAssistActiveTaskId: string | null;
+  taskAssistActiveRequestId: string | null;
+  taskAssistStatus: TaskAssistRunStatus | null;
+  taskAssistStage: TaskAssistStage | null;
+  taskAssistProposal: TaskAssistProposal | null;
+  taskAssistErrorCode: string | null;
+  taskAssistErrorMessage: string | null;
+  taskAssistLogs: string[];
+  isTaskAssistPanelOpen: boolean;
+
   // Setters
   setActiveRun: (run: ActiveRun | null) => void;
   clearActiveRun: () => void;
@@ -172,6 +191,17 @@ interface AppStore {
   setProcessPanelExpanded: (expanded: boolean) => void;
   setLastRunErrorSummary: (summary: string | null) => void;
 
+  setTaskAssistActiveTaskId: (taskId: string | null) => void;
+  setTaskAssistActiveRequestId: (requestId: string | null) => void;
+  setTaskAssistStatus: (status: TaskAssistRunStatus | null) => void;
+  setTaskAssistStage: (stage: TaskAssistStage | null) => void;
+  setTaskAssistProposal: (proposal: TaskAssistProposal | null) => void;
+  setTaskAssistErrorCode: (code: string | null) => void;
+  setTaskAssistErrorMessage: (message: string | null) => void;
+  addTaskAssistLog: (log: string) => void;
+  setTaskAssistPanelOpen: (isOpen: boolean) => void;
+  resetTaskAssist: () => void;
+
   // Actions
   alignState: (threadId: string) => Promise<void>;
   retryNode: (nodeId: string) => Promise<void>;
@@ -195,6 +225,11 @@ interface AppStore {
   schedulePracticeToday: (loopId: string) => Promise<void>;
   savePhaseReview: (phaseId: string, payload: PhaseReviewUpdateRequest) => Promise<void>;
   decidePhaseReview: (phaseId: string, payload: PhaseReviewDecisionRequest) => Promise<void>;
+
+  startTaskAssist: (taskId: string, mode: TaskAssistMode, userContext?: string | null) => Promise<TaskAssistStartResponse>;
+  fetchTaskAssistSnapshot: (taskId: string, requestId: string) => Promise<TaskAssistRunSnapshot>;
+  cancelTaskAssist: (taskId: string, requestId: string) => Promise<void>;
+  applyTaskAssist: (taskId: string, requestId: string, selectedOptionId?: string | null) => Promise<TaskAssistApplyResponse>;
 }
 
 type AppStoreSet = (partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>)) => void;
@@ -231,6 +266,15 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     recentEvents: [],
     isProcessPanelExpanded: true,
     lastRunErrorSummary: null,
+    taskAssistActiveTaskId: null,
+    taskAssistActiveRequestId: null,
+    taskAssistStatus: null,
+    taskAssistStage: null,
+    taskAssistProposal: null,
+    taskAssistErrorCode: null,
+    taskAssistErrorMessage: null,
+    taskAssistLogs: [],
+    isTaskAssistPanelOpen: false,
   });
 
   if (shouldClearSelectedProject) {
@@ -450,6 +494,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       recentEvents: [],
       isProcessPanelExpanded: true,
       lastRunErrorSummary: null,
+      taskAssistActiveTaskId: null,
+      taskAssistActiveRequestId: null,
+      taskAssistStatus: null,
+      taskAssistStage: null,
+      taskAssistProposal: null,
+      taskAssistErrorCode: null,
+      taskAssistErrorMessage: null,
+      taskAssistLogs: [],
+      isTaskAssistPanelOpen: false,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
@@ -458,6 +511,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     localStorage.removeItem('easyplan_phase_request_id');
     localStorage.removeItem('easyplan_base_phase_id');
     localStorage.removeItem('easyplan_active_run');
+    localStorage.removeItem('easyplan_task_assist_task_id');
+    localStorage.removeItem('easyplan_task_assist_request_id');
+    localStorage.removeItem('easyplan_task_assist_mode');
   },
 
   reconnectActiveRun: () => {
@@ -1092,7 +1148,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       if (
         (updatedTask.source === 'ai' && updatedTask.phase_id) ||
-        (updatedTask.practice_loop_id && updatedTask.thread_id === get().selectedProjectId)
+        (updatedTask.practice_loop_id && updatedTask.thread_id === get().selectedProjectId) ||
+        updatedTask.source === 'task_assist' ||
+        updatedTask.assist_rollup
       ) {
         await get().loadProjectSnapshot(updatedTask.thread_id);
         await get().fetchTasks(get().currentViewBucket);
@@ -1278,8 +1336,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         throw new Error('Failed to delete task');
       }
 
-      if (taskToDelete?.source === 'ai' && taskToDelete?.phase_id) {
+      if (
+        (taskToDelete?.source === 'ai' && taskToDelete?.phase_id) ||
+        taskToDelete?.source === 'task_assist' ||
+        taskToDelete?.assist_rollup
+      ) {
         get().loadProjectSnapshot(taskToDelete.thread_id);
+        get().fetchTasks(get().currentViewBucket);
       }
     } catch (err) {
       console.error("Delete task failed", err);
@@ -1936,6 +1999,269 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     } catch (err) {
       set({ error: (err as Error).message, appState: 'ERROR' });
+    }
+  },
+
+  // Task Assist implementation
+  taskAssistActiveTaskId: localStorage.getItem('easyplan_task_assist_task_id') || null,
+  taskAssistActiveRequestId: localStorage.getItem('easyplan_task_assist_request_id') || null,
+  taskAssistStatus: null,
+  taskAssistStage: null,
+  taskAssistProposal: null,
+  taskAssistErrorCode: null,
+  taskAssistErrorMessage: null,
+  taskAssistLogs: [],
+  isTaskAssistPanelOpen: false,
+
+  setTaskAssistActiveTaskId: (taskId) => set({ taskAssistActiveTaskId: taskId }),
+  setTaskAssistActiveRequestId: (requestId) => set({ taskAssistActiveRequestId: requestId }),
+  setTaskAssistStatus: (status) => set({ taskAssistStatus: status }),
+  setTaskAssistStage: (stage) => set({ taskAssistStage: stage }),
+  setTaskAssistProposal: (proposal) => set({ taskAssistProposal: proposal }),
+  setTaskAssistErrorCode: (code) => set({ taskAssistErrorCode: code }),
+  setTaskAssistErrorMessage: (message) => set({ taskAssistErrorMessage: message }),
+  addTaskAssistLog: (log) => set((state) => ({ taskAssistLogs: [...state.taskAssistLogs, log] })),
+  setTaskAssistPanelOpen: (isOpen) => set({ isTaskAssistPanelOpen: isOpen }),
+  resetTaskAssist: () => {
+    localStorage.removeItem('easyplan_task_assist_task_id');
+    localStorage.removeItem('easyplan_task_assist_request_id');
+    localStorage.removeItem('easyplan_task_assist_mode');
+    set({
+      taskAssistActiveTaskId: null,
+      taskAssistActiveRequestId: null,
+      taskAssistStatus: null,
+      taskAssistStage: null,
+      taskAssistProposal: null,
+      taskAssistErrorCode: null,
+      taskAssistErrorMessage: null,
+      taskAssistLogs: [],
+    });
+  },
+
+  startTaskAssist: async (taskId, mode, userContext) => {
+    const { token } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+    const requestId = generateUUID();
+    localStorage.setItem('easyplan_task_assist_task_id', taskId);
+    localStorage.setItem('easyplan_task_assist_request_id', requestId);
+    localStorage.setItem('easyplan_task_assist_mode', mode);
+    set({
+      taskAssistActiveTaskId: taskId,
+      taskAssistActiveRequestId: requestId,
+      taskAssistStatus: 'running',
+      taskAssistStage: 'queued',
+      taskAssistProposal: null,
+      taskAssistErrorCode: null,
+      taskAssistErrorMessage: null,
+      taskAssistLogs: ['已加入队列，等待处理...'],
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}/assist`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          request_id: requestId,
+          mode,
+          user_context: userContext || null,
+        })
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        let msg = 'Failed to start task assist';
+        let code = 'TASK_ASSIST_FAILED';
+        try {
+          const errData = await response.json();
+          if (errData.detail) {
+            msg = errData.detail.message || errData.detail;
+            code = errData.detail.error_code || code;
+          }
+        } catch {
+          // ignore
+        }
+        set({
+          taskAssistStatus: 'failed',
+          taskAssistStage: 'failed',
+          taskAssistErrorCode: code,
+          taskAssistErrorMessage: msg,
+        });
+        throw new Error(msg);
+      }
+
+      const data = await response.json();
+      set({ taskAssistStatus: data.status });
+      return data;
+    } catch (err) {
+      const msg = (err as Error).message || '网络连接失败，请重试';
+      set({
+        taskAssistStatus: 'failed',
+        taskAssistStage: 'failed',
+        taskAssistErrorMessage: msg
+      });
+      throw err;
+    }
+  },
+
+  fetchTaskAssistSnapshot: async (taskId, requestId) => {
+    const { token } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}/assist/${requestId}`, {
+        headers
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch task assist snapshot');
+      }
+
+      const data = await response.json();
+      set({
+        taskAssistStatus: data.status,
+        taskAssistStage: data.stage,
+        taskAssistProposal: data.proposal,
+        taskAssistErrorCode: data.error_code || null,
+        taskAssistErrorMessage: data.error_message || null,
+      });
+      return data;
+    } catch (err) {
+      console.error("Fetch snapshot failed", err);
+      throw err;
+    }
+  },
+
+  cancelTaskAssist: async (taskId, requestId) => {
+    const { token } = get();
+    if (!token) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}/assist/${requestId}`, {
+        method: 'DELETE',
+        headers
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel task assist');
+      }
+
+      const data = await response.json();
+      localStorage.removeItem('easyplan_task_assist_task_id');
+      localStorage.removeItem('easyplan_task_assist_request_id');
+      localStorage.removeItem('easyplan_task_assist_mode');
+      set({
+        taskAssistStatus: data.status,
+        taskAssistStage: data.stage,
+      });
+    } catch (err) {
+      console.error("Cancel assist failed", err);
+      throw err;
+    }
+  },
+
+  applyTaskAssist: async (taskId, requestId, selectedOptionId) => {
+    const { token, boardTasks } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/tasks/${taskId}/assist/${requestId}/apply`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          selected_option_id: selectedOptionId || null
+        })
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        let msg = 'Failed to apply proposal';
+        let code = 'TASK_ASSIST_FAILED';
+        try {
+          const errData = await response.json();
+          if (errData.detail) {
+            msg = errData.detail.message || errData.detail;
+            code = errData.detail.error_code || code;
+          }
+        } catch {
+          // ignore
+        }
+        set({
+          taskAssistStatus: 'failed',
+          taskAssistStage: 'failed',
+          taskAssistErrorCode: code,
+          taskAssistErrorMessage: msg
+        });
+        throw new Error(msg);
+      }
+
+      const data = await response.json();
+      localStorage.removeItem('easyplan_task_assist_task_id');
+      localStorage.removeItem('easyplan_task_assist_request_id');
+      localStorage.removeItem('easyplan_task_assist_mode');
+      set({
+        taskAssistStatus: data.status,
+        taskAssistStage: 'applied'
+      });
+
+      // Optimistic merge receipt
+      if (boardTasks) {
+        const merged = mergeApplyReceipt(boardTasks, data.task, data.tasks);
+        set({ boardTasks: merged });
+      }
+
+      // Reload project snapshot and refetch tasks to sync roadmap & next action
+      await get().loadProjectSnapshot(data.task.thread_id);
+      await get().fetchTasks(get().currentViewBucket);
+
+      return data;
+    } catch (err) {
+      console.error("Apply assist failed", err);
+      throw err;
     }
   }
 }));

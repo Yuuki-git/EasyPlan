@@ -1,6 +1,6 @@
 # EasyPlan 前端开发指令
 
-适用版本：`v1.2.6-rc.1` 及后续维护补丁
+适用版本：`v1.3.0-rc` 及后续维护补丁
 
 ## 1. 当前目标
 
@@ -147,7 +147,39 @@ activeRun
 - `PhaseRecords` 只在 selected project 内展示，不能加入全局导航或 Portfolio。
 - mutation 后复用 `loadProjectSnapshot` 与 `fetchTasks`，不要新增第二套竞态控制。
 
-## 12. 验收要求
+## 12. Task Assist / Action Coach
+
+### 12.1 产品与状态边界
+
+- 仅在未完成普通 Action 上展示“帮我开始”“我卡住了”“拆得更细”。
+- Task Assist 使用独立 task/request/mode 和 `run_type=task_assist`，不能复用 plan-level
+  `activeRun`、reasoning、preview tree 或生成页面。
+- Apply 前只展示 proposal，不修改任务；Apply 后保持当前项目或 My Day 视图。
+- `start` 只写 `start_hint`；`unstick` 只写所选 `fallback_action`；`decompose`
+  创建 children 并启用父任务 roll-up。
+
+### 12.2 生命周期
+
+- 开始 run 前清理上一轮 proposal、日志和错误，再持久化 task ID、request ID 与 mode。
+- 刷新时用持久化 identity 查询 snapshot；不得生成新 request。
+- SSE 校验 thread、task、request、run type、event allowlist 和 event ID，并阻止旧
+  EventSource handler 写入 store。
+- running 取消成功后执行完整 reset 并关闭 panel；取消失败时保留 panel 和当前 run，
+  显示错误并允许重试。
+- `TASK_ASSIST_CONTEXT_STALE` 必须进入重新生成路径，保留 mode 和用户补充信息。
+- applied、cancelled、expired、退出登录后必须清除 task-assist localStorage。
+
+### 12.3 Roll-Up 与 My Day
+
+- 项目和 My Day 都从平铺 task 数据按 `parent_task_id` 重建层级。
+- Assist children 始终嵌套在父 Action 下，不能重复或降级为顶层任务。
+- 父任务存在未完成 children 时 checkbox 禁用；完成、重开和删除 child 后使用后端
+  receipt/snapshot 更新父任务状态。
+- 父任务是 My Day 的承诺锚点。Assist child 不显示太阳按钮，不能独立加入 My Day，
+  其 `is_in_my_day` 保持 false。
+- My Day 响应中缺少父节点的 Assist child 必须忽略，不能作为普通顶层任务展示。
+
+## 13. 验收要求
 
 至少运行：
 
@@ -156,6 +188,8 @@ cd frontend
 npm run test:hooks
 npm run test:portfolio
 npm run test:long-term
+npm run test:strategy
+npm run test:task-assist
 npm run build
 npm run lint
 ```
@@ -175,7 +209,15 @@ npm run lint
 - stalled 重新连接（sseReconnectNonce 增加、EventSource 重新连接、不重建请求）
 - dismissInitialSync 保留 activeRun 并最终由 done 成功同步项目到 Portfolio
 
-## 13. 交付纪律
+Task Assist 专项至少覆盖：
+
+- start / unstick / decompose proposal 与 Apply；
+- running cancel 成功清理并关闭，以及失败保留面板并显示错误；
+- running / ready snapshot 恢复；
+- stale、过期、401、409、provider error 和迟到 SSE；
+- 平铺 My Day 父子树重建、父任务 checkbox、child 无 My Day 按钮和 orphan child 抑制。
+
+## 14. 交付纪律
 
 - 遵循现有 React、Zustand、Tailwind 和组件结构。
 - 不用 timeout/ref 驱动需要 React 重渲染的可见状态。

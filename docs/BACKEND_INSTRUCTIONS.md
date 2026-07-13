@@ -1,11 +1,11 @@
 # EasyPlan 后端开发指令
 
-适用版本：`v1.2.6-rc.1` 及后续维护补丁
+适用版本：`v1.3.0` 及后续维护补丁
 
 ## 1. 当前目标
 
-当前主线是稳定意图驱动规划与同 thread 阶段推进。不要在 RC 修复中加入新产品
-能力，也不要恢复外部任务平台同步。
+当前主线是在稳定意图驱动规划与同 thread 阶段推进的基础上，提供单任务
+Task Copilot。不要把 task assist 扩大成整份计划重写，也不要恢复外部任务平台同步。
 
 主流程：
 
@@ -46,6 +46,10 @@ DeepSeek 是当前主验收 provider。
 - next-phase `client_node_id` 必须与 thread 内既有节点不冲突。
 - task、task tree 和 confirmed envelope 必须事务一致。
 - 禁止用静默冲突忽略制造“确认成功但任务未写入”。
+- task assist proposal 在 Apply 前不得修改 task 或 `AgentThread.task_tree`。
+- task assist Apply 必须锁定 run/task，检查 owner、request、expiry 和 stale timestamp。
+- assist children 的 `source=task_assist`，不计入 phase AI Action 数。
+- roll-up 父任务状态只能由现存 assist children 确定性驱动。
 
 ## 3. Agent Run 与 SSE
 
@@ -70,6 +74,7 @@ thread_id + run_type + request_id
   `stage`、`label`、`state_version`；不要加入成功/失败 `status`。
 - SSE stage 是用户可见状态文案，不得暴露 chain-of-thought、prompt、provider
   payload、secret 或 traceback。
+- `task_assist` 使用独立 run key、缓存、订阅队列和终态；不得进入规划 stream。
 
 ## 4. 下一阶段状态边界
 
@@ -97,6 +102,11 @@ GET    /api/tasks
 POST   /api/tasks
 PATCH  /api/tasks/{task_id}
 DELETE /api/tasks/{task_id}
+POST   /api/tasks/{task_id}/assist
+GET    /api/tasks/{task_id}/assist/{request_id}
+GET    /api/tasks/{task_id}/assist/{request_id}/events
+DELETE /api/tasks/{task_id}/assist/{request_id}
+POST   /api/tasks/{task_id}/assist/{request_id}/apply
 ```
 
 修改接口或 schema 时同步更新：
@@ -121,6 +131,8 @@ DELETE /api/tasks/{task_id}
 - API key 只从环境变量读取，不写入仓库、日志或测试快照。
 - 仅保存必要 usage 元数据，不保存 raw prompt、完整推理或裸响应。
 - 模型返回必须经过 JSON 清理、repair retry、Pydantic 和业务 validator。
+- Task Assist Provider 固定为 DeepSeek，前端不得选择或覆盖模型。
+- Task Assist 只发送目标 task、两层 ancestor 和必要项目摘要，不发送其他项目任务。
 
 ## 8. 长期执行循环不变量
 

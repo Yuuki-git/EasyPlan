@@ -54,6 +54,79 @@ def _valid_task_tree() -> dict:
     }
 
 
+def _decision_task_tree() -> dict:
+    tree = _valid_task_tree()
+    tree["summary"] = "值得继续低成本探索，但在补齐信息前暂不购买。"
+    tree["planning_context"] = {
+        "schema_version": 1,
+        "intent_type": "exploration_decision",
+        "time_horizon": "days",
+        "roadmap": [
+            {
+                "phase_id": "clarify",
+                "order": 1,
+                "title": "澄清",
+                "objective": "补齐购买依据",
+                "status": "current",
+            },
+            {
+                "phase_id": "test",
+                "order": 2,
+                "title": "验证",
+                "objective": "完成低成本验证",
+                "status": "planned",
+            },
+            {
+                "phase_id": "decide",
+                "order": 3,
+                "title": "决策",
+                "objective": "记录购买结论",
+                "status": "planned",
+            },
+        ],
+        "current_phase": {
+            "phase_id": "clarify",
+            "title": "澄清",
+            "objective": "补齐购买依据",
+        },
+        "next_action_client_node_id": "task-1",
+    }
+    tree["strategy_context"] = {
+        "schema_version": 1,
+        "strategy_type": "decision",
+        "question": "现在是否应该购买这台二手车？",
+        "options": ["继续验证", "暂缓购买"],
+        "current_judgment": {
+            "direction": "continue_exploring",
+            "statement": "值得继续低成本探索，但在补齐信息前暂不购买。",
+            "confidence": "medium",
+        },
+        "basis": [
+            {
+                "statement": "维修成本可能超过预算",
+                "basis_type": "working_assumption",
+            }
+        ],
+        "missing_information": ["真实车况和维修记录"],
+        "experiments": [
+            {
+                "experiment_id": "inspect",
+                "title": "预约检测",
+                "hypothesis": "检测可以暴露主要车况风险",
+                "success_signal": "取得一份检测报告",
+                "effort_level": "low",
+                "task_client_node_ids": ["task-1"],
+            }
+        ],
+        "decision_gate": {
+            "review_after": "取得检测报告后",
+            "proceed_if": ["车况和维修预算均可接受"],
+            "stop_if": ["发现重大事故或维修成本超预算"],
+        },
+    }
+    return tree
+
+
 class FakeResponses:
     def __init__(self, output_parsed, usage=None):
         self.output_parsed = output_parsed
@@ -272,6 +345,28 @@ def test_deepseek_planner_parses_discriminated_delivery_strategy_context():
     assert result["strategy_context"]["workstreams"][0]["task_client_node_ids"] == [
         "task-1"
     ]
+
+
+def test_deepseek_normalizes_low_information_decision_contract(monkeypatch):
+    monkeypatch.setenv("EASYPLAN_STRATEGY_CONTEXT_ENABLED", "true")
+    fake_deepseek = FakeChatClient(
+        json.dumps(_decision_task_tree(), ensure_ascii=False)
+    )
+    planner = DeepSeekPlannerClient(client=fake_deepseek, model="deepseek-chat")
+    prompt = build_planner_prompt(
+        "我对这台二手车了解很少，不知道车况和维修成本，现在该不该买",
+        intent_profile={
+            "intent_type": "exploration_decision",
+            "time_horizon": "days",
+        },
+    )
+
+    result = asyncio.run(planner.create_plan(prompt))
+
+    context = result["strategy_context"]
+    assert context["current_judgment"]["confidence"] == "low"
+    assert context["basis"][0]["basis_type"] == "working_assumption"
+    assert context["basis"][0]["statement"].startswith("假设：")
 
 
 def test_json_cleanup_preserves_normal_json():

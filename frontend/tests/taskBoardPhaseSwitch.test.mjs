@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { loadTsModule } from './testHelpers/loadTsModule.mjs';
+
+const taskAssistModule = loadTsModule('../../src/lib/taskAssist.ts');
 
 function createStore(initializer) {
   let state;
@@ -95,6 +98,9 @@ function loadAppStoreModule() {
           }
         };
       }
+      if (specifier === '../lib/taskAssist') {
+        return taskAssistModule;
+      }
       throw new Error(`Unexpected require: ${specifier}`);
     },
     Intl: Intl
@@ -178,9 +184,15 @@ function loadTaskBoard(useAppStoreInstance) {
   };
 
   const module = { exports: {} };
+  const localStorageValues = new Map();
   const context = {
     exports: module.exports,
     module,
+    localStorage: {
+      getItem: (key) => localStorageValues.get(key) ?? null,
+      setItem: (key, value) => localStorageValues.set(key, value),
+      removeItem: (key) => localStorageValues.delete(key),
+    },
     require: (specifier) => {
       if (specifier === 'react') return mockReact;
       if (specifier === 'framer-motion') return mockFramerMotion;
@@ -221,6 +233,12 @@ function loadTaskBoard(useAppStoreInstance) {
                 })),
             };
           }
+        };
+      }
+      if (specifier.includes('TaskCoachPanel')) {
+        return {
+          TaskCoachPanel: () => null,
+          default: () => null
         };
       }
       throw new Error(`Unexpected import in component: ${specifier}`);

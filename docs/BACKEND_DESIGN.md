@@ -206,6 +206,9 @@ idempotency 与前端 stale-response gate 共同防止：
 - `planned` 是全部项目任务的来源。
 - `my_day` 是基于 `is_in_my_day` 的虚拟视图。
 - 将任务加入 My Day 不改变其项目和树结构。
+- `source=task_assist` child 禁止独立设置 `is_in_my_day=true`；非法 PATCH 在事务内
+  回滚并返回 `TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN`。My Day 只随显式父任务附带直接
+  Assist children，父任务移出后这些隐式 children 不再返回。
 - PATCH 根据 `user_id + task_id` 更新，同一任务在两个视图中保持一致。
 - 删除 thread 会删除该用户在 thread 下的任务。
 
@@ -293,8 +296,51 @@ Action Quality 和五项 Strategy Context 指标也均为 `100%`。合并 Horizo
   新 initial/refine 的 `short_term_delivery` 与 `exploration_decision`；
 - next-phase、长期 schema v2、context checklist 与 SSE envelope 不变。
 
-## 15. 非目标与后续
+## 15. v1.3.0 Task Copilot / Action Coach
+
+Task Assist 是独立于 plan graph 的 request-scoped run：
+
+```text
+POST assist -> running -> context_ready -> generating -> validating -> ready
+                                                                      |
+                                                                      v
+                                                                   Apply
+                                                                      |
+                                                                      v
+                                                                   applied
+```
+
+- `task_assist_runs` 以 `(user_id, task_id, request_id)` 唯一，并通过部分唯一索引保证同一
+  `(user_id, task_id)` 最多存在一个 `status=running` 的 run；创建 run 前先锁定目标 task 行；
+- running run 持久化 `lease_owner/lease_expires_at`，运行时 heartbeat 续租。过期 lease
+  原子转为 `failed/TASK_ASSIST_INTERRUPTED`，释放 active slot 并允许新 request 重试；
+- proposal 默认 24 小时过期；
+- `start`、`unstick`、`decompose` 使用 `proposal_type` 判别联合和 DeepSeek JSON Output；
+- 模型只接收目标任务、最多两层 ancestor、当前项目摘要、必要策略/阶段摘要和本次
+  `user_context`，不接收其他任务、推理历史或认证信息；
+- SSE 使用独立 `run_type=task_assist`、独立事件缓存、游标、heartbeat、取消标记和终态
+  回收上限；进程内事件丢失时轮询 durable snapshot，恢复 `assist_ready/done` 或
+  `agent_error`，不会在进程重启后无限返回 `still_running`；规划流仍只接受
+  initial/next_phase/refine；
+- Apply 锁定 run 与目标 task，校验 owner、状态、过期时间和 `target_task_updated_at`，
+  重复 Apply 返回已保存 receipt；
+- start 只更新 metadata `start_hint`，unstick 只更新所选 `fallback_action`；
+- decompose 原子创建 2-5 个 `source=task_assist` 子任务与依赖，并在父任务 metadata
+  标记 `assist_rollup=true`，不修改 `AgentThread.task_tree`；
+- assist child 不计入 phase action 数。子任务全部完成时父任务自动完成，任一重开时
+  父任务重开，删除后按剩余子任务重算；存在未完成子任务时拒绝直接完成父任务；
+- My Day 查询通过父任务的虚拟映射连同直接 children 返回，不改变 child 自身的
+  `is_in_my_day`，因此项目与 My Day 共享同一组 task ID 和 roll-up 状态；
+- `EASYPLAN_TASK_ASSIST_ENABLED=false` 默认关闭，每用户同时最多两个 active run；
+  `EASYPLAN_TASK_ASSIST_LEASE_SECONDS=30` 控制 durable run lease（最小 15 秒）。
+
+2026-07-13 后端验收：`452 passed`；DeepSeek Task Assist Eval `18/18`，六项指标
+全部 `100%`；Planning Eval `54/54`，全部 release-gate 指标保持 `100%`。
+
+## 16. 非目标与后续
 
 - 不恢复 Todoist、Microsoft To Do、MCP 或 OAuth 外部同步主线。
-- v1.2.8 后端已加入 feature-flagged optional `strategy_context`；前端展示与最终 release gate 仍按执行计划验收。
+- v1.2.8 的 optional `strategy_context`、前端展示与完整 release gate 已完成。
+- v1.3.0 后端已实现独立 task-assist run、结构化 proposal、确认式 Apply 和父任务
+  roll-up；前端集成、Reviewer gate 与手工产品验收完成前不标记整个版本 Completed。
 - 更强的个性化规划继续放入后续版本。

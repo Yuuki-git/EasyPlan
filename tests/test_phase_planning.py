@@ -59,6 +59,23 @@ def test_manual_tasks_do_not_block_phase_completion():
     assert progress.is_complete is True
 
 
+def test_task_assist_children_do_not_double_count_phase_progress():
+    tasks = [
+        make_task("parent-ai-action", status="active"),
+        make_task(
+            "assist-child",
+            source="task_assist",
+            status="completed",
+        ),
+    ]
+
+    progress = calculate_phase_progress(tasks, "phase_01")
+
+    assert progress.total_ai_actions == 1
+    assert progress.completed_ai_actions == 0
+    assert progress.is_complete is False
+
+
 def test_phase_without_ai_actions_is_not_complete():
     progress = calculate_phase_progress([], "phase_01")
 

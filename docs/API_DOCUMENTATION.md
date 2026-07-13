@@ -375,7 +375,10 @@ Query：
 view_bucket=planned|my_day|backlog
 ```
 
-`my_day` 是虚拟视图，任务仍保留原 thread 和项目结构。
+`my_day` 是虚拟视图，任务仍保留原 thread 和项目结构。查询返回显式
+`is_in_my_day=true` 的非 Assist 父任务，并附带这些父任务的直接
+`source=task_assist` children；不会返回更深层后代，也不会修改 child 自身的
+`is_in_my_day`。父任务移出 My Day 后，其隐式 children 随即不再出现在查询结果中。
 
 ### POST `/api/tasks`
 
@@ -416,6 +419,9 @@ view_bucket=planned|my_day|backlog
 - `description: null` 清空描述。
 - `estimated_minutes: null` 清空预计时间。
 - `title/status/view_bucket/is_in_my_day/sort_order` 显式 `null` 返回 `422`。
+- `source=task_assist` child 不能单独设置 `is_in_my_day=true`，也不能物理移动到
+  `view_bucket=my_day`；返回 `409`，结构化错误码
+  `TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN`。它只继承父任务的 My Day 可见性。
 - 至少提供一个变更字段。
 
 ### DELETE `/api/tasks/{task_id}`
@@ -434,7 +440,9 @@ view_bucket=planned|my_day|backlog
   "fallback_action": "如果时间不足，先完成最小版本",
   "source": "ai",
   "phase_id": "phase-2",
-  "phase_order": 2
+  "phase_order": 2,
+  "assist_rollup": false,
+  "assist_request_id": null
 }
 ```
 
@@ -485,7 +493,70 @@ schema v2 snapshot 增加 `long_term_execution`，包含：
 
 schema v1 与非长期 thread 返回 `null`，保持旧客户端兼容。
 
-## 14. 契约来源
+## 14. Task Copilot / Action Coach
+
+后端开关：`EASYPLAN_TASK_ASSIST_ENABLED=false`。所有接口要求 JWT，并按
+`user_id + task_id + request_id` 校验所有权；不存在和越权统一返回 `404`。
+
+### POST `/api/tasks/{task_id}/assist`
+
+```json
+{
+  "request_id": "UUID",
+  "mode": "start",
+  "user_context": "可选，最多 1000 字"
+}
+```
+
+返回 `202`，包含 `task_id/thread_id/request_id/mode/status/events_url`。同一 request
+幂等；数据库部分唯一索引保证同 task 只允许一个 running run；并发冲突返回
+`TASK_ASSIST_ACTIVE_RUN`，Provider 固定为 DeepSeek。
+
+### GET `/api/tasks/{task_id}/assist/{request_id}`
+
+返回 durable snapshot：`status`、`stage`、判别联合 `proposal`、安全错误摘要和带时区
+的创建、更新、过期时间。proposal 默认 24 小时过期。running lease 过期时状态转为
+`failed`，`error_code=TASK_ASSIST_INTERRUPTED`，用户可使用新 request 重试。
+
+### GET `/api/tasks/{task_id}/assist/{request_id}/events`
+
+独立 SSE 流，`run_type=task_assist`。事件为：
+
+```text
+run_started -> task_context_ready -> assist_generation_started
+            -> assist_validation_started -> assist_ready -> done
+```
+
+慢调用发送 `still_running`；错误发送 `agent_error`。支持 Header `Last-Event-ID` 和
+Query `last_event_id`，SSE Token 可沿用 `?token=`。若进程内事件缓存丢失，SSE 根据
+数据库 snapshot 回补 ready/error 终态。
+
+### DELETE `/api/tasks/{task_id}/assist/{request_id}`
+
+仅 running/ready 可取消；重复取消幂等。取消后迟到模型结果不能保存 proposal。
+
+### POST `/api/tasks/{task_id}/assist/{request_id}/apply`
+
+```json
+{
+  "selected_option_id": "仅 unstick 必填"
+}
+```
+
+目标 task 在 proposal 生成后发生变化时返回结构化
+`TASK_ASSIST_CONTEXT_STALE`；客户端可沿用原 `mode/user_context` 创建新的 request，
+不得 Apply 旧 proposal。
+
+- start：只保存 proposal 的 `start_hint`；
+- unstick：校验 option ID 后只保存对应 `fallback_action`；
+- decompose：原子创建 assist children/dependencies，并启用父任务 roll-up；
+- 重复 Apply 返回同一 `apply_receipt`，前端不能提交任意 task patch；
+- stale、expired、invalid option、active run 等冲突返回稳定 `409/429` 错误码。
+
+Proposal 上限：start 为 2-10 分钟；unstick 为 2-3 个选项且单项 2-20 分钟；
+decompose 为 2-5 个子任务，父任务不超过 15/30 分钟时分别最多 2/3 个。
+
+## 15. 契约来源
 
 修改接口时必须同步：
 

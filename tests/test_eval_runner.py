@@ -441,6 +441,135 @@ def test_schema_v2_horizon_allows_loop_cadence_without_future_occurrences():
     assert runner.collect_horizon_errors(case, task_tree) == []
 
 
+def test_case_41_concrete_foundation_training_actions_are_not_full_curriculum():
+    runner = _load_eval_runner()
+    cases = runner.load_cases(Path(__file__).parent / "evals" / "planning_cases.jsonl")
+    case = next(item for item in cases if item.case_id == "41")
+    plan = {
+        "root": {
+            "client_node_id": "root",
+            "title": "启动基础体能恢复",
+            "description": None,
+            "verb": "启动",
+            "estimated_minutes": 40,
+            "node_type": "group",
+            "depends_on": [],
+            "children": [
+                {
+                    "client_node_id": "save-test",
+                    "title": "保存基础体能测试说明",
+                    "description": "保留本次测试步骤。",
+                    "verb": "保存",
+                    "estimated_minutes": 5,
+                    "node_type": "action",
+                    "depends_on": [],
+                    "children": [],
+                    "done_criteria": "保存一份可打开的测试说明",
+                    "start_hint": "打开浏览器搜索基础体能测试",
+                },
+                {
+                    "client_node_id": "run-test",
+                    "title": "完成基础体能自测",
+                    "description": "记录深蹲、平板支撑和快走结果。",
+                    "verb": "完成",
+                    "estimated_minutes": 20,
+                    "node_type": "action",
+                    "depends_on": ["save-test"],
+                    "children": [],
+                    "done_criteria": "记录三项测试的次数或时长",
+                    "fallback_action": "状态不好时只完成深蹲测试",
+                },
+                {
+                    "client_node_id": "choose-training",
+                    "title": "选择三项训练动作",
+                    "description": "根据自测结果选择当前可完成的动作。",
+                    "verb": "选择",
+                    "estimated_minutes": 15,
+                    "node_type": "action",
+                    "depends_on": ["run-test"],
+                    "children": [],
+                    "done_criteria": "写下三项动作及每次目标次数",
+                },
+            ],
+        },
+        "summary": "Phase 1 启动计划",
+        "assumptions": [],
+        "planning_context": {
+            "schema_version": 2,
+            "intent_type": "long_term_growth",
+            "time_horizon": "weeks",
+            "roadmap": [
+                {
+                    "phase_id": "phase_01",
+                    "order": 1,
+                    "title": "建立基线",
+                    "objective": "确认当前体能水平",
+                    "status": "current",
+                },
+                {
+                    "phase_id": "phase_02",
+                    "order": 2,
+                    "title": "稳定练习",
+                    "objective": "建立每周运动节奏",
+                    "status": "planned",
+                },
+                {
+                    "phase_id": "phase_03",
+                    "order": 3,
+                    "title": "结果复测",
+                    "objective": "验证基础体能变化",
+                    "status": "planned",
+                },
+            ],
+            "current_phase": {
+                "phase_id": "phase_01",
+                "title": "建立基线",
+                "objective": "确认当前体能水平",
+                "completion_rule": "long_term_execution_gate",
+                "estimated_duration_weeks": 4,
+            },
+            "next_action_client_node_id": "save-test",
+            "practice_loops": [
+                {
+                    "loop_id": "fitness",
+                    "title": "完成一次基础体能训练",
+                    "target_per_week": 3,
+                    "duration_weeks": 4,
+                    "done_criteria": "完成训练并记录动作次数",
+                }
+            ],
+            "outcome_checkpoints": [
+                {
+                    "checkpoint_id": "squat-count",
+                    "title": "完成基础体能复测",
+                    "evidence_type": "numeric",
+                    "unit": "次",
+                    "operator": "gte",
+                    "target_value": 20,
+                }
+            ],
+            "phase_gate": {
+                "process_threshold": 0.8,
+                "outcome_rule": "all_required",
+            },
+        },
+    }
+
+    result = runner.evaluate_plan(
+        case,
+        plan,
+        intent_profile={
+            "intent_type": "long_term_growth",
+            "time_horizon": "weeks",
+        },
+    )
+
+    assert result.valid_task_tree is True
+    assert result.scope_horizon_compliant is True
+    assert not any("full curriculum roadmap" in error for error in result.horizon_errors)
+    assert result.passed is True
+
+
 def test_future_occurrence_detection_distinguishes_weekly_count_from_weekday():
     runner = _load_eval_runner()
 
@@ -661,6 +790,12 @@ def test_strict_gate_requires_profile_and_scope_horizon_to_each_be_perfect(metri
         "profile_horizon_accuracy": 1.0,
         "scope_horizon_compliance_rate": 1.0,
         "pass_rate": 1.0,
+        "action_quality_pass_rate": 1.0,
+        "average_actionability_score": 100.0,
+        "done_criteria_coverage": 1.0,
+        "abstract_task_violation_rate": 0.0,
+        "long_term_loop_contract_pass_rate": 1.0,
+        "outcome_checkpoint_coverage": 1.0,
         "strategy_context_coverage": 1.0,
         "delivery_contract_pass_rate": 1.0,
         "decision_contract_pass_rate": 1.0,
@@ -678,6 +813,101 @@ def test_strict_gate_requires_profile_and_scope_horizon_to_each_be_perfect(metri
     assert runner.core_strict_gate_failed(summary, args) is False
     summary[metric] = 0.99
     assert runner.core_strict_gate_failed(summary, args) is True
+
+
+def test_strict_exit_defaults_to_full_release_gate(monkeypatch):
+    runner = _load_eval_runner()
+    monkeypatch.setattr(runner.sys, "argv", ["run_evals.py", "--strict-exit"])
+
+    args = runner.parse_args()
+
+    assert args.strict_exit is True
+    assert args.min_intent_accuracy == 1.0
+    assert args.min_strategy_compliance == 1.0
+    assert args.min_json_parse_success == 1.0
+    assert args.min_horizon_accuracy == 1.0
+    assert args.min_pass_rate == 1.0
+
+
+@pytest.mark.parametrize(
+    ("metric", "failed_value"),
+    [
+        ("action_quality_pass_rate", 0.99),
+        ("average_actionability_score", 99.9),
+        ("done_criteria_coverage", 0.99),
+        ("abstract_task_violation_rate", 0.01),
+        ("long_term_loop_contract_pass_rate", 0.99),
+        ("outcome_checkpoint_coverage", 0.99),
+    ],
+)
+def test_release_gate_rejects_any_quality_metric_regression(metric, failed_value):
+    runner = _load_eval_runner()
+    summary = {
+        "intent_classification_accuracy": 1.0,
+        "strategy_compliance_rate": 1.0,
+        "json_parse_success_rate": 1.0,
+        "horizon_accuracy": 1.0,
+        "profile_horizon_accuracy": 1.0,
+        "scope_horizon_compliance_rate": 1.0,
+        "pass_rate": 1.0,
+        "action_quality_pass_rate": 1.0,
+        "average_actionability_score": 100.0,
+        "done_criteria_coverage": 1.0,
+        "abstract_task_violation_rate": 0.0,
+        "long_term_loop_contract_pass_rate": 1.0,
+        "outcome_checkpoint_coverage": 1.0,
+        "strategy_context_coverage": 1.0,
+        "delivery_contract_pass_rate": 1.0,
+        "decision_contract_pass_rate": 1.0,
+        "explicit_constraint_preservation_rate": 1.0,
+        "strategy_reference_integrity_rate": 1.0,
+    }
+    args = runner.argparse.Namespace(
+        min_intent_accuracy=1.0,
+        min_strategy_compliance=1.0,
+        min_json_parse_success=1.0,
+        min_horizon_accuracy=1.0,
+        min_pass_rate=1.0,
+    )
+    summary[metric] = failed_value
+    assert runner.core_strict_gate_failed(summary, args) is True
+
+
+def test_case_subset_gate_skips_only_metrics_with_no_applicable_samples():
+    runner = _load_eval_runner()
+    summary = {
+        "intent_classification_accuracy": 1.0,
+        "strategy_compliance_rate": 1.0,
+        "json_parse_success_rate": 1.0,
+        "horizon_accuracy": 1.0,
+        "profile_horizon_accuracy": 1.0,
+        "scope_horizon_compliance_rate": 1.0,
+        "pass_rate": 1.0,
+        "action_quality_pass_rate": 1.0,
+        "average_actionability_score": 100.0,
+        "done_criteria_coverage": 1.0,
+        "abstract_task_violation_rate": 0.0,
+        "long_term_loop_contract_pass_rate": 1.0,
+        "outcome_checkpoint_coverage": 1.0,
+        "strategy_context_coverage": 1.0,
+        "delivery_contract_pass_rate": None,
+        "decision_contract_pass_rate": 1.0,
+        "explicit_constraint_preservation_rate": None,
+        "strategy_reference_integrity_rate": 1.0,
+    }
+    args = runner.argparse.Namespace(
+        min_intent_accuracy=1.0,
+        min_strategy_compliance=1.0,
+        min_json_parse_success=1.0,
+        min_horizon_accuracy=1.0,
+        min_pass_rate=1.0,
+    )
+    assert runner.core_strict_gate_failed(summary, args) is True
+    assert runner.core_strict_gate_failed(
+        summary,
+        args,
+        allow_not_applicable=True,
+    ) is False
 
 
 def test_exploration_decision_does_not_require_five_minute_icebreaker():

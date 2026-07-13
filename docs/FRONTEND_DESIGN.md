@@ -1,6 +1,6 @@
 # EasyPlan 前端设计
 
-版本：`v1.2.7`
+版本：`v1.3.0`
 
 ## 1. 设计目标
 
@@ -197,3 +197,27 @@ npm run test:long-term
 
 长期执行测试必须覆盖 selector、store、loop panel、review panel、phase records、
 schema-v1 fallback、My Day 同 task ID 同步以及 stale snapshot 防线。
+
+## 13. v1.3.0 Task Copilot
+
+未完成普通 Action 上提供独立的 Action Coach panel，首版包含
+“帮我开始”“我卡住了”“拆得更细”。该 panel 使用独立 task-assist run 和 SSE
+状态，不复用全局计划生成的 `activeRun`、reasoning 或 preview tree。
+
+Apply 前只展示 proposal；确认后才更新 `start_hint`、`fallback_action` 或创建 roll-up
+子任务。项目和 My Day 共享同一个 task ID，Apply 后保持当前视图。
+
+实现边界：
+
+- task、request 和 mode 持久化到 localStorage，刷新后读取 durable snapshot 恢复同一 run；
+- SSE 必须同时校验 thread、task、request、run type、event allowlist 和 event ID，并拒绝旧 EventSource 的迟到事件；
+- running 取消成功后清理状态并关闭 panel；失败时保留 panel 和 run identity，展示可见错误；
+- stale Apply 统一识别 `TASK_ASSIST_CONTEXT_STALE`，保留 mode 和用户补充信息供重新生成；
+- decompose children 在项目和 My Day 中嵌套于父 Action；父任务有未完成 children 时 checkbox 禁用；
+- Assist child 不显示 My Day 按钮，不能独立加入 My Day；缺少父节点的 child 不得渲染为顶层任务；
+- 父任务是 My Day 的承诺锚点，My Day 使用平铺 API 数据重建层级，不修改 child 自身的 `is_in_my_day`。
+
+完整设计与执行任务：
+
+- `docs/superpowers/specs/2026-07-12-v1.3.0-task-copilot-action-coach-design.md`
+- `docs/superpowers/plans/2026-07-12-v1.3.0-task-copilot-action-coach.md`

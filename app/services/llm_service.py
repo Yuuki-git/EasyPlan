@@ -7,7 +7,15 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from pydantic import ValidationError
 
-from app.api.schemas import IntentProfile, TaskNode, TaskTree
+from app.api.schemas import (
+    DecomposeAssistProposal,
+    IntentProfile,
+    StartAssistProposal,
+    TaskAssistMode,
+    TaskNode,
+    TaskTree,
+    UnstickAssistProposal,
+)
 
 
 DEFAULT_OPENAI_PLANNER_MODEL = "gpt-4o-2024-08-06"
@@ -29,6 +37,12 @@ logger = logging.getLogger(__name__)
 JSON_REPAIR_MAX_ATTEMPTS = 2
 CONTEXT_CHECKLIST_PROMPT_MARKER = "策略：这是情境清单型任务。"
 CONTEXT_CHECKLIST_GROUP_PREFIX = "context_group_"
+DECISION_STRATEGY_PROMPT_MARKER = "v1.2.8 探索决策 strategy_context 契约："
+DECISION_LOW_INFORMATION_PATTERN = re.compile(
+    r"(?:了解.{0,6}(?:很少|不多)|不知道|不清楚|信息不足|缺少(?:信息|资料|数据)|"
+    r"know (?:very )?little|do not know|don't know|insufficient information)",
+    flags=re.IGNORECASE,
+)
 
 
 class LLMStructuredOutputError(RuntimeError):
@@ -365,6 +379,99 @@ class DeepSeekPlannerClient:
         return self._client
 
 
+class DeepSeekTaskAssistClient:
+    """DeepSeek-only structured proposal client for task-scoped assistance."""
+
+    def __init__(
+        self,
+        *,
+        client: Any | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        usage_sink: UsageSink | None = None,
+    ) -> None:
+        self.model = model or os.getenv(
+            "EASYPLAN_DEEPSEEK_MODEL",
+            DEFAULT_DEEPSEEK_PLANNER_MODEL,
+        )
+        self.base_url = base_url or os.getenv("DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL)
+        self._client = client
+        self.usage_sink = usage_sink or LoggingUsageSink()
+
+    async def create_task_assist_proposal(
+        self,
+        *,
+        mode: TaskAssistMode,
+        prompt: str,
+    ) -> dict[str, Any]:
+        proposal_model = {
+            "start": StartAssistProposal,
+            "unstick": UnstickAssistProposal,
+            "decompose": DecomposeAssistProposal,
+        }[mode]
+        response = await self._deepseek_client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate one task-scoped EasyPlan Action Coach proposal. "
+                        "Return exactly one JSON object matching the supplied schema. "
+                        "Do not output markdown, reasoning, TaskTree, Roadmap, or unrelated tasks. "
+                        f"Proposal JSON Schema: {json.dumps(proposal_model.model_json_schema(), ensure_ascii=False)} "
+                        f"{LANGUAGE_MATCH_INSTRUCTION}"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=int(os.getenv("EASYPLAN_TASK_ASSIST_MAX_TOKENS", "2048")),
+        )
+        content = _first_message_content(response)
+        if not content:
+            raise LLMStructuredOutputError("DeepSeek task assist response did not include JSON")
+        try:
+            payload = json.loads(_clean_json_response_text(content))
+            proposal = proposal_model.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            repaired = await _repair_structured_json(
+                self._deepseek_client,
+                model=self.model,
+                invalid_content=content,
+                error=exc,
+                json_schema=proposal_model.model_json_schema(),
+                max_tokens=int(os.getenv("EASYPLAN_TASK_ASSIST_MAX_TOKENS", "2048")),
+            )
+            try:
+                payload = json.loads(_clean_json_response_text(repaired))
+                proposal = proposal_model.model_validate(payload)
+            except (json.JSONDecodeError, ValidationError) as repair_exc:
+                raise LLMStructuredOutputError(
+                    "DeepSeek task assist response did not match the proposal schema"
+                ) from repair_exc
+        await self.usage_sink.record(
+            _usage_record(
+                provider="deepseek",
+                model=self.model,
+                operation=f"task_assist.{mode}",
+                usage=getattr(response, "usage", None),
+            )
+        )
+        return proposal.model_dump(mode="json")
+
+    @property
+    def _deepseek_client(self) -> Any:
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url=self.base_url,
+            )
+        return self._client
+
+
 class XiaomiMiMoPlannerClient:
     """PlannerClient implementation using Xiaomi MiMo JSON mode plus Pydantic validation."""
 
@@ -656,6 +763,44 @@ async def _repair_json_with_chat_completion(
     return repaired_content
 
 
+async def _repair_structured_json(
+    chat_client: Any,
+    *,
+    model: str,
+    invalid_content: str,
+    error: Exception,
+    json_schema: dict[str, Any],
+    max_tokens: int,
+) -> str:
+    response = await chat_client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Repair the JSON so it matches the supplied schema. Preserve business meaning. "
+                    "Return one JSON object only, without markdown or commentary."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Validation error: {error}\n"
+                    f"JSON Schema: {json.dumps(json_schema, ensure_ascii=False)}\n"
+                    f"Invalid JSON: {invalid_content}"
+                ),
+            },
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    repaired = _first_message_content(response)
+    if not repaired:
+        raise LLMStructuredOutputError("DeepSeek task assist JSON repair returned no content")
+    return repaired
+
+
 def _json_repair_messages(
     *,
     provider_name: str,
@@ -731,25 +876,53 @@ def _deepseek_system_prompt() -> str:
 
 
 def _normalize_task_tree_for_prompt(task_tree: TaskTree, prompt: str) -> TaskTree:
+    normalized = _normalize_decision_strategy_context(task_tree, prompt)
     if CONTEXT_CHECKLIST_PROMPT_MARKER not in prompt:
-        return task_tree
+        return normalized
 
-    top_level_nodes = task_tree.root.children
+    top_level_nodes = normalized.root.children
     if len(top_level_nodes) <= 1 or any(node.node_type == "group" for node in top_level_nodes):
-        return task_tree
+        return normalized
 
     group_node = TaskNode(
-        client_node_id=_next_context_group_id(task_tree),
-        title=_context_group_title(task_tree, prompt),
-        description=task_tree.root.description,
-        verb=task_tree.root.verb or "归类",
+        client_node_id=_next_context_group_id(normalized),
+        title=_context_group_title(normalized, prompt),
+        description=normalized.root.description,
+        verb=normalized.root.verb or "归类",
         estimated_minutes=sum(max(node.estimated_minutes, 0) for node in top_level_nodes),
         node_type="group",
         depends_on=[],
         children=[node.model_copy(deep=True) for node in top_level_nodes],
     )
-    normalized_root = task_tree.root.model_copy(update={"children": [group_node]})
-    return task_tree.model_copy(update={"root": normalized_root})
+    normalized_root = normalized.root.model_copy(update={"children": [group_node]})
+    return normalized.model_copy(update={"root": normalized_root})
+
+
+def _normalize_decision_strategy_context(task_tree: TaskTree, prompt: str) -> TaskTree:
+    context = task_tree.strategy_context
+    if (
+        DECISION_STRATEGY_PROMPT_MARKER not in prompt
+        or context is None
+        or context.strategy_type != "decision"
+    ):
+        return task_tree
+
+    normalized_basis = [
+        basis.model_copy(
+            update={"statement": f"假设：{basis.statement.strip()}"}
+        )
+        if basis.basis_type == "working_assumption"
+        and not re.match(r"^(?:假设|推测|暂定|assum(?:e|ption))", basis.statement.strip(), re.IGNORECASE)
+        else basis
+        for basis in context.basis
+    ]
+    judgment = context.current_judgment
+    if DECISION_LOW_INFORMATION_PATTERN.search(_prompt_user_intent(prompt)):
+        judgment = judgment.model_copy(update={"confidence": "low"})
+    normalized_context = context.model_copy(
+        update={"basis": normalized_basis, "current_judgment": judgment}
+    )
+    return task_tree.model_copy(update={"strategy_context": normalized_context})
 
 
 def _context_group_title(task_tree: TaskTree, prompt: str) -> str:
@@ -785,7 +958,7 @@ def _prompt_user_intent(prompt: str) -> str:
     marker = "用户意图："
     if marker not in prompt:
         return ""
-    return prompt.rsplit(marker, 1)[-1].strip()
+    return prompt.rsplit(marker, 1)[-1].splitlines()[0].strip()
 
 
 def _next_context_group_id(task_tree: TaskTree) -> str:

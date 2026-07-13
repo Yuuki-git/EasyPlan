@@ -1,6 +1,6 @@
 # EasyPlan 前端 API 接入指南
 
-版本：`v1.2.6-rc.1`
+版本：`v1.3.0-rc`
 
 本文描述当前前端与后端的真实契约。字段定义以
 [`docs/openapi.json`](./openapi.json) 和
@@ -256,13 +256,104 @@ UI 分工：
 - `PhaseRecords` 仅位于选中项目内，展示 finalized review、历史配额和 override reason；
 - “全部计划”和“我的一天”不渲染项目级 Phase Records。
 
-## 10. 前端验收命令
+## 10. Task Assist / Action Coach
+
+Task Assist 只用于未完成的普通 Action，使用独立于规划生成的 run。首版 mode：
+
+```text
+start      -> 保存 start_hint
+unstick    -> 保存用户选择的 fallback_action
+decompose  -> 创建 2-5 个 source=task_assist children，并启用父任务 roll-up
+```
+
+### 10.1 API
+
+```http
+POST   /api/tasks/{task_id}/assist
+GET    /api/tasks/{task_id}/assist/{request_id}
+GET    /api/tasks/{task_id}/assist/{request_id}/events
+DELETE /api/tasks/{task_id}/assist/{request_id}
+POST   /api/tasks/{task_id}/assist/{request_id}/apply
+```
+
+开始请求由前端生成唯一 request ID：
+
+```json
+{
+  "request_id": "uuid",
+  "mode": "start | unstick | decompose",
+  "user_context": "可选补充信息，最多 1000 字"
+}
+```
+
+Apply 请求只有 `unstick` 必须发送用户选择的 option：
+
+```json
+{
+  "selected_option_id": "option id or null"
+}
+```
+
+重复 Apply 返回已保存的 receipt。前端按 `affected_task_ids` 合并父任务和 children，
+随后复用 `loadProjectSnapshot` 与当前 view 的 `fetchTasks`，不能整表覆盖较新的任务状态。
+
+### 10.2 Run、SSE 与恢复
+
+Task Assist 状态为：
+
+```text
+running -> ready -> applied
+   |         |
+   +-> cancelled / failed / expired
+```
+
+- 使用独立 `run_type=task_assist`，不能写入或读取 plan-level `activeRun`；
+- SSE 只接受完整匹配 thread、task、request、run type 的 allowlist event；
+- 通过 `event_id` 去重，handler 写 store 前确认 EventSource 仍是当前实例；
+- allowlist 为 `run_started`、`task_context_ready`、`assist_generation_started`、
+  `assist_validation_started`、`still_running`、`assist_ready`、`done`、`agent_error`；
+- localStorage 只保存当前 task ID、request ID 和 mode；页面恢复时必须先查询 snapshot，
+  不能创建新的 request 或重复调用 DeepSeek；
+- `ready` 恢复 proposal，`running` 恢复进度流，terminal 状态清理本地 identity。
+
+### 10.3 取消、错误与关闭
+
+- running 状态关闭 panel 前必须先调用 DELETE 取消服务端 run；
+- 取消成功后清理 task/request/mode、proposal、日志与错误，并关闭 panel；
+- 取消失败时保留 panel 和 run identity，显示可见错误，不能留下空面板或本地假成功；
+- ready proposal 只关闭不 Apply 时不修改业务任务；
+- `TASK_ASSIST_CONTEXT_STALE` 显示“任务已变化，请重新生成建议”，重新生成时保留 mode
+  与用户补充信息；
+- `TASK_ASSIST_ACTIVE_RUN`、`TASK_ASSIST_INTERRUPTED`、过期、401 和 409 必须走结构化
+  恢复提示，不显示原始 provider 错误。
+
+### 10.4 Decompose、Project 与 My Day
+
+- Assist children 使用现有 task ID 和 `parent_task_id`，项目页按父子层级展示；
+- 父任务存在未完成 children 时 checkbox 禁用；全部 children 完成后父任务由后端自动完成；
+- My Day 的父任务是承诺锚点。后端为 My Day parent 隐式返回直接 Assist children，
+  但 child 自身保持 `is_in_my_day=false`；
+- 前端必须从平铺 API 响应重建父子树。Assist child 只嵌套显示，不得成为顶层任务；
+- Assist child 不显示 My Day 按钮。服务端也会以
+  `TASK_ASSIST_CHILD_MY_DAY_FORBIDDEN` 拒绝独立加入；
+- 父任务移出 My Day 后，其隐式 children 不再显示。
+
+后端和前端 feature flag 均默认关闭：
+
+```env
+EASYPLAN_TASK_ASSIST_ENABLED=false
+VITE_TASK_ASSIST_ENABLED=false
+```
+
+## 11. 前端验收命令
 
 ```bash
 cd frontend
 npm run test:hooks
 npm run test:portfolio
 npm run test:long-term
+npm run test:strategy
+npm run test:task-assist
 node tests/runEvents.test.mjs
 node tests/stateRestoration.test.mjs
 npm run build
@@ -270,3 +361,6 @@ npm run lint
 ```
 
 涉及 SSE 生命周期的改动至少覆盖：历史终态回放、跨 run 隔离、刷新恢复、退出清理、乱序快照、next-phase 提交后可见、连接卡住（stalled）重新连接、初始确认后返回全部计划且保留 active run。
+
+Task Assist 还必须覆盖：running cancel 成功与失败、snapshot 恢复、stale Apply、错误身份事件、
+平铺 My Day 数据的树重建、Assist child 无 My Day 按钮、orphan child 不成为顶层任务。
