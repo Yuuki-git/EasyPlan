@@ -221,3 +221,31 @@ Apply 前只展示 proposal；确认后才更新 `start_hint`、`fallback_action
 
 - `docs/superpowers/specs/2026-07-12-v1.3.0-task-copilot-action-coach-design.md`
 - `docs/superpowers/plans/2026-07-12-v1.3.0-task-copilot-action-coach.md`
+
+## 14. v1.3.1 Execution Engine / Refine Diff
+
+v1.3.1 已在选中项目内提供“调整当前计划”，处理“今天只有 20 分钟”“进度落后”
+和“截止日期/优先级变化”。它使用独立 `execution_refine` run，不复用计划生成或
+Task Assist 的 store、SSE、proposal 和恢复状态。
+
+首版前端边界：
+
+- 入口只出现在具体项目，不在全部计划或 My Day 中直接执行跨项目调整；
+- 使用 mode control、分钟输入、任务选择器、deadline 和可选说明等结构化控件；
+- Diff 按立即聚焦、更新、新增、顺序和 My Day 变化分组展示 before/after；
+- 用户只可整包应用或放弃，不提供逐条 checkbox；
+- running 可取消，ready 可关闭并恢复，stale 保留输入后重新生成；
+- Apply 后留在当前项目，并以 receipt 合并受影响 task ID 后加载权威 snapshot；
+- Assist children、历史阶段、已完成任务和其他项目的 My Day 状态不能被修改。
+
+刷新恢复同时持久化 thread/request identity；`snapshot_required` 触发权威 snapshot
+恢复。任务选择器只展示当前项目 eligible scope，Apply 消费扁平 receipt 后重新加载
+项目 snapshot 与任务视图，不依赖 receipt 返回任务对象。
+
+2026-07-15 发布验收：Execution Refine 专项 `21 passed`；hooks、Portfolio、长期执行、
+Strategy、Task Assist、14 个 legacy Node 测试、build 与 lint 全部通过。
+
+完整设计与执行任务：
+
+- `docs/superpowers/specs/2026-07-14-v1.3.1-execution-engine-refine-diff-design.md`
+- `docs/superpowers/plans/2026-07-14-v1.3.1-execution-engine-refine-diff.md`

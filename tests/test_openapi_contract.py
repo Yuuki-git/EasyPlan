@@ -335,7 +335,57 @@ def test_openapi_contract_keeps_planning_stream_run_types_isolated_from_task_ass
     envelope_run_type = schema["components"]["schemas"]["SseEventEnvelope"]["properties"][
         "run_type"
     ]["enum"]
-    assert envelope_run_type == ["initial", "next_phase", "refine", "task_assist"]
+    assert envelope_run_type == [
+        "initial",
+        "next_phase",
+        "refine",
+        "task_assist",
+        "execution_refine",
+    ]
+
+
+def test_openapi_contract_exposes_frozen_execution_refine_components():
+    schema = create_app(enable_static=False).openapi()
+    components = schema["components"]["schemas"]
+
+    expected = {
+        "ExecutionRefineRequest",
+        "ExecutionRefineProposal",
+        "ExecutionRefineStartResponse",
+        "ExecutionRefineRunSnapshot",
+        "ExecutionRefineApplyRequest",
+        "ExecutionRefineApplyReceipt",
+        "ExecutionRefineErrorResponse",
+        "UpdateTaskOperation",
+        "AddTaskOperation",
+        "ReorderSiblingsOperation",
+        "SetMyDayOperation",
+    }
+    assert expected.issubset(components)
+    operations = components["ExecutionRefineProposal"]["properties"]["operations"]
+    item_schema = operations["items"]
+    assert item_schema["discriminator"]["propertyName"] == "operation_type"
+    assert set(item_schema["discriminator"]["mapping"]) == {
+        "update_task",
+        "add_task",
+        "reorder_siblings",
+        "set_my_day",
+    }
+    changes = components["ExecutionTaskChanges"]["properties"]
+    assert not {"status", "phase_id", "source", "parent_task_id", "client_node_id"} & set(changes)
+
+
+def test_static_openapi_is_identical_to_runtime_contract():
+    import json
+    from pathlib import Path
+
+    runtime = create_app(enable_static=False).openapi()
+    static = json.loads(
+        (Path(__file__).resolve().parents[1] / "docs" / "openapi.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert static == runtime
 
 
 def test_static_openapi_contains_task_assist_contract():

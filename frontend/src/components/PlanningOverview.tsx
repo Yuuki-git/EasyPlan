@@ -5,7 +5,7 @@ import { selectLongTermExecutionView } from '../store/longTermExecution';
 import { PracticeLoopPanel } from './PracticeLoopPanel';
 import { PhaseReviewPanel } from './PhaseReviewPanel';
 import { PhaseRecords } from './PhaseRecords';
-import { CheckCircle2, Circle, Lock, Unlock, ArrowRight, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Circle, Lock, Unlock, ArrowRight, AlertTriangle, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { RoadmapPhase, TaskNode, ThreadSnapshot } from '../types/api';
 
@@ -36,7 +36,10 @@ export const PlanningOverview: React.FC = () => {
     savePhaseReview,
     decidePhaseReview,
     currentStage,
-    error
+    error,
+    setExecutionRefinePanelOpen,
+    taskAssistStatus,
+    executionRefineStatus
   } = useAppStore();
 
   if (import.meta.env.VITE_PHASE_PLANNING_ENABLED === 'false') {
@@ -69,6 +72,17 @@ export const PlanningOverview: React.FC = () => {
   const currentPhase = roadmap.find((p: RoadmapPhase) => p.phase_id === context.current_phase?.phase_id);
   const currentPhaseIndex = roadmap.findIndex((p: RoadmapPhase) => p.phase_id === currentPhase?.phase_id);
   const nextPhaseNumber = currentPhaseIndex >= 0 ? currentPhaseIndex + 2 : roadmap.length + 1;
+
+  const eligibleTasks = boardTasks?.filter(t =>
+    t.thread_id === selectedProjectId &&
+    t.status === 'active' &&
+    t.source !== 'task_assist' &&
+    t.source !== 'practice_loop'
+  ) || [];
+  const hasEligibleTasks = eligibleTasks.length > 0;
+  const isBusy = isPhaseRequestPending || previewMode === 'next_phase' || taskAssistStatus === 'running' || executionRefineStatus === 'running' || appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
+  const isRefineEnabled = import.meta.env.VITE_EXECUTION_REFINE_ENABLED === 'true';
+  const showRefineButton = isRefineEnabled && hasEligibleTasks && !isBusy;
 
   return (
     <div className="w-full max-w-4xl mx-auto mb-8 bg-background/50 border border-muted/50 rounded-xl p-6 backdrop-blur-sm">
@@ -403,7 +417,16 @@ export const PlanningOverview: React.FC = () => {
         )}
         {/* Unlock Button */}
         {previewMode !== 'next_phase' && (
-          <div className="flex justify-end mt-2">
+          <div className="flex justify-end mt-2 gap-3">
+            {showRefineButton && (
+              <button
+                onClick={() => setExecutionRefinePanelOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-muted hover:bg-muted/10 text-foreground transition-all cursor-pointer bg-background"
+              >
+                <Sparkles size={14} className="text-blue-500" />
+                <span>调整当前计划</span>
+              </button>
+            )}
             <button
               onClick={generateNextPhasePlan}
               disabled={!canUnlock || isPhaseRequestPending}

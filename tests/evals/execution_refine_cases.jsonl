@@ -1,0 +1,24 @@
+{"case_id":"time-01","mode":"time_budget","available_minutes":10,"scenario_tags":["no_task_fits"],"description":"10 分钟容量下只保留可完成的小动作"}
+{"case_id":"time-02","mode":"time_budget","available_minutes":20,"scenario_tags":["practice"],"description":"20 分钟容量必须计入受保护练习承诺"}
+{"case_id":"time-03","mode":"time_budget","available_minutes":45,"scenario_tags":["dependency"],"description":"45 分钟容量保留依赖顺序"}
+{"case_id":"time-04","mode":"time_budget","available_minutes":90,"scenario_tags":["manual"],"description":"手工任务只能调整顺序或 My Day"}
+{"case_id":"time-05","mode":"time_budget","available_minutes":240,"scenario_tags":["assist"],"description":"Assist 子任务保持只读并避免重复计时"}
+{"case_id":"time-06","mode":"time_budget","available_minutes":30,"scenario_tags":["completed","history"],"intent_type":"long_term_growth","description":"已完成和历史阶段任务保持不变"}
+{"case_id":"time-07","mode":"time_budget","available_minutes":60,"scenario_tags":["cross_project"],"description":"其他项目 My Day 任务不进入当前 scope"}
+{"case_id":"time-08","mode":"time_budget","available_minutes":90,"scenario_tags":["history","practice"],"intent_type":"long_term_growth","description":"长期目标只调整当前阶段且计入练习承诺"}
+{"case_id":"recovery-01","mode":"progress_recovery","scenario_tags":["dependency"],"description":"进度滞后时重排当前执行顺序"}
+{"case_id":"recovery-02","mode":"progress_recovery","scenario_tags":["completed"],"description":"恢复进度不能改写已完成任务"}
+{"case_id":"recovery-03","mode":"progress_recovery","scenario_tags":["history"],"intent_type":"long_term_growth","description":"长期计划恢复只触及当前阶段"}
+{"case_id":"recovery-04","mode":"progress_recovery","scenario_tags":["manual"],"description":"恢复计划保留手工任务内容"}
+{"case_id":"recovery-05","mode":"progress_recovery","scenario_tags":["assist"],"description":"恢复计划保留 Assist roll-up 和 children"}
+{"case_id":"recovery-06","mode":"progress_recovery","scenario_tags":["practice"],"intent_type":"long_term_growth","description":"恢复计划不改写练习 occurrence"}
+{"case_id":"recovery-07","mode":"progress_recovery","scenario_tags":["cross_project"],"description":"恢复计划不引用其他项目任务"}
+{"case_id":"recovery-08","mode":"progress_recovery","scenario_tags":["history","dependency"],"intent_type":"exploration_decision","description":"探索决策恢复保留历史并降低不确定性"}
+{"case_id":"context-01","mode":"context_change","new_deadline":"2026-07-16T18:00:00+08:00","user_context":"截止时间提前到 7 月 16 日","expected_terms":["2026-07-16"],"description":"明确保留新的带时区截止日期"}
+{"case_id":"context-02","mode":"context_change","user_context":"今天必须先完成核心结论","priority_slots":[0],"description":"优先任务必须进入 focus 或调整操作"}
+{"case_id":"context-03","mode":"context_change","user_context":"第二项等待同事反馈，暂时阻塞","blocked_slots":[1],"description":"阻塞任务不得进入即时执行范围"}
+{"case_id":"context-04","mode":"context_change","user_context":"今天只能在手机上处理，保留现有交付目标","scenario_tags":["manual"],"expected_terms":["手机"],"description":"工具情境变化不改写手工任务内容"}
+{"case_id":"context-05","mode":"context_change","new_deadline":"2026-07-20T12:00:00+08:00","user_context":"先完成核心结论，第二项等待反馈","priority_slots":[0],"blocked_slots":[1],"expected_terms":["2026-07-20"],"description":"同时保留 deadline、priority 和 blocked 约束"}
+{"case_id":"context-06","mode":"context_change","user_context":"先收集信息，不要假设已经决定转向","intent_type":"exploration_decision","scenario_tags":["history"],"expected_terms":["信息"],"description":"探索决策只调整当前澄清范围"}
+{"case_id":"context-07","mode":"context_change","user_context":"出差期间每天只有 30 分钟，练习任务不可删除","intent_type":"long_term_growth","scenario_tags":["practice","history"],"expected_terms":["30"],"description":"长期目标情境变化保留练习和历史"}
+{"case_id":"context-08","mode":"context_change","user_context":"改为远程协作，保留其他项目的今日安排","scenario_tags":["assist","cross_project"],"expected_terms":["远程"],"description":"跨项目和 Assist 数据保持隔离"}

@@ -1,6 +1,7 @@
 from app.models.audit import AuditEvent
 from app.models.base import Base
 from app.models.checkpoint import AgentCheckpoint, LangGraphCheckpoint, LangGraphCheckpointWrite
+from app.models.execution_refine import ExecutionRefineRun
 from app.models.practice import (
     PhaseReview,
     PracticeLoop,
@@ -17,6 +18,7 @@ __all__ = [
     "AgentCheckpoint",
     "AgentThread",
     "Base",
+    "ExecutionRefineRun",
     "LangGraphCheckpoint",
     "LangGraphCheckpointWrite",
     "PhaseReview",

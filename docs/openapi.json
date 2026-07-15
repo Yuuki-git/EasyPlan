@@ -3,7 +3,7 @@
   "info": {
     "title": "EasyPlan Backend API",
     "description": "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, and Async Queue SSE event streams.",
-    "version": "1.3.0"
+    "version": "1.3.1"
   },
   "paths": {
     "/health": {
@@ -1654,10 +1654,544 @@
           }
         }
       }
+    },
+    "/api/threads/{thread_id}/refine-diffs": {
+      "post": {
+        "tags": [
+          "execution-refine"
+        ],
+        "summary": "Start Execution Refine",
+        "operationId": "start_execution_refine_api_threads__thread_id__refine_diffs_post",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionRefineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionRefineStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/refine-diffs/{request_id}": {
+      "get": {
+        "tags": [
+          "execution-refine"
+        ],
+        "summary": "Get Execution Refine Snapshot",
+        "operationId": "get_execution_refine_snapshot_api_threads__thread_id__refine_diffs__request_id__get",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionRefineRunSnapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "execution-refine"
+        ],
+        "summary": "Cancel Execution Refine",
+        "operationId": "cancel_execution_refine_api_threads__thread_id__refine_diffs__request_id__delete",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionRefineRunSnapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/refine-diffs/{request_id}/events": {
+      "get": {
+        "tags": [
+          "execution-refine"
+        ],
+        "summary": "Stream Execution Refine Events",
+        "description": "Execution-refine-only SSE stream. Allowed events are run_started, execution_context_ready, refine_generation_started, refine_validation_started, repair_started, still_running, diff_ready, snapshot_required, done, and agent_error.",
+        "operationId": "stream_execution_refine_events_api_threads__thread_id__refine_diffs__request_id__events_get",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "last_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last Event Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution Refine SSE envelopes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SseEventEnvelope"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/refine-diffs/{request_id}/apply": {
+      "post": {
+        "tags": [
+          "execution-refine"
+        ],
+        "summary": "Apply Execution Refine",
+        "operationId": "apply_execution_refine_api_threads__thread_id__refine_diffs__request_id__apply_post",
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Thread Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionRefineApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionRefineApplyReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AddTaskOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_type": {
+            "const": "add_task",
+            "title": "Operation Type",
+            "type": "string"
+          },
+          "draft_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "parent_task_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Task Id"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "estimated_minutes": {
+            "maximum": 43200,
+            "minimum": 1,
+            "title": "Estimated Minutes",
+            "type": "integer"
+          },
+          "done_criteria": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Done Criteria",
+            "type": "string"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fallback Action"
+          },
+          "depends_on_refs": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Depends On Refs",
+            "type": "array"
+          },
+          "insert_after_task_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Insert After Task Id"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_type",
+          "draft_id",
+          "title",
+          "estimated_minutes",
+          "done_criteria",
+          "reason"
+        ],
+        "title": "AddTaskOperation",
+        "type": "object"
+      },
       "AssistDraftDependency": {
         "properties": {
           "task_draft_id": {
@@ -2419,6 +2953,602 @@
           "task_client_node_ids"
         ],
         "title": "DeliveryWorkstream"
+      },
+      "ExecutionRefineApplyReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "title": "Applied At",
+            "type": "string"
+          },
+          "scope_fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Scope Fingerprint",
+            "type": "string"
+          },
+          "affected_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Affected Task Ids",
+            "type": "array"
+          },
+          "created_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Created Task Ids",
+            "type": "array"
+          },
+          "focus_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Focus Task Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "thread_id",
+          "request_id",
+          "applied_at",
+          "scope_fingerprint"
+        ],
+        "title": "ExecutionRefineApplyReceipt",
+        "type": "object"
+      },
+      "ExecutionRefineApplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_scope_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Scope Fingerprint"
+          }
+        },
+        "title": "ExecutionRefineApplyRequest",
+        "type": "object"
+      },
+      "ExecutionRefineProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "proposal_type": {
+            "const": "execution_refine",
+            "title": "Proposal Type",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "time_budget",
+              "progress_recovery",
+              "context_change"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "user_facing_reasons": {
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "User Facing Reasons",
+            "type": "array"
+          },
+          "preserved_constraints": {
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Preserved Constraints",
+            "type": "array"
+          },
+          "operations": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "add_task": "#/components/schemas/AddTaskOperation",
+                  "reorder_siblings": "#/components/schemas/ReorderSiblingsOperation",
+                  "set_my_day": "#/components/schemas/SetMyDayOperation",
+                  "update_task": "#/components/schemas/UpdateTaskOperation"
+                },
+                "propertyName": "operation_type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/UpdateTaskOperation"
+                },
+                {
+                  "$ref": "#/components/schemas/AddTaskOperation"
+                },
+                {
+                  "$ref": "#/components/schemas/ReorderSiblingsOperation"
+                },
+                {
+                  "$ref": "#/components/schemas/SetMyDayOperation"
+                }
+              ]
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Operations",
+            "type": "array"
+          },
+          "focus_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Focus Task Ids",
+            "type": "array"
+          },
+          "estimated_focus_minutes": {
+            "maximum": 2400,
+            "minimum": 0,
+            "title": "Estimated Focus Minutes",
+            "type": "integer"
+          },
+          "buffer_minutes": {
+            "maximum": 480,
+            "minimum": 0,
+            "title": "Buffer Minutes",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "proposal_type",
+          "mode",
+          "summary",
+          "user_facing_reasons",
+          "preserved_constraints",
+          "operations",
+          "estimated_focus_minutes",
+          "buffer_minutes"
+        ],
+        "title": "ExecutionRefineProposal",
+        "type": "object"
+      },
+      "ExecutionRefineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "time_budget",
+              "progress_recovery",
+              "context_change"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "available_minutes": {
+            "anyOf": [
+              {
+                "maximum": 480,
+                "minimum": 10,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Available Minutes"
+          },
+          "new_deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "New Deadline"
+          },
+          "priority_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Priority Task Ids",
+            "type": "array"
+          },
+          "blocked_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Blocked Task Ids",
+            "type": "array"
+          },
+          "user_context": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Context"
+          }
+        },
+        "required": [
+          "request_id",
+          "mode"
+        ],
+        "title": "ExecutionRefineRequest",
+        "type": "object"
+      },
+      "ExecutionRefineRunSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "time_budget",
+              "progress_recovery",
+              "context_change"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "ready",
+              "applied",
+              "cancelled",
+              "failed",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "queued",
+                  "context_ready",
+                  "generating",
+                  "validating",
+                  "repairing",
+                  "ready",
+                  "applied",
+                  "cancelled",
+                  "failed",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stage"
+          },
+          "scope_fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Scope Fingerprint",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionRefineProposal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "apply_receipt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Apply Receipt"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Message"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "thread_id",
+          "request_id",
+          "mode",
+          "status",
+          "scope_fingerprint",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ],
+        "title": "ExecutionRefineRunSnapshot",
+        "type": "object"
+      },
+      "ExecutionRefineStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "time_budget",
+              "progress_recovery",
+              "context_change"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "ready",
+              "applied",
+              "cancelled",
+              "failed",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "events_url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Events Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "thread_id",
+          "request_id",
+          "mode",
+          "status",
+          "events_url"
+        ],
+        "title": "ExecutionRefineStartResponse",
+        "type": "object"
+      },
+      "ExecutionTaskChanges": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "estimated_minutes": {
+            "anyOf": [
+              {
+                "maximum": 43200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Estimated Minutes"
+          },
+          "done_criteria": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Done Criteria"
+          },
+          "start_hint": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Hint"
+          },
+          "fallback_action": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fallback Action"
+          }
+        },
+        "title": "ExecutionTaskChanges",
+        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -3344,6 +4474,52 @@
         ],
         "title": "RegisterRequest"
       },
+      "ReorderSiblingsOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_type": {
+            "const": "reorder_siblings",
+            "title": "Operation Type",
+            "type": "string"
+          },
+          "parent_task_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Task Id"
+          },
+          "ordered_task_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Ordered Task Ids",
+            "type": "array"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_type",
+          "ordered_task_ids",
+          "reason"
+        ],
+        "title": "ReorderSiblingsOperation",
+        "type": "object"
+      },
       "RescueOption": {
         "properties": {
           "option_id": {
@@ -3435,6 +4611,39 @@
         ],
         "title": "RoadmapPhase"
       },
+      "SetMyDayOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_type": {
+            "const": "set_my_day",
+            "title": "Operation Type",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "is_in_my_day": {
+            "title": "Is In My Day",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_type",
+          "task_id",
+          "is_in_my_day",
+          "reason"
+        ],
+        "title": "SetMyDayOperation",
+        "type": "object"
+      },
       "SseEventEnvelope": {
         "properties": {
           "event_id": {
@@ -3458,7 +4667,8 @@
               "initial",
               "next_phase",
               "refine",
-              "task_assist"
+              "task_assist",
+              "execution_refine"
             ],
             "title": "Run Type"
           },
@@ -3483,7 +4693,11 @@
               "task_context_ready",
               "assist_generation_started",
               "assist_validation_started",
-              "assist_ready"
+              "assist_ready",
+              "execution_context_ready",
+              "refine_generation_started",
+              "refine_validation_started",
+              "diff_ready"
             ],
             "title": "Event Type"
           },
@@ -4748,6 +5962,38 @@
         ],
         "title": "UnstickAssistProposal"
       },
+      "UpdateTaskOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_type": {
+            "const": "update_task",
+            "title": "Operation Type",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "changes": {
+            "$ref": "#/components/schemas/ExecutionTaskChanges"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_type",
+          "task_id",
+          "changes",
+          "reason"
+        ],
+        "title": "UpdateTaskOperation",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -4787,6 +6033,29 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ExecutionRefineErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Error Code",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "message"
+        ],
+        "title": "ExecutionRefineErrorResponse",
+        "type": "object"
       }
     }
   }

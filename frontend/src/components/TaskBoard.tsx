@@ -9,6 +9,7 @@ import { PortfolioOverview } from './PortfolioOverview';
 import { selectPlanningView } from '../store/planningState';
 import { StrategyOverview } from './StrategyOverview';
 import { TaskCoachPanel } from './TaskCoachPanel';
+import { ExecutionRefinePanel } from './ExecutionRefinePanel';
 
 const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isOpen }) => {
   const { currentViewBucket, setCurrentViewBucket, boardTasks, selectedProjectId, setSelectedProjectId } = useAppStore();
@@ -675,6 +676,43 @@ export const TaskBoard: React.FC = () => {
       recover();
     }
   }, []);
+
+  useEffect(() => {
+    const threadId = localStorage.getItem('easyplan_execution_refine_thread_id');
+    const requestId = localStorage.getItem('easyplan_execution_refine_request_id');
+    if (threadId && requestId) {
+      // Restore identity first to avoid early cleanup due to null selectedProjectId
+      useAppStore.setState({
+        selectedProjectId: threadId,
+        executionRefineActiveRequestId: requestId
+      });
+
+      const recover = async () => {
+        try {
+          const snapshot = await useAppStore.getState().fetchExecutionRefineSnapshot(requestId);
+          const terminalStatuses = new Set(['applied', 'cancelled', 'expired']);
+          if (snapshot && !terminalStatuses.has(snapshot.status)) {
+            useAppStore.setState({
+              isExecutionRefinePanelOpen: true,
+              executionRefineActiveRequestId: requestId,
+              executionRefineStatus: snapshot.status,
+              executionRefineStage: snapshot.stage,
+              executionRefineProposal: snapshot.proposal,
+              executionRefineScopeFingerprint: snapshot.scope_fingerprint || null,
+              executionRefineErrorCode: snapshot.error_code || null,
+              executionRefineErrorMessage: snapshot.error_message || null,
+            });
+          } else {
+            useAppStore.getState().resetExecutionRefine();
+          }
+        } catch (err) {
+          console.error("Failed to recover execution refine snapshot", err);
+          useAppStore.getState().resetExecutionRefine();
+        }
+      };
+      recover();
+    }
+  }, []);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
 
   const isGenerating = appState === 'THINKING' || appState === 'PENDING' || appState === 'SYNCING';
@@ -967,6 +1005,7 @@ export const TaskBoard: React.FC = () => {
 
       {/* Task Coach Assist Panel */}
       <TaskCoachPanel />
+      <ExecutionRefinePanel />
     </motion.div>
   );
 };

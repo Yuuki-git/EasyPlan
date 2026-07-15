@@ -256,7 +256,7 @@ case 40 连续三次单独验证也全部通过。
 - 设计规格：`docs/superpowers/specs/2026-07-10-v1.2.8-planning-model-differentiation-design.md`。
 - 执行计划：`docs/superpowers/plans/2026-07-10-v1.2.8-planning-model-differentiation.md`。
 
-### v1.3.0 - Task Copilot (Implementation Complete / Release Review Pending)
+### v1.3.0 - Task Copilot (Completed / Released)
 
 - 首版只包含三个任务级入口：`帮我开始`、`我卡住了`、`拆得更细`。
 - 每次辅助是单轮、结构化 proposal，不建立开放式聊天历史。
@@ -269,3 +269,18 @@ case 40 连续三次单独验证也全部通过。
 - My Day 不修改 child 自身的 `is_in_my_day`；父任务移出后，其隐式 Assist children 同步消失。
 - 设计规格：`docs/superpowers/specs/2026-07-12-v1.3.0-task-copilot-action-coach-design.md`。
 - 执行计划：`docs/superpowers/plans/2026-07-12-v1.3.0-task-copilot-action-coach.md`。
+
+### v1.3.1 - Execution Engine & Refine Diff (Completed / Released)
+
+- 面向计划确认后的现实变化，而不是确认前的 plan refine 或单任务 Task Copilot。
+- 首版包含 `time_budget`、`progress_recovery`、`context_change` 三种模式。
+- 输出结构化 `PlanDiff`，只允许更新任务、新增少量任务、同级重排和调整当前项目的 My Day 投影。
+- 用户预览 before/after 后整包确认；Apply 之前不修改任务，不支持部分 Apply。
+- 不允许 AI 删除任务；“稍后处理”通过降低排序和移出当前项目的 My Day 表达，项目任务仍保留。
+- 已完成任务、历史阶段、Roadmap、阶段复盘、practice loop、outcome checkpoint 和 Assist children 不可修改。
+- 长期计划只调整当前阶段；schema v1 只调整 committed tree 中的 active AI actions。
+- task rows 与 `AgentThread.task_tree` 必须在同一事务中保持一致，Apply 具备 fingerprint stale 校验和幂等 receipt。
+- 独立 DeepSeek Execution Refine Eval 为 24 cases，发布时同时保持 Planning 54/54 与 Task Assist 18/18。
+- 设计规格：`docs/superpowers/specs/2026-07-14-v1.3.1-execution-engine-refine-diff-design.md`。
+- 执行计划：`docs/superpowers/plans/2026-07-14-v1.3.1-execution-engine-refine-diff.md`。
+- 2026-07-15 发布验收：Backend `523 passed`；Execution Refine `24/24`、Planning `54/54`、Task Assist `18/18`，全部发布指标 `100%` 且 strict exit 为 `0`。

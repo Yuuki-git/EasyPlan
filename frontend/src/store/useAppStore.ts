@@ -15,7 +15,14 @@ import {
   TaskAssistProposal,
   TaskAssistRunSnapshot,
   TaskAssistStartResponse,
-  TaskAssistApplyResponse
+  TaskAssistApplyResponse,
+  ExecutionRefineMode,
+  ExecutionRefineRequest,
+  ExecutionRefineProposal,
+  ExecutionRefineRunStatus,
+  ExecutionRefineStartResponse,
+  ExecutionRefineRunSnapshot,
+  ExecutionRefineApplyReceipt
 } from '../types/api';
 import { isUnauthorizedResponse } from './authRecovery';
 import { buildIntentRequest, resolvePlannerProvider } from './intentRequest';
@@ -160,6 +167,17 @@ interface AppStore {
   taskAssistLogs: string[];
   isTaskAssistPanelOpen: boolean;
 
+  // Execution Refine Slice
+  executionRefineActiveRequestId: string | null;
+  executionRefineStatus: ExecutionRefineRunStatus | null;
+  executionRefineStage: string | null;
+  executionRefineProposal: ExecutionRefineProposal | null;
+  executionRefineScopeFingerprint: string | null;
+  executionRefineErrorCode: string | null;
+  executionRefineErrorMessage: string | null;
+  executionRefineLogs: string[];
+  isExecutionRefinePanelOpen: boolean;
+
   // Setters
   setActiveRun: (run: ActiveRun | null) => void;
   clearActiveRun: () => void;
@@ -201,6 +219,24 @@ interface AppStore {
   addTaskAssistLog: (log: string) => void;
   setTaskAssistPanelOpen: (isOpen: boolean) => void;
   resetTaskAssist: () => void;
+
+  // Execution Refine Slice Setters
+  setExecutionRefineActiveRequestId: (requestId: string | null) => void;
+  setExecutionRefineStatus: (status: ExecutionRefineRunStatus | null) => void;
+  setExecutionRefineStage: (stage: string | null) => void;
+  setExecutionRefineProposal: (proposal: ExecutionRefineProposal | null) => void;
+  setExecutionRefineScopeFingerprint: (fingerprint: string | null) => void;
+  setExecutionRefineErrorCode: (code: string | null) => void;
+  setExecutionRefineErrorMessage: (message: string | null) => void;
+  addExecutionRefineLog: (log: string) => void;
+  setExecutionRefinePanelOpen: (isOpen: boolean) => void;
+  resetExecutionRefine: () => void;
+
+  // Execution Refine Actions
+  startExecutionRefine: (mode: ExecutionRefineMode, req: Omit<ExecutionRefineRequest, 'request_id' | 'mode'>) => Promise<ExecutionRefineStartResponse>;
+  fetchExecutionRefineSnapshot: (requestId: string) => Promise<ExecutionRefineRunSnapshot>;
+  cancelExecutionRefine: (requestId: string) => Promise<void>;
+  applyExecutionRefine: (requestId: string, expectedFingerprint?: string | null) => Promise<ExecutionRefineApplyReceipt>;
 
   // Actions
   alignState: (threadId: string) => Promise<void>;
@@ -275,10 +311,27 @@ const clearRecoveredThreadContext = (set: AppStoreSet, get: AppStoreGet, staleTh
     taskAssistErrorMessage: null,
     taskAssistLogs: [],
     isTaskAssistPanelOpen: false,
+    executionRefineActiveRequestId: null,
+    executionRefineStatus: null,
+    executionRefineStage: null,
+    executionRefineProposal: null,
+    executionRefineScopeFingerprint: null,
+    executionRefineErrorCode: null,
+    executionRefineErrorMessage: null,
+    executionRefineLogs: [],
+    isExecutionRefinePanelOpen: false,
   });
 
   if (shouldClearSelectedProject) {
     localStorage.removeItem('easyplan_selected_project_id');
+    localStorage.removeItem('easyplan_execution_refine_thread_id');
+    localStorage.removeItem('easyplan_execution_refine_request_id');
+    localStorage.removeItem('easyplan_execution_refine_mode');
+    localStorage.removeItem('easyplan_execution_refine_available_minutes');
+    localStorage.removeItem('easyplan_execution_refine_user_context');
+    localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_new_deadline');
   }
   if (shouldClearThread) {
     localStorage.removeItem('easyplan_thread_id');
@@ -503,10 +556,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
       taskAssistErrorMessage: null,
       taskAssistLogs: [],
       isTaskAssistPanelOpen: false,
+      executionRefineActiveRequestId: null,
+      executionRefineStatus: null,
+      executionRefineStage: null,
+      executionRefineProposal: null,
+      executionRefineScopeFingerprint: null,
+      executionRefineErrorCode: null,
+      executionRefineErrorMessage: null,
+      executionRefineLogs: [],
+      isExecutionRefinePanelOpen: false,
     });
     localStorage.setItem('easyplan_view', 'input');
     localStorage.removeItem('easyplan_selected_project_id');
     localStorage.removeItem('easyplan_thread_id');
+    localStorage.removeItem('easyplan_execution_refine_thread_id');
+    localStorage.removeItem('easyplan_execution_refine_request_id');
+    localStorage.removeItem('easyplan_execution_refine_mode');
+    localStorage.removeItem('easyplan_execution_refine_available_minutes');
+    localStorage.removeItem('easyplan_execution_refine_user_context');
+    localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_new_deadline');
     localStorage.removeItem('easyplan_preview_mode');
     localStorage.removeItem('easyplan_phase_request_id');
     localStorage.removeItem('easyplan_base_phase_id');
@@ -2261,6 +2331,317 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return data;
     } catch (err) {
       console.error("Apply assist failed", err);
+      throw err;
+    }
+  },
+
+  // Execution Refine Slice Implementation
+  executionRefineActiveRequestId: localStorage.getItem('easyplan_execution_refine_request_id') || null,
+  executionRefineStatus: null,
+  executionRefineStage: null,
+  executionRefineProposal: null,
+  executionRefineScopeFingerprint: null,
+  executionRefineErrorCode: null,
+  executionRefineErrorMessage: null,
+  executionRefineLogs: [],
+  isExecutionRefinePanelOpen: false,
+
+  setExecutionRefineActiveRequestId: (requestId) => set({ executionRefineActiveRequestId: requestId }),
+  setExecutionRefineStatus: (status) => set({ executionRefineStatus: status }),
+  setExecutionRefineStage: (stage) => set({ executionRefineStage: stage }),
+  setExecutionRefineProposal: (proposal) => set({ executionRefineProposal: proposal }),
+  setExecutionRefineScopeFingerprint: (fingerprint) => set({ executionRefineScopeFingerprint: fingerprint }),
+  setExecutionRefineErrorCode: (code) => set({ executionRefineErrorCode: code }),
+  setExecutionRefineErrorMessage: (message) => set({ executionRefineErrorMessage: message }),
+  addExecutionRefineLog: (log) => set((state) => ({ executionRefineLogs: [...state.executionRefineLogs, log] })),
+  setExecutionRefinePanelOpen: (isOpen) => set({ isExecutionRefinePanelOpen: isOpen }),
+  resetExecutionRefine: () => {
+    localStorage.removeItem('easyplan_execution_refine_thread_id');
+    localStorage.removeItem('easyplan_execution_refine_request_id');
+    localStorage.removeItem('easyplan_execution_refine_mode');
+    localStorage.removeItem('easyplan_execution_refine_available_minutes');
+    localStorage.removeItem('easyplan_execution_refine_user_context');
+    localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+    localStorage.removeItem('easyplan_execution_refine_new_deadline');
+    set({
+      executionRefineActiveRequestId: null,
+      executionRefineStatus: null,
+      executionRefineStage: null,
+      executionRefineProposal: null,
+      executionRefineScopeFingerprint: null,
+      executionRefineErrorCode: null,
+      executionRefineErrorMessage: null,
+      executionRefineLogs: [],
+    });
+  },
+
+  startExecutionRefine: async (mode, req) => {
+    const { token, selectedProjectId } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+    if (!selectedProjectId) {
+      throw new Error('No project selected');
+    }
+    const requestId = generateUUID();
+    localStorage.setItem('easyplan_execution_refine_thread_id', selectedProjectId);
+    localStorage.setItem('easyplan_execution_refine_request_id', requestId);
+    localStorage.setItem('easyplan_execution_refine_mode', mode);
+    if (req.available_minutes != null) {
+      localStorage.setItem('easyplan_execution_refine_available_minutes', String(req.available_minutes));
+    } else {
+      localStorage.removeItem('easyplan_execution_refine_available_minutes');
+    }
+    if (req.user_context) {
+      localStorage.setItem('easyplan_execution_refine_user_context', req.user_context);
+    } else {
+      localStorage.removeItem('easyplan_execution_refine_user_context');
+    }
+    if (req.priority_task_ids && req.priority_task_ids.length > 0) {
+      localStorage.setItem('easyplan_execution_refine_priority_task_ids', JSON.stringify(req.priority_task_ids));
+    } else {
+      localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+    }
+    if (req.blocked_task_ids && req.blocked_task_ids.length > 0) {
+      localStorage.setItem('easyplan_execution_refine_blocked_task_ids', JSON.stringify(req.blocked_task_ids));
+    } else {
+      localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+    }
+    if (req.new_deadline) {
+      localStorage.setItem('easyplan_execution_refine_new_deadline', req.new_deadline);
+    } else {
+      localStorage.removeItem('easyplan_execution_refine_new_deadline');
+    }
+
+    set({
+      executionRefineActiveRequestId: requestId,
+      executionRefineStatus: 'running',
+      executionRefineStage: 'queued',
+      executionRefineProposal: null,
+      executionRefineErrorCode: null,
+      executionRefineErrorMessage: null,
+      executionRefineLogs: ['已加入队列，等待处理...'],
+    });
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/threads/${selectedProjectId}/refine-diffs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          request_id: requestId,
+          mode,
+          ...req,
+        })
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        let msg = 'Failed to start execution refine';
+        let code = 'EXECUTION_REFINE_FAILED';
+        try {
+          const errData = await response.json();
+          if (errData.detail) {
+            msg = errData.detail.message || errData.detail;
+            code = errData.detail.error_code || code;
+          }
+        } catch {
+          // ignore
+        }
+        set({
+          executionRefineStatus: 'failed',
+          executionRefineStage: 'failed',
+          executionRefineErrorCode: code,
+          executionRefineErrorMessage: msg,
+        });
+        throw new Error(msg);
+      }
+
+      const data = await response.json();
+      set({ executionRefineStatus: data.status });
+      return data;
+    } catch (err) {
+      const msg = (err as Error).message || '网络连接失败，请重试';
+      set({
+        executionRefineStatus: 'failed',
+        executionRefineStage: 'failed',
+        executionRefineErrorMessage: msg
+      });
+      throw err;
+    }
+  },
+
+  fetchExecutionRefineSnapshot: async (requestId) => {
+    const { token, selectedProjectId } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+    if (!selectedProjectId) {
+      throw new Error('No project selected');
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/threads/${selectedProjectId}/refine-diffs/${requestId}`, {
+        headers
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch execution refine snapshot');
+      }
+
+      const data = await response.json();
+      set({
+        executionRefineStatus: data.status,
+        executionRefineStage: data.stage,
+        executionRefineProposal: data.proposal,
+        executionRefineScopeFingerprint: data.scope_fingerprint || null,
+        executionRefineErrorCode: data.error_code || null,
+        executionRefineErrorMessage: data.error_message || null,
+      });
+      return data;
+    } catch (err) {
+      console.error("Fetch snapshot failed", err);
+      throw err;
+    }
+  },
+
+  cancelExecutionRefine: async (requestId) => {
+    const { token, selectedProjectId } = get();
+    if (!token) return;
+    if (!selectedProjectId) return;
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/threads/${selectedProjectId}/refine-diffs/${requestId}`, {
+        method: 'DELETE',
+        headers
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel execution refine');
+      }
+
+      const data = await response.json();
+      localStorage.removeItem('easyplan_execution_refine_thread_id');
+      localStorage.removeItem('easyplan_execution_refine_request_id');
+      localStorage.removeItem('easyplan_execution_refine_mode');
+      localStorage.removeItem('easyplan_execution_refine_available_minutes');
+      localStorage.removeItem('easyplan_execution_refine_user_context');
+      localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+      localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+      localStorage.removeItem('easyplan_execution_refine_new_deadline');
+
+      set({
+        executionRefineStatus: data.status,
+        executionRefineStage: data.stage,
+        executionRefineScopeFingerprint: null,
+      });
+    } catch (err) {
+      console.error("Cancel execution refine failed", err);
+      throw err;
+    }
+  },
+
+  applyExecutionRefine: async (requestId, expectedFingerprint) => {
+    const { token, selectedProjectId } = get();
+    if (!token) {
+      set({ showAuthModal: true });
+      throw new Error('Authentication required');
+    }
+    if (!selectedProjectId) {
+      throw new Error('No project selected');
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const response = await fetch(`/api/threads/${selectedProjectId}/refine-diffs/${requestId}/apply`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          expected_scope_fingerprint: expectedFingerprint || null
+        })
+      });
+
+      if (isUnauthorizedResponse(response)) {
+        get().setToken(null, false);
+        get().reset();
+        throw new Error('Authentication required');
+      }
+
+      if (!response.ok) {
+        let msg = 'Failed to apply proposal';
+        let code = 'EXECUTION_REFINE_FAILED';
+        try {
+          const errData = await response.json();
+          if (errData.detail) {
+            msg = errData.detail.message || errData.detail;
+            code = errData.detail.error_code || code;
+          }
+        } catch {
+          // ignore
+        }
+        set({
+          executionRefineStatus: 'failed',
+          executionRefineStage: 'failed',
+          executionRefineErrorCode: code,
+          executionRefineErrorMessage: msg
+        });
+        throw new Error(msg);
+      }
+
+      const data: ExecutionRefineApplyReceipt = await response.json();
+      localStorage.removeItem('easyplan_execution_refine_thread_id');
+      localStorage.removeItem('easyplan_execution_refine_request_id');
+      localStorage.removeItem('easyplan_execution_refine_mode');
+      localStorage.removeItem('easyplan_execution_refine_available_minutes');
+      localStorage.removeItem('easyplan_execution_refine_user_context');
+      localStorage.removeItem('easyplan_execution_refine_priority_task_ids');
+      localStorage.removeItem('easyplan_execution_refine_blocked_task_ids');
+      localStorage.removeItem('easyplan_execution_refine_new_deadline');
+
+      set({
+        executionRefineStatus: 'applied',
+        executionRefineStage: 'applied'
+      });
+
+      // Reload project snapshot and refetch tasks to sync roadmap & next action
+      await get().loadProjectSnapshot(selectedProjectId);
+      await get().fetchTasks('planned');
+
+      return data;
+    } catch (err) {
+      console.error("Apply execution refine failed", err);
       throw err;
     }
   }

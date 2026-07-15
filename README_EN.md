@@ -171,10 +171,16 @@ docker-compose logs -f backend
 - Do not mutate tasks before confirmation; Apply changes only local hints or creates traceable child tasks.
 - Preserve parent-child hierarchy across project and My Day views, with deterministic parent roll-up.
 
+### v1.3.1 - Execution Engine / Refine Diff
+
+- Generate bounded project-level adjustments when available time, progress, deadlines, or priorities change.
+- Preview before/after task updates, small additions, sibling reordering, and My Day changes, then apply the diff atomically.
+- Keep completed work, historical phases, Roadmap, long-term loops, and Task Assist children immutable without regenerating the plan.
+- Provide a dedicated durable run, recoverable SSE, scope fingerprints, and idempotent Apply; the strict DeepSeek Eval passes 24/24 cases.
+
 ### Future Directions
 
-- Local rescheduling, Refine Diff, and Resume Prompt based on actual execution state.
-- Personalized planning based on preferred task size, work duration, and common sources of resistance.
+- v1.4: personalized planning based on preferred task size, work duration, and common sources of resistance.
 
 ---
 

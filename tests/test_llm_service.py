@@ -7,6 +7,7 @@ import pytest
 from app.agents.nodes import build_planner_prompt
 from app.api.schemas import IntentProfile, TaskTree
 from app.services.llm_service import (
+    DeepSeekExecutionRefineClient,
     DeepSeekPlannerClient,
     LLMStructuredOutputError,
     ListReasoningSink,
@@ -16,6 +17,31 @@ from app.services.llm_service import (
     create_planner_client,
     _clean_json_response_text,
 )
+
+
+def _execution_refine_proposal() -> dict:
+    from uuid import uuid4
+
+    return {
+        "schema_version": 1,
+        "proposal_type": "execution_refine",
+        "mode": "progress_recovery",
+        "summary": "缩小当前执行范围",
+        "user_facing_reasons": ["先恢复最关键的行动"],
+        "preserved_constraints": ["已完成工作保持不变"],
+        "operations": [
+            {
+                "operation_type": "update_task",
+                "task_id": str(uuid4()),
+                "changes": {"estimated_minutes": 20},
+                "reason": "缩短当前任务",
+            }
+        ],
+        "focus_task_ids": [],
+        "estimated_focus_minutes": 0,
+        "buffer_minutes": 0,
+        "warnings": [],
+    }
 
 
 EXPECTED_USER_VISIBLE_REASONING_MESSAGES = [
@@ -688,3 +714,53 @@ def test_planner_factory_defaults_to_deepseek(monkeypatch):
     monkeypatch.delenv("EASYPLAN_LLM_PROVIDER", raising=False)
 
     assert isinstance(create_planner_client(), DeepSeekPlannerClient)
+
+
+def test_deepseek_execution_refine_uses_strict_json_output_and_usage_metrics():
+    payload = _execution_refine_proposal()
+    fake_deepseek = FakeChatClient(json.dumps(payload, ensure_ascii=False))
+    usage_sink = ListUsageSink()
+    client = DeepSeekExecutionRefineClient(
+        client=fake_deepseek,
+        model="deepseek-chat",
+        usage_sink=usage_sink,
+    )
+
+    result = asyncio.run(
+        client.create_execution_refine_proposal(prompt="调整当前执行计划")
+    )
+
+    create_call = fake_deepseek.chat.completions.calls[0]
+    assert create_call["response_format"] == {"type": "json_object"}
+    assert "Execution Refine" in create_call["messages"][0]["content"]
+    assert "delete" in create_call["messages"][0]["content"]
+    assert result["proposal_type"] == "execution_refine"
+    assert result["operations"][0]["changes"] == {"estimated_minutes": 20}
+    assert usage_sink.records[0].operation == "execution_refine.generate"
+
+
+def test_deepseek_execution_refine_repairs_json_without_weakening_schema():
+    payload = _execution_refine_proposal()
+    fake_deepseek = FakeChatClient(
+        [
+            '{"proposal_type":"execution_refine",',
+            json.dumps(payload, ensure_ascii=False),
+        ]
+    )
+    client = DeepSeekExecutionRefineClient(
+        client=fake_deepseek,
+        model="deepseek-chat",
+    )
+
+    result = asyncio.run(
+        client.create_execution_refine_proposal(prompt="调整当前执行计划")
+    )
+
+    assert result["mode"] == "progress_recovery"
+    assert len(fake_deepseek.chat.completions.calls) == 2
+    repair_prompt = "\n".join(
+        message["content"]
+        for message in fake_deepseek.chat.completions.calls[1]["messages"]
+    )
+    assert "supplied schema" in repair_prompt
+    assert "Return one JSON object only" in repair_prompt

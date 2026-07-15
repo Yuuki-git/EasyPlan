@@ -7,14 +7,25 @@ from typing import Iterable
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic.json_schema import models_json_schema
 
 from app.api.auth import router as auth_router
 from app.api.exceptions import register_exception_handlers
 from app.api.routes_intents import router as intents_router
+from app.api.routes_execution_refine import router as execution_refine_router
 from app.api.routes_practice import router as practice_router
 from app.api.routes_tasks import router as tasks_router
 from app.api.routes_task_assist import router as task_assist_router
 from app.api.routes_threads import router as threads_router
+from app.api.schemas import (
+    ExecutionRefineApplyReceipt,
+    ExecutionRefineApplyRequest,
+    ExecutionRefineErrorResponse,
+    ExecutionRefineProposal,
+    ExecutionRefineRequest,
+    ExecutionRefineRunSnapshot,
+    ExecutionRefineStartResponse,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +54,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="EasyPlan Backend API",
-        version="1.3.0",
+        version="1.3.1",
         description=(
             "Intent-driven native task board API with JWT auth, HITL LangGraph checkpoints, "
             "and Async Queue SSE event streams."
@@ -65,6 +76,8 @@ def create_app(
     app.include_router(practice_router)
     app.include_router(tasks_router)
     app.include_router(task_assist_router)
+    app.include_router(execution_refine_router)
+    _register_execution_refine_contract_schemas(app)
 
     if enable_static:
         resolved_static_dir = Path(static_dir) if static_dir is not None else DEFAULT_STATIC_DIR
@@ -78,6 +91,36 @@ def create_app(
             logger.info("frontend_static_dir_missing", extra={"static_dir": str(resolved_static_dir)})
 
     return app
+
+
+def _register_execution_refine_contract_schemas(app: FastAPI) -> None:
+    """Publish frozen Phase 1 schemas before the Phase 2 routes are enabled."""
+    contract_models = (
+        ExecutionRefineRequest,
+        ExecutionRefineProposal,
+        ExecutionRefineStartResponse,
+        ExecutionRefineRunSnapshot,
+        ExecutionRefineApplyRequest,
+        ExecutionRefineApplyReceipt,
+        ExecutionRefineErrorResponse,
+    )
+    original_openapi = app.openapi
+
+    def openapi_with_contracts():
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = original_openapi()
+        _, generated = models_json_schema(
+            [(model, "validation") for model in contract_models],
+            ref_template="#/components/schemas/{model}",
+        )
+        schema.setdefault("components", {}).setdefault("schemas", {}).update(
+            generated.get("$defs", {})
+        )
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = openapi_with_contracts
 
 
 def _configure_cors(app: FastAPI, origins: list[str]) -> None:

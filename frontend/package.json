@@ -12,7 +12,8 @@
     "test:portfolio": "vitest run tests/portfolioState.test.ts tests/portfolioOverview.test.tsx",
     "test:long-term": "vitest run tests/longTermExecution.test.ts tests/longTermExecutionStore.test.ts tests/practiceLoopPanel.test.tsx tests/phaseReviewPanel.test.tsx tests/phaseRecords.test.tsx",
     "test:strategy": "vitest run tests/strategyContext.test.ts tests/strategyOverview.test.tsx",
-    "test:task-assist": "vitest run tests/taskAssistState.test.ts tests/taskAssistPanel.test.tsx tests/useTaskAssist.lifecycle.test.tsx tests/taskAssistRollup.test.tsx"
+    "test:task-assist": "vitest run tests/taskAssistState.test.ts tests/taskAssistPanel.test.tsx tests/useTaskAssist.lifecycle.test.tsx tests/taskAssistRollup.test.tsx",
+    "test:execution-refine": "vitest run tests/executionRefineState.test.ts tests/executionRefinePanel.test.tsx tests/useExecutionRefine.lifecycle.test.tsx tests/executionDiffPreview.test.tsx"
   },
   "dependencies": {
     "clsx": "^2.1.0",

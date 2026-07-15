@@ -240,7 +240,7 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   不改变 v1.2.7-A 的长期 schema v2、practice loop、outcome checkpoint 或 phase gate。
 *   不修改 `context_checklist`，不引入 Task Copilot、自动重排、个性化或探索到长期计划的自动转换。
 
-#### 📍 v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach) (Implementation Complete / Final Review Pending)
+#### ✅ v1.3.0: 任务级副驾驶 (Task Copilot / Action Coach) (Completed / Released)
 **版本目标**：在不重写整份计划的前提下，帮助用户解决单个任务的启动阻力、执行卡点和粒度过大问题。
 
 **设计与执行文档**：
@@ -262,17 +262,35 @@ v1.2.4 的目标是让 EasyPlan 从“策略正确的计划生成器”升级为
 *   运行中取消成功后关闭并清理 panel，失败时保留面板并显示错误，不再留下空面板。
 *   My Day 以父任务为承诺锚点：Assist children 只嵌套展示，不能独立加入，也不会因父节点缺失而成为顶层任务。
 *   Planning Eval case 41 的“完整课程”误判已收窄并加入评分器回归测试；strict release gate 保持全指标 `100%`。
-*   `EASYPLAN_TASK_ASSIST_ENABLED=false` 默认关闭；代码实现已完成，待 Reviewer 最终复验和手工产品验收后标记 Completed。
 *   7 个 legacy `.test.mjs` VM harness 已全部完成适配并映射 `../lib/taskAssist` 导入；专项 Vitest、legacy tests、build、lint 和业务代码全量通过，满足 release gate 门禁。
+*   Reviewer 最终复验、手工产品验收与发布门禁已通过，v1.3.0 于 2026-07-14 正式发布。
 
 **非目标**：
 *   不做开放式聊天、整份计划重排、Refine Diff、个性化、日历集成或探索到长期计划的自动转换。
 *   “解释这一步”“给我模板”“降低难度”“缩短到 10 分钟”保留给后续扩展，不进入首版 MVP。
 
-#### 📍 v1.3.1: 智能执行中枢与差分微调 (Execution Engine & Refine Diff)
-*   **动态调整**：支持根据执行状态动态调整计划，包括 Refine Diff、Resume Prompt。
-*   **场景化指令**：“我今天只有 20 分钟”、“我落后了帮我重排”。
-*   **交互式澄清**：利用 `intent_confidence` 进行模糊输入的选项澄清。
+#### ✅ v1.3.1: 智能执行中枢与差分微调 (Execution Engine & Refine Diff) (Completed / Released)
+**版本目标**：当现实条件在计划确认后发生变化时，以可预览、可校验、可原子应用的局部 Diff 调整当前执行层，而不是重写整份计划。
+
+**设计与执行文档**：
+*   设计规格：`docs/superpowers/specs/2026-07-14-v1.3.1-execution-engine-refine-diff-design.md`
+*   前后端执行计划：`docs/superpowers/plans/2026-07-14-v1.3.1-execution-engine-refine-diff.md`
+
+**MVP 范围**：
+*   三种 mode：`time_budget`、`progress_recovery`、`context_change`。
+*   四类 Diff：更新任务、新增少量任务、同级重排、调整当前项目的 My Day 投影。
+*   首版整包确认、事务 Apply；不做逐条勾选、不允许 AI 删除任务。
+*   已完成任务、历史阶段、Roadmap、长期循环、阶段复盘和 Task Assist children 保持不可变。
+*   `time_budget` 按容量动态选择任务，保留确定性缓冲，最多聚焦 5 个父任务，不使用固定任务数量。
+*   新增独立 durable run、`execution_refine` SSE、stale fingerprint、24-case DeepSeek Eval 和严格发布门禁。
+
+**实现与发布验收（2026-07-15）**：
+*   后端已实现独立 `execution_refine_runs`、项目级 scope/fingerprint、DeepSeek 结构化 Diff、确定性 Validator、run-scoped SSE、取消/恢复以及事务 Apply。
+*   前端已实现项目内结构化输入、before/after Diff 预览、独立 Zustand/SSE 生命周期、刷新恢复、stale 重试和 Apply 后权威 snapshot 重载。
+*   Apply 同事务更新 task rows 与 committed TaskTree；重复 Apply 返回幂等 receipt，跨项目、历史阶段、长期循环和 Assist children 保持受保护。
+*   Backend：`523 passed`；前端 hooks、Portfolio、长期执行、Strategy、Task Assist、Execution Refine、14 个 legacy Node 测试、build 与 lint 全部通过。
+*   DeepSeek Execution Refine Eval `24/24`、Planning Eval `54/54`、Task Assist Eval `18/18`，各自全部发布指标均为 `100%`，strict exit 均为 `0`。
+*   `git diff --check` 通过；Reviewer 无剩余 P0/P1，v1.3.1 于 2026-07-15 正式发布。
 
 #### ✅ 已提前完成：虚拟化“我的一天” (Virtual My Day)
 *   此架构已在 v1.2.3 后期完成并在 v1.2.4 加固。使用 `is_in_my_day` 保留原计划结构，避免任务在不同视图之间物理迁移造成状态混乱，不再作为未来版本里程碑。

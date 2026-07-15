@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.api.schemas import (
     DecomposeAssistProposal,
+    ExecutionRefineProposal,
     IntentProfile,
     StartAssistProposal,
     TaskAssistMode,
@@ -458,7 +459,103 @@ class DeepSeekTaskAssistClient:
                 usage=getattr(response, "usage", None),
             )
         )
-        return proposal.model_dump(mode="json")
+        return proposal.model_dump(mode="json", exclude_unset=True)
+
+    @property
+    def _deepseek_client(self) -> Any:
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url=self.base_url,
+            )
+        return self._client
+
+
+class DeepSeekExecutionRefineClient:
+    """DeepSeek JSON Output client isolated to Execution Refine proposals."""
+
+    def __init__(
+        self,
+        *,
+        client: Any | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        usage_sink: UsageSink | None = None,
+    ) -> None:
+        self.model = model or os.getenv(
+            "EASYPLAN_DEEPSEEK_MODEL",
+            DEFAULT_DEEPSEEK_PLANNER_MODEL,
+        )
+        self.base_url = base_url or os.getenv(
+            "DEEPSEEK_BASE_URL",
+            DEFAULT_DEEPSEEK_BASE_URL,
+        )
+        self._client = client
+        self.usage_sink = usage_sink or LoggingUsageSink()
+
+    async def create_execution_refine_proposal(
+        self,
+        *,
+        prompt: str,
+    ) -> dict[str, Any]:
+        schema = ExecutionRefineProposal.model_json_schema()
+        max_tokens = int(os.getenv("EASYPLAN_EXECUTION_REFINE_MAX_TOKENS", "4096"))
+        response = await self._deepseek_client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate one bounded EasyPlan Execution Refine diff. "
+                        "Return exactly one JSON object matching the supplied schema. "
+                        "Never emit delete, status, phase, history, roadmap, review, loop, "
+                        "checkpoint, source, parent, or client-ID mutations. "
+                        "Do not output markdown, chain-of-thought, raw prompts, or unrelated tasks. "
+                        f"Proposal JSON Schema: {json.dumps(schema, ensure_ascii=False)} "
+                        f"{LANGUAGE_MATCH_INSTRUCTION}"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=max_tokens,
+        )
+        content = _first_message_content(response)
+        if not content:
+            raise LLMStructuredOutputError(
+                "DeepSeek execution refine response did not include JSON"
+            )
+        try:
+            payload = json.loads(_clean_json_response_text(content))
+            proposal = ExecutionRefineProposal.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            repaired = await _repair_structured_json(
+                self._deepseek_client,
+                model=self.model,
+                invalid_content=content,
+                error=exc,
+                json_schema=schema,
+                max_tokens=max_tokens,
+            )
+            try:
+                payload = json.loads(_clean_json_response_text(repaired))
+                proposal = ExecutionRefineProposal.model_validate(payload)
+            except (json.JSONDecodeError, ValidationError) as repair_exc:
+                raise LLMStructuredOutputError(
+                    "DeepSeek execution refine response did not match the proposal schema"
+                ) from repair_exc
+        await self.usage_sink.record(
+            _usage_record(
+                provider="deepseek",
+                model=self.model,
+                operation="execution_refine.generate",
+                usage=getattr(response, "usage", None),
+            )
+        )
+        return proposal.model_dump(mode="json", exclude_unset=True)
 
     @property
     def _deepseek_client(self) -> Any:

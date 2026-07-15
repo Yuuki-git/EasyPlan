@@ -341,6 +341,14 @@ POST assist -> running -> context_ready -> generating -> validating -> ready
 
 - 不恢复 Todoist、Microsoft To Do、MCP 或 OAuth 外部同步主线。
 - v1.2.8 的 optional `strategy_context`、前端展示与完整 release gate 已完成。
-- v1.3.0 后端已实现独立 task-assist run、结构化 proposal、确认式 Apply 和父任务
-  roll-up；前端集成、Reviewer gate 与手工产品验收完成前不标记整个版本 Completed。
+- v1.3.0 的独立 task-assist run、结构化 proposal、确认式 Apply、父任务 roll-up、
+  前端集成和发布门禁均已完成，并于 2026-07-14 发布。
+- v1.3.1 已新增独立 post-commit `execution_refine` run。它只对当前可执行范围产生
+  `update_task`、`add_task`、`reorder_siblings` 和 `set_my_day` Diff，不复用确认前
+  plan-level `refine`，也不修改已完成历史、Roadmap、长期循环、阶段复盘或 Assist children。
+- v1.3.1 Apply 以 scope fingerprint 防 stale，并在同一事务中双写 task rows 与
+  committed TaskTree；durable snapshot、run-scoped SSE、取消、恢复与幂等 receipt 已完成。
+- 2026-07-15 发布验收：Backend `523 passed`；Execution Refine `24/24`、Planning `54/54`、
+  Task Assist `18/18`，全部发布指标 `100%` 且 strict exit 为 `0`。完整契约见：
+  `docs/superpowers/specs/2026-07-14-v1.3.1-execution-engine-refine-diff-design.md`。
 - 更强的个性化规划继续放入后续版本。

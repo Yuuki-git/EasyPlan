@@ -340,7 +340,7 @@ export interface SSEEventEnvelope {
   event_id: string;
   thread_id: string;
   request_id: string;
-  run_type: AgentRunType | 'task_assist';
+  run_type: AgentRunType | 'task_assist' | 'execution_refine';
   event_type: string;
   seq: number;
   created_at: string;
@@ -560,4 +560,128 @@ export interface TaskAssistApplyResponse {
   task: TaskResponse;
   tasks: TaskResponse[];
   apply_receipt: TaskAssistApplyReceipt;
+}
+
+// Execution Refine Types
+export type ExecutionRefineMode = 'time_budget' | 'progress_recovery' | 'context_change';
+
+export interface ExecutionRefineRequest {
+  request_id: string;
+  mode: ExecutionRefineMode;
+  available_minutes?: number | null;
+  new_deadline?: string | null;
+  priority_task_ids?: string[];
+  blocked_task_ids?: string[];
+  user_context?: string | null;
+}
+
+export type ExecutionDiffOperationType = 'update_task' | 'add_task' | 'reorder_siblings' | 'set_my_day';
+
+export interface ExecutionTaskChanges {
+  title?: string | null;
+  description?: string | null;
+  estimated_minutes?: number | null;
+  done_criteria?: string | null;
+  start_hint?: string | null;
+  fallback_action?: string | null;
+}
+
+export interface UpdateTaskOperation {
+  operation_type: 'update_task';
+  task_id: string;
+  changes: ExecutionTaskChanges;
+  reason: string;
+}
+
+export interface AddTaskOperation {
+  operation_type: 'add_task';
+  draft_id: string;
+  parent_task_id: string | null;
+  title: string;
+  description?: string | null;
+  estimated_minutes: number;
+  done_criteria: string;
+  start_hint?: string | null;
+  fallback_action?: string | null;
+  depends_on_refs: string[];
+  insert_after_task_id: string | null;
+  reason: string;
+}
+
+export interface ReorderSiblingsOperation {
+  operation_type: 'reorder_siblings';
+  parent_task_id: string | null;
+  ordered_task_ids: string[];
+  reason: string;
+}
+
+export interface SetMyDayOperation {
+  operation_type: 'set_my_day';
+  task_id: string;
+  is_in_my_day: boolean;
+  reason: string;
+}
+
+export type ExecutionDiffOperation =
+  | UpdateTaskOperation
+  | AddTaskOperation
+  | ReorderSiblingsOperation
+  | SetMyDayOperation;
+
+export interface ExecutionRefineProposal {
+  schema_version: 1;
+  proposal_type: 'execution_refine';
+  mode: ExecutionRefineMode;
+  summary: string;
+  user_facing_reasons: string[];
+  preserved_constraints: string[];
+  operations: ExecutionDiffOperation[];
+  focus_task_ids: string[];
+  estimated_focus_minutes: number;
+  buffer_minutes: number;
+  warnings: string[];
+}
+
+export type ExecutionRefineRunStatus = 'running' | 'ready' | 'applied' | 'cancelled' | 'failed' | 'expired';
+
+export interface ExecutionRefineStartResponse {
+  thread_id: string;
+  request_id: string;
+  mode: ExecutionRefineMode;
+  status: ExecutionRefineRunStatus;
+  events_url: string;
+}
+
+export interface ExecutionRefineRunSnapshot {
+  run_id: string;
+  user_id: string;
+  thread_id: string;
+  request_id: string;
+  mode: ExecutionRefineMode;
+  status: ExecutionRefineRunStatus;
+  stage: string | null;
+  scope_fingerprint: string;
+  proposal: ExecutionRefineProposal | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  applied_at?: string | null;
+  cancelled_at?: string | null;
+}
+
+export interface ExecutionRefineApplyRequest {
+  expected_scope_fingerprint?: string | null;
+}
+
+export interface ExecutionRefineApplyReceipt {
+  run_id: string;
+  thread_id: string;
+  request_id: string;
+  applied_at: string;
+  scope_fingerprint: string;
+  affected_task_ids: string[];
+  created_task_ids: string[];
+  focus_task_ids: string[];
 }

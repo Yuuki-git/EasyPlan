@@ -23,7 +23,13 @@ IntentType = Literal[
 ]
 TimeHorizon = Literal["minutes", "hours", "days", "weeks", "months"]
 RoadmapStatus = Literal["planned", "current", "completed"]
-SseRunType = Literal["initial", "next_phase", "refine", "task_assist"]
+SseRunType = Literal[
+    "initial",
+    "next_phase",
+    "refine",
+    "task_assist",
+    "execution_refine",
+]
 SseEventType = Literal[
     "run_started",
     "intent_profile_started",
@@ -44,6 +50,10 @@ SseEventType = Literal[
     "assist_generation_started",
     "assist_validation_started",
     "assist_ready",
+    "execution_context_ready",
+    "refine_generation_started",
+    "refine_validation_started",
+    "diff_ready",
 ]
 
 
@@ -706,6 +716,247 @@ class TaskAssistApplyRequest(BaseModel):
 
 
 class TaskAssistErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_code: str = Field(..., min_length=1, max_length=128)
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+ExecutionRefineMode = Literal[
+    "time_budget",
+    "progress_recovery",
+    "context_change",
+]
+ExecutionRefineRunStatus = Literal[
+    "running",
+    "ready",
+    "applied",
+    "cancelled",
+    "failed",
+    "expired",
+]
+ExecutionRefineStage = Literal[
+    "queued",
+    "context_ready",
+    "generating",
+    "validating",
+    "repairing",
+    "ready",
+    "applied",
+    "cancelled",
+    "failed",
+    "expired",
+]
+ExecutionRefineText = Annotated[str, Field(min_length=1, max_length=500)]
+ExecutionRefineTaskRef = Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class ExecutionRefineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    mode: ExecutionRefineMode
+    available_minutes: int | None = Field(default=None, ge=10, le=480)
+    new_deadline: datetime | None = None
+    priority_task_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    blocked_task_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    user_context: str | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_mode_context(self) -> "ExecutionRefineRequest":
+        if self.new_deadline is not None and self.new_deadline.tzinfo is None:
+            raise ValueError("new_deadline must include timezone information")
+        if len(self.priority_task_ids) != len(set(self.priority_task_ids)):
+            raise ValueError("priority_task_ids must not contain duplicates")
+        if len(self.blocked_task_ids) != len(set(self.blocked_task_ids)):
+            raise ValueError("blocked_task_ids must not contain duplicates")
+        if set(self.priority_task_ids) & set(self.blocked_task_ids):
+            raise ValueError("a task cannot be both priority and blocked")
+
+        changed_context = bool(
+            self.new_deadline is not None
+            or self.priority_task_ids
+            or self.blocked_task_ids
+            or self.user_context
+        )
+        if self.mode == "time_budget" and self.available_minutes is None:
+            raise ValueError("time_budget requires available_minutes")
+        if self.mode != "time_budget" and self.available_minutes is not None:
+            raise ValueError("available_minutes is only valid for time_budget")
+        if self.mode == "context_change" and not changed_context:
+            raise ValueError("context_change requires at least one changed constraint")
+        return self
+
+
+class ExecutionTaskChanges(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=43200)
+    done_criteria: str | None = Field(default=None, max_length=1000)
+    start_hint: str | None = Field(default=None, max_length=1000)
+    fallback_action: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_allowed_change(self) -> "ExecutionTaskChanges":
+        if not self.model_fields_set:
+            raise ValueError("changes must include at least one allowed field")
+        if "title" in self.model_fields_set and self.title is None:
+            raise ValueError("title cannot be null")
+        if "estimated_minutes" in self.model_fields_set and self.estimated_minutes is None:
+            raise ValueError("estimated_minutes cannot be null")
+        return self
+
+
+class UpdateTaskOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_type: Literal["update_task"]
+    task_id: UUID
+    changes: ExecutionTaskChanges
+    reason: ExecutionRefineText
+
+
+class AddTaskOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_type: Literal["add_task"]
+    draft_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+    )
+    parent_task_id: UUID | None = None
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    estimated_minutes: int = Field(..., ge=1, le=43200)
+    done_criteria: str = Field(..., min_length=1, max_length=1000)
+    start_hint: str | None = Field(default=None, max_length=1000)
+    fallback_action: str | None = Field(default=None, max_length=1000)
+    depends_on_refs: list[ExecutionRefineTaskRef] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+    insert_after_task_id: UUID | None = None
+    reason: ExecutionRefineText
+
+
+class ReorderSiblingsOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_type: Literal["reorder_siblings"]
+    parent_task_id: UUID | None = None
+    ordered_task_ids: list[UUID] = Field(..., min_length=1, max_length=12)
+    reason: ExecutionRefineText
+
+    @model_validator(mode="after")
+    def require_unique_task_ids(self) -> "ReorderSiblingsOperation":
+        if len(self.ordered_task_ids) != len(set(self.ordered_task_ids)):
+            raise ValueError("ordered_task_ids must not contain duplicates")
+        return self
+
+
+class SetMyDayOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_type: Literal["set_my_day"]
+    task_id: UUID
+    is_in_my_day: bool
+    reason: ExecutionRefineText
+
+
+ExecutionDiffOperation = Annotated[
+    UpdateTaskOperation
+    | AddTaskOperation
+    | ReorderSiblingsOperation
+    | SetMyDayOperation,
+    Field(discriminator="operation_type"),
+]
+
+
+class ExecutionRefineProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    proposal_type: Literal["execution_refine"]
+    mode: ExecutionRefineMode
+    summary: str = Field(..., min_length=1, max_length=500)
+    user_facing_reasons: list[ExecutionRefineText] = Field(..., min_length=1, max_length=6)
+    preserved_constraints: list[ExecutionRefineText] = Field(
+        ...,
+        min_length=1,
+        max_length=10,
+    )
+    operations: list[ExecutionDiffOperation] = Field(..., min_length=1, max_length=12)
+    focus_task_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    estimated_focus_minutes: int = Field(..., ge=0, le=2400)
+    buffer_minutes: int = Field(..., ge=0, le=480)
+    warnings: list[ExecutionRefineText] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def require_unique_focus_tasks(self) -> "ExecutionRefineProposal":
+        if len(self.focus_task_ids) != len(set(self.focus_task_ids)):
+            raise ValueError("focus_task_ids must not contain duplicates")
+        return self
+
+
+class ExecutionRefineStartResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: UUID
+    thread_id: str = Field(..., min_length=1, max_length=128)
+    request_id: UUID
+    mode: ExecutionRefineMode
+    status: ExecutionRefineRunStatus
+    events_url: str = Field(..., min_length=1, max_length=500)
+
+
+class ExecutionRefineRunSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: UUID
+    thread_id: str = Field(..., min_length=1, max_length=128)
+    request_id: UUID
+    mode: ExecutionRefineMode
+    status: ExecutionRefineRunStatus
+    stage: ExecutionRefineStage | None = None
+    scope_fingerprint: str = Field(..., min_length=64, max_length=64)
+    proposal: ExecutionRefineProposal | None = None
+    apply_receipt: dict[str, Any] | None = None
+    error_code: str | None = Field(default=None, max_length=128)
+    error_message: str | None = Field(default=None, max_length=500)
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+
+
+class ExecutionRefineApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_scope_fingerprint: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+
+class ExecutionRefineApplyReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: UUID
+    thread_id: str = Field(..., min_length=1, max_length=128)
+    request_id: UUID
+    applied_at: datetime
+    scope_fingerprint: str = Field(..., min_length=64, max_length=64)
+    affected_task_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    created_task_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    focus_task_ids: list[UUID] = Field(default_factory=list, max_length=5)
+
+
+class ExecutionRefineErrorResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     error_code: str = Field(..., min_length=1, max_length=128)

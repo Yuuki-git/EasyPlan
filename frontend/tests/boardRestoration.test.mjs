@@ -216,6 +216,12 @@ function loadComponentModule(filePath, useAppStoreInstance) {
           default: () => null
         };
       }
+      if (specifier.includes('ExecutionRefinePanel')) {
+        return {
+          ExecutionRefinePanel: () => null,
+          default: () => null
+        };
+      }
       throw new Error(`Unexpected import in component: ${specifier}`);
     },
     console: { ...console, error: () => {} }

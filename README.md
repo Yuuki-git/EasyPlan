@@ -171,10 +171,16 @@ docker-compose logs -f backend
 - 用户确认前不修改任务；确认后只应用局部提示或创建可追踪的子任务。
 - Assist 子任务在项目和“我的一天”中保持父子层级，并由子任务完成状态驱动父任务 roll-up。
 
+### v1.3.1 - Execution Engine / Refine Diff
+
+- 针对“今天只有 20 分钟”“进度落后”“优先级变化”等现实变化，在当前项目内生成局部调整建议。
+- 以 before/after Diff 预览更新任务、新增少量任务、同级重排和 My Day 变化，确认后原子应用。
+- 已完成任务、历史阶段、Roadmap、长期循环和 Task Assist children 保持不可变，不重写整份计划。
+- 独立 durable run、SSE 恢复、scope fingerprint 与幂等 Apply 已完成，DeepSeek strict Eval 为 24/24。
+
 ### 后续方向
 
-- 根据实际执行状态支持局部重排、Refine Diff 和 Resume Prompt。
-- 根据用户偏好的任务粒度、工作时长和常见阻力进行个性化规划。
+- v1.4：根据用户偏好的任务粒度、工作时长和常见阻力进行个性化规划。
 
 ---
 
